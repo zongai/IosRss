@@ -73,6 +73,7 @@ struct TranslationSettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var googleKey = Keychain.load(key: "google_translate_key") ?? ""
     @State private var microsoftKey = Keychain.load(key: "microsoft_translate_key") ?? ""
+    @State private var deeplKey = Keychain.load(key: "deepl_translate_key") ?? ""   // 新增
 
     var body: some View {
         @Bindable var store = store
@@ -133,6 +134,30 @@ struct TranslationSettingsView: View {
                 Text("Microsoft Translator")
             }
 
+            // 新增：DeepL Section
+            Section {
+                HStack {
+                    Text("DeepL 翻译")
+                        .font(.system(size: 15, weight: .medium))
+                    Spacer()
+                    if store.defaultTranslationEngine == .deepl {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.black)
+                    }
+                }
+                TextField("DeepL API Key", text: $deeplKey)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .onChange(of: deeplKey) { _, new in
+                        if new.isEmpty { Keychain.delete(key: "deepl_translate_key") }
+                        else { Keychain.save(key: "deepl_translate_key", value: new) }
+                    }
+            } header: {
+                Text("DeepL")
+            } footer: {
+                Text("免费版 Key 以 \":fx\" 结尾，会自动使用免费端点；付费版 Key 使用正式端点")
+            }
+            
             Section {
                 HStack {
                     Text("AI 翻译")

@@ -1,5 +1,54 @@
 import Foundation
 
+// MARK: - DeepL
+
+enum DeepLTranslate {
+    /// DeepL Free API Key 通常以 ":fx" 结尾，会自动使用对应的免费端点
+    static func translate(text: String, apiKey: String, targetLang: String = "ZH") async throws -> String {
+        guard !apiKey.isEmpty else { throw TranslationError.apiError("未配置 DeepL API Key") }
+
+        let isFreeKey = apiKey.hasSuffix(":fx")
+        let baseURL = isFreeKey
+            ? "https://api-free.deepl.com/v2/translate"
+            : "https://api.deepl.com/v2/translate"
+
+        guard let url = URL(string: baseURL) else {
+            throw TranslationError.apiError("无效的 DeepL URL")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("DeepL-Auth-Key \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let body: [String: Any] = [
+            "text": [text],
+            "target_lang": targetLang
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw TranslationError.apiError("DeepL API 错误 \(http.statusCode): \(msg.prefix(200))")
+        }
+
+        struct Translation: Decodable {
+            let text: String
+            let detected_source_language: String?
+        }
+        struct Resp: Decodable { let translations: [Translation] }
+
+        guard let resp = try? JSONDecoder().decode(Resp.self, from: data),
+              let first = resp.translations.first else {
+            throw TranslationError.apiError("解析 DeepL 响应失败")
+        }
+
+        return first.text
+    }
+}
+
 // MARK: - Google Translate (free unofficial endpoint)
 
 enum GoogleTranslate {

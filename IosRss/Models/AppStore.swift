@@ -106,6 +106,9 @@ class AppStore {
         case .deepl:                                                    // 新增
             let key = Keychain.load(key: "deepl_translate_key") ?? ""   // 新增
             return try await DeepLTranslate.translate(text: text, apiKey: key)  // 新增
+        case .gemini:                                                  // 新增
+            let key = Keychain.load(key: "gemini_translate_key") ?? "" // 新增
+            return try await GeminiTranslate.translate(text: text, apiKey: key)  // 新增
         case .ai:
             guard let providerID = defaultTranslationProviderID ?? defaultSummaryProviderID,
                   let provider = aiProviders.first(where: { $0.id == providerID }) else {

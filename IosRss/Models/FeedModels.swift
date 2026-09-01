@@ -51,6 +51,7 @@ enum TranslationEngine: String, CaseIterable, Codable {
     case google = "Google 翻译"
     case microsoft = "Microsoft 翻译"
     case deepl = "DeepL"   // 新增
+    case gemini = "Gemini" 
     case ai = "AI 翻译"
 }
 

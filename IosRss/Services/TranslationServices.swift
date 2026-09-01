@@ -55,17 +55,42 @@ enum GoogleTranslate {
     static func translate(text: String, targetLang: String = "zh") async throws -> String {
         let escaped = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? text
         let urlStr = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=\(targetLang)&dt=t&q=\(escaped)"
-        guard let url = URL(string: urlStr) else { throw TranslationError.apiError("无效的URL") }
-        let (data, _) = try await URLSession.shared.data(from: url)
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [[Any]],
-              let first = json.first as? [[Any]] else {
-            throw TranslationError.apiError("解析响应失败")
+        guard let url = URL(string: urlStr) else {
+            throw TranslationError.apiError("无效的URL")
         }
-        let result = first.compactMap { $0.first as? String }.joined()
-        return result.isEmpty ? text : result
+
+        var request = URLRequest(url: url)
+        // 部分网络环境下没有 UA 会被拦截，加上常见浏览器 UA 更稳妥
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
+            throw TranslationError.apiError("Google 翻译请求失败 (状态码 \(http.statusCode)): \(raw)")
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
+              let firstElement = json.first as? [Any] else {
+            let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? "空响应"
+            throw TranslationError.apiError("解析响应失败: \(raw)")
+        }
+
+        // 逐个元素安全解析，跳过 NSNull 或其他非数组项，避免因单个字段异常导致整体失败
+        let result = firstElement.compactMap { segment -> String? in
+            guard let segArray = segment as? [Any],
+                  let text = segArray.first as? String else { return nil }
+            return text
+        }.joined()
+
+        if result.isEmpty {
+            let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
+            throw TranslationError.apiError("解析响应失败，原始返回: \(raw)")
+        }
+
+        return result
     }
 }
-
 // MARK: - Microsoft Translator
 
 enum MicrosoftTranslate {
@@ -143,4 +168,50 @@ func callOpenAICompatible(prompt: String, provider: AIProvider, apiKey: String) 
         throw TranslationError.apiError("解析 AI 响应失败")
     }
     return content.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+// MARK: - Gemini
+
+enum GeminiTranslate {
+    static func translate(text: String, apiKey: String, targetLang: String = "中文", model: String = "gemini-2.0-flash") async throws -> String {
+        guard !apiKey.isEmpty else { throw TranslationError.apiError("未配置 Gemini API Key") }
+
+        let urlStr = "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)"
+        guard let url = URL(string: urlStr) else {
+            throw TranslationError.apiError("无效的 Gemini URL")
+        }
+
+        let prompt = "请将以下内容翻译成\(targetLang)，只输出译文，不要解释，不要添加任何前缀或引号：\n\n\(text)"
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "contents": [
+                ["parts": [["text": prompt]]]
+            ]
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw TranslationError.apiError("Gemini API 错误 \(http.statusCode): \(msg.prefix(200))")
+        }
+
+        struct Part: Decodable { let text: String }
+        struct Content: Decodable { let parts: [Part] }
+        struct Candidate: Decodable { let content: Content }
+        struct Resp: Decodable { let candidates: [Candidate] }
+
+        guard let resp = try? JSONDecoder().decode(Resp.self, from: data),
+              let text = resp.candidates.first?.content.parts.first?.text else {
+            let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
+            throw TranslationError.apiError("解析 Gemini 响应失败: \(raw)")
+        }
+
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }

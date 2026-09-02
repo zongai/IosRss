@@ -12,7 +12,7 @@ struct ContentView: View {
                 SettingsView()
             }
         }
-        .tint(.black)
+        .tint(Color.primary)
         .environment(store)
     }
 }

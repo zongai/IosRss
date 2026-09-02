@@ -14,18 +14,33 @@ class AppStore {
     var titleDisplayMode: TitleDisplayMode = .original
     var defaultTranslationEngine: TranslationEngine = .google
     var aiProviders: [AIProvider] = [
-        AIProvider(id: UUID(), name: "OpenAI", baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini"),
-        AIProvider(id: UUID(), name: "Anthropic", baseURL: "https://api.anthropic.com/v1", model: "claude-3-haiku-20240307")
+        AIProvider(id: UUID(), name: "OpenAI", baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini", kind: "openai"),
+        AIProvider(id: UUID(), name: "Anthropic", baseURL: "https://api.anthropic.com/v1", model: "claude-3-haiku-20240307", kind: "openai"),
+        AIProvider(id: UUID(), name: "Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.0-flash", kind: "gemini")
     ]
     var defaultSummaryProviderID: UUID?
     var defaultTranslationProviderID: UUID?
+
+    /// 已读文章保留天数，超过后自动清理
+    private let readArticleRetentionDays: TimeInterval = 7 * 24 * 3600
 
     init() {
         loadFromStorage()
         if feeds.isEmpty {
             seedSampleData()
         }
-        defaultSummaryProviderID = aiProviders.first?.id
+        // 兼容旧数据：若存在 gemini 引擎偏好，迁移到 AI
+        if UserDefaults.standard.string(forKey: "defaultTranslationEngine") == "Gemini" {
+            defaultTranslationEngine = .ai
+            if defaultTranslationProviderID == nil {
+                defaultTranslationProviderID = aiProviders.first(where: { $0.kind == "gemini" })?.id
+            }
+        }
+        if defaultSummaryProviderID == nil {
+            defaultSummaryProviderID = aiProviders.first?.id
+        }
+        // 启动时清理过期已读文章
+        purgeOldReadArticles()
     }
 
     var allArticles: [Article] {
@@ -68,6 +83,28 @@ class AppStore {
         saveToStorage()
     }
 
+    /// 删除超过保留期的已读文章
+    func purgeOldReadArticles() {
+        let cutoff = Date().addingTimeInterval(-readArticleRetentionDays)
+        var changed = false
+        for i in feeds.indices {
+            let before = feeds[i].articles.count
+            feeds[i].articles.removeAll { article in
+                guard article.isRead else { return false }
+                // 优先用发布时间，没有则视为可清理（已读且无日期）
+                if let date = article.publishedDate {
+                    return date < cutoff
+                }
+                return true
+            }
+            if feeds[i].articles.count != before {
+                feeds[i].unreadCount = feeds[i].articles.filter { !$0.isRead }.count
+                changed = true
+            }
+        }
+        if changed { saveToStorage() }
+    }
+
     func refreshFeed(_ feedID: UUID) async {
         guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
         let urlStr = feeds[idx].url
@@ -82,6 +119,7 @@ class AppStore {
             feeds[idx].articles.insert(contentsOf: newArticles, at: 0)
             feeds[idx].unreadCount = feeds[idx].articles.filter { !$0.isRead }.count
             feeds[idx].lastFetched = Date()
+            purgeOldReadArticles()
             saveToStorage()
         } catch {
             errorMessage = error.localizedDescription
@@ -103,12 +141,9 @@ class AppStore {
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
             return try await MicrosoftTranslate.translate(text: text, apiKey: key)
-        case .deepl:                                                    // 新增
-            let key = Keychain.load(key: "deepl_translate_key") ?? ""   // 新增
-            return try await DeepLTranslate.translate(text: text, apiKey: key)  // 新增
-        case .gemini:                                                  // 新增
-            let key = Keychain.load(key: "gemini_translate_key") ?? "" // 新增
-            return try await GeminiTranslate.translate(text: text, apiKey: key)  // 新增
+        case .deepl:
+            let key = Keychain.load(key: "deepl_translate_key") ?? ""
+            return try await DeepLTranslate.translate(text: text, apiKey: key)
         case .ai:
             guard let providerID = defaultTranslationProviderID ?? defaultSummaryProviderID,
                   let provider = aiProviders.first(where: { $0.id == providerID }) else {
@@ -117,6 +152,109 @@ class AppStore {
             let key = Keychain.load(key: "ai_key_\(provider.id)") ?? ""
             return try await AITranslate.translate(text: text, provider: provider, apiKey: key)
         }
+    }
+
+    /// 按长度分段翻译，支持并发；返回完整译文
+    func translateLongText(_ text: String, maxChunkChars: Int = 1800) async throws -> String {
+        let chunks = Self.splitTextIntoChunks(text, maxChars: maxChunkChars)
+        guard !chunks.isEmpty else { return "" }
+        if chunks.count == 1 {
+            return try await translateText(chunks[0])
+        }
+        // 并发翻译各段
+        return try await withThrowingTaskGroup(of: (Int, String).self) { group in
+            for (index, chunk) in chunks.enumerated() {
+                group.addTask {
+                    let result = try await self.translateText(chunk)
+                    return (index, result)
+                }
+            }
+            var ordered = Array(repeating: "", count: chunks.count)
+            for try await (index, result) in group {
+                ordered[index] = result
+            }
+            return ordered.joined(separator: "\n\n")
+        }
+    }
+
+    /// 尽量按段落边界切分，避免在句子中间切断
+    static func splitTextIntoChunks(_ text: String, maxChars: Int) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        if trimmed.count <= maxChars { return [trimmed] }
+
+        var chunks: [String] = []
+        var current = ""
+        // 按换行优先，其次按句号/问号等
+        let paragraphs = trimmed.components(separatedBy: CharacterSet.newlines)
+
+        for para in paragraphs {
+            let p = para.trimmingCharacters(in: .whitespaces)
+            if p.isEmpty { continue }
+            if current.isEmpty {
+                if p.count > maxChars {
+                    // 超长段落再按句子切
+                    chunks.append(contentsOf: splitBySentence(p, maxChars: maxChars))
+                } else {
+                    current = p
+                }
+            } else if current.count + p.count + 1 <= maxChars {
+                current += "\n" + p
+            } else {
+                chunks.append(current)
+                if p.count > maxChars {
+                    chunks.append(contentsOf: splitBySentence(p, maxChars: maxChars))
+                    current = ""
+                } else {
+                    current = p
+                }
+            }
+        }
+        if !current.isEmpty { chunks.append(current) }
+        return chunks
+    }
+
+    private static func splitBySentence(_ text: String, maxChars: Int) -> [String] {
+        var result: [String] = []
+        var current = ""
+        let separators = CharacterSet(charactersIn: ".!?。！？\n")
+        var buffer = ""
+        for ch in text {
+            buffer.append(ch)
+            if String(ch).rangeOfCharacter(from: separators) != nil {
+                if current.count + buffer.count <= maxChars {
+                    current += buffer
+                } else {
+                    if !current.isEmpty { result.append(current) }
+                    current = buffer
+                }
+                buffer = ""
+            }
+        }
+        if !buffer.isEmpty {
+            if current.count + buffer.count <= maxChars {
+                current += buffer
+            } else {
+                if !current.isEmpty { result.append(current) }
+                current = buffer
+            }
+        }
+        if !current.isEmpty { result.append(current) }
+        // 仍超长则硬切
+        var final: [String] = []
+        for piece in result {
+            if piece.count <= maxChars {
+                final.append(piece)
+            } else {
+                var start = piece.startIndex
+                while start < piece.endIndex {
+                    let end = piece.index(start, offsetBy: maxChars, limitedBy: piece.endIndex) ?? piece.endIndex
+                    final.append(String(piece[start..<end]))
+                    start = end
+                }
+            }
+        }
+        return final
     }
 
     func generateSummary(for article: Article) async throws -> String {
@@ -149,7 +287,7 @@ class AppStore {
         let imported = parser.parse()
         for item in imported {
             if !feeds.contains(where: { $0.url == item.url }) {
-                var feed = RSSFeed(title: item.title, url: item.url)
+                let feed = RSSFeed(title: item.title, url: item.url)
                 feeds.append(feed)
             }
         }
@@ -184,13 +322,27 @@ class AppStore {
         if let data = UserDefaults.standard.data(forKey: "aiProviders"),
            let decoded = try? JSONDecoder().decode([AIProvider].self, from: data) {
             aiProviders = decoded
+            // 兼容：旧数据没有 kind 字段时默认 openai；名称含 Gemini 的标为 gemini
+            for i in aiProviders.indices {
+                if aiProviders[i].kind.isEmpty {
+                    aiProviders[i].kind = "openai"
+                }
+                if aiProviders[i].name.lowercased().contains("gemini") {
+                    aiProviders[i].kind = "gemini"
+                }
+            }
         }
         fontSize = UserDefaults.standard.double(forKey: "fontSize").isZero ? 17 : UserDefaults.standard.double(forKey: "fontSize")
         if let raw = UserDefaults.standard.string(forKey: "titleDisplayMode") {
             titleDisplayMode = TitleDisplayMode(rawValue: raw) ?? .original
         }
         if let raw = UserDefaults.standard.string(forKey: "defaultTranslationEngine") {
-            defaultTranslationEngine = TranslationEngine(rawValue: raw) ?? .google
+            // 迁移旧的 Gemini 选项
+            if raw == "Gemini" {
+                defaultTranslationEngine = .ai
+            } else {
+                defaultTranslationEngine = TranslationEngine(rawValue: raw) ?? .google
+            }
         }
         if let idStr = UserDefaults.standard.string(forKey: "defaultSummaryProviderID") {
             defaultSummaryProviderID = UUID(uuidString: idStr)

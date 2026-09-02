@@ -50,9 +50,8 @@ enum TitleDisplayMode: String, CaseIterable, Codable {
 enum TranslationEngine: String, CaseIterable, Codable {
     case google = "Google 翻译"
     case microsoft = "Microsoft 翻译"
-    case deepl = "DeepL"   // 新增
-    case gemini = "Gemini" 
-    case ai = "AI 翻译"
+    case deepl = "DeepL"
+    case ai = "AI 翻译"   // Gemini / OpenAI / Anthropic 等统一走 AI Provider
 }
 
 // MARK: - AI Provider
@@ -62,14 +61,49 @@ struct AIProvider: Identifiable, Codable, Hashable {
     var name: String
     var baseURL: String
     var model: String
+    /// 特殊标识：gemini 走 Google Generative Language API，其余走 OpenAI 兼容接口
+    var kind: String = "openai" // "openai" | "gemini"
     var isDefaultSummary: Bool = false
     var isDefaultTranslation: Bool = false
 
+    enum CodingKeys: String, CodingKey {
+        case id, name, baseURL, model, kind, isDefaultSummary, isDefaultTranslation
+    }
+
+    init(id: UUID = UUID(), name: String, baseURL: String, model: String, kind: String = "openai",
+         isDefaultSummary: Bool = false, isDefaultTranslation: Bool = false) {
+        self.id = id
+        self.name = name
+        self.baseURL = baseURL
+        self.model = model
+        self.kind = kind
+        self.isDefaultSummary = isDefaultSummary
+        self.isDefaultTranslation = isDefaultTranslation
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        baseURL = try c.decode(String.self, forKey: .baseURL)
+        model = try c.decode(String.self, forKey: .model)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "openai"
+        isDefaultSummary = try c.decodeIfPresent(Bool.self, forKey: .isDefaultSummary) ?? false
+        isDefaultTranslation = try c.decodeIfPresent(Bool.self, forKey: .isDefaultTranslation) ?? false
+        if name.lowercased().contains("gemini") { kind = "gemini" }
+    }
+
     static let openAITemplate = AIProvider(
-        name: "OpenAI", baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini"
+        name: "OpenAI", baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini", kind: "openai"
     )
     static let anthropicTemplate = AIProvider(
-        name: "Anthropic", baseURL: "https://api.anthropic.com/v1", model: "claude-3-haiku-20240307"
+        name: "Anthropic", baseURL: "https://api.anthropic.com/v1", model: "claude-3-haiku-20240307", kind: "openai"
+    )
+    static let geminiTemplate = AIProvider(
+        name: "Gemini",
+        baseURL: "https://generativelanguage.googleapis.com/v1beta",
+        model: "gemini-2.0-flash",
+        kind: "gemini"
     )
 }
 

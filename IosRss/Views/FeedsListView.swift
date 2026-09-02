@@ -4,8 +4,6 @@ struct FeedsListView: View {
     @Environment(AppStore.self) private var store
     @State private var selectedFeed: RSSFeed?
     @State private var showFeed = false
-    @State private var selectedArticle: Article?
-    @State private var showArticle = false
     @State private var showAddFeed = false
     @State private var showOPMLMenu = false
     @State private var showOPMLImport = false
@@ -73,29 +71,12 @@ struct FeedsListView: View {
             }
         }
         .sheet(isPresented: $showOPMLExportSheet) { OPMLExportView(text: opmlExportText) }
-        // Feed article list — presented from root
+        // Feed article list — presented from root; the article reader is
+        // now presented from within ArticleListView, so back-navigation is
+        // hierarchical: Reader → Article List → Feed List.
         .sheet(isPresented: $showFeed) {
             if let feed = selectedFeed {
-                ArticleListView(
-                    feed: feed,
-                    isPresented: $showFeed,
-                    onOpenArticle: { article in
-                        selectedArticle = article
-                        // Dismiss feed sheet first, then open article
-                        showFeed = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            showArticle = true
-                        }
-                    }
-                )
-                .presentationDetents([.large])
-                .presentationDragIndicator(.hidden)
-            }
-        }
-        // Article reader — also at root level, never nested
-        .sheet(isPresented: $showArticle) {
-            if let article = selectedArticle {
-                ArticleReaderView(article: article, isPresented: $showArticle)
+                ArticleListView(feed: feed, isPresented: $showFeed)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.hidden)
             }

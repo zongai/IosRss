@@ -56,9 +56,9 @@ struct ArticleListView: View {
                         } else {
                             Text("译")
                                 .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(showAllTranslations ? .white : .primary)
+                                .foregroundStyle(showAllTranslations ? Color(.systemBackground) : Color.primary)
                                 .frame(width: 26, height: 26)
-                                .background(showAllTranslations ? .black : Color.secondary.opacity(0.12),
+                                .background(showAllTranslations ? Color.primary : Color.secondary.opacity(0.15),
                                             in: .rect(cornerRadius: 6))
                         }
                     }
@@ -127,21 +127,21 @@ struct ArticleRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(displayTitle)
                     .font(.system(size: 16, weight: article.isRead ? .regular : .semibold))
-                    .foregroundStyle(article.isRead ? .secondary : .primary)
+                    .foregroundStyle(article.isRead ? Color.secondary : Color.primary)
                     .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 if showTranslation && store.titleDisplayMode == .bilingual && article.translatedTitle != nil {
                     Text(article.title).font(.system(size: 13))
-                        .foregroundStyle(.secondary).lineLimit(2)
+                        .foregroundStyle(Color.secondary).lineLimit(2)
                 }
                 HStack(spacing: 6) {
-                    Text(article.feedTitle).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(article.feedTitle).font(.system(size: 12)).foregroundStyle(Color.secondary)
                     if !article.relativeTime.isEmpty {
-                        Text("·").font(.system(size: 12)).foregroundStyle(.tertiary)
-                        Text(article.relativeTime).font(.system(size: 12)).foregroundStyle(.secondary)
+                        Text("·").font(.system(size: 12)).foregroundStyle(Color.secondary.opacity(0.6))
+                        Text(article.relativeTime).font(.system(size: 12)).foregroundStyle(Color.secondary)
                     }
                 }
                 if !article.summary.isEmpty {
-                    Text(article.summary).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(2)
+                    Text(article.summary).font(.system(size: 13)).foregroundStyle(Color.secondary).lineLimit(2)
                 }
             }
             .padding(.vertical, 14)

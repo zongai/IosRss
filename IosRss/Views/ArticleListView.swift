@@ -4,9 +4,16 @@ struct ArticleListView: View {
     @Environment(AppStore.self) private var store
     let feed: RSSFeed
     @Binding var isPresented: Bool
-    let onOpenArticle: (Article) -> Void
 
-    private var articles: [Article] { store.articlesForFeed(feed.id) }
+    @State private var selectedArticle: Article?
+    @State private var showArticle = false
+    @State private var showAllTranslations = false
+    @State private var isTranslatingAll = false
+
+    /// 自动隐藏已读文章
+    private var articles: [Article] {
+        store.articlesForFeed(feed.id).filter { !$0.isRead }
+    }
 
     var body: some View {
         NavigationStack {
@@ -14,14 +21,18 @@ struct ArticleListView: View {
                 ForEach(articles) { article in
                     Button {
                         store.markAsRead(article)
-                        onOpenArticle(article)
-                    } label: { ArticleRow(article: article) }
+                        selectedArticle = article
+                        showArticle = true
+                    } label: {
+                        ArticleRow(article: article, showTranslation: showAllTranslations)
+                    }
                     .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     .listRowSeparator(.hidden)
                 }
             }
             .listStyle(.plain)
+            .animation(.default, value: articles.map(\.id))
             .navigationTitle(feed.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -36,7 +47,23 @@ struct ArticleListView: View {
                         .foregroundStyle(.primary)
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        Task { await toggleTranslateAll() }
+                    } label: {
+                        if isTranslatingAll {
+                            ProgressView().scaleEffect(0.75)
+                        } else {
+                            Text("译")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(showAllTranslations ? .white : .primary)
+                                .frame(width: 26, height: 26)
+                                .background(showAllTranslations ? .black : Color.secondary.opacity(0.12),
+                                            in: .rect(cornerRadius: 6))
+                        }
+                    }
+                    .disabled(isTranslatingAll)
+
                     Button("刷新", systemImage: "arrow.clockwise") {
                         Task { await store.refreshFeed(feed.id) }
                     }
@@ -50,6 +77,36 @@ struct ArticleListView: View {
             }
             .refreshable { await store.refreshFeed(feed.id) }
         }
+        // Article reader — nested under the article list, so returning from
+        // the reader comes back here rather than jumping to the feed list.
+        .sheet(isPresented: $showArticle) {
+            if let article = selectedArticle {
+                ArticleReaderView(article: article, isPresented: $showArticle)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.hidden)
+            }
+        }
+    }
+
+    /// 一次点击翻译所有标题；再次点击切换回原文
+    private func toggleTranslateAll() async {
+        if showAllTranslations {
+            showAllTranslations = false
+            return
+        }
+        let needTranslation = articles.filter { $0.translatedTitle == nil }
+        if !needTranslation.isEmpty {
+            isTranslatingAll = true
+            for article in needTranslation {
+                if let result = try? await store.translateText(article.title) {
+                    var updated = article
+                    updated.translatedTitle = result
+                    store.updateArticle(updated)
+                }
+            }
+            isTranslatingAll = false
+        }
+        showAllTranslations = true
     }
 }
 
@@ -58,31 +115,23 @@ struct ArticleListView: View {
 struct ArticleRow: View {
     @Environment(AppStore.self) private var store
     let article: Article
-    @State private var isTranslatingTitle = false
-    @State private var translatedTitle: String?
-    @State private var showTranslation = false
+    let showTranslation: Bool
 
     var displayTitle: String {
-        if showTranslation, let t = translatedTitle ?? article.translatedTitle { return t }
+        if showTranslation, let t = article.translatedTitle { return t }
         return article.title
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .top, spacing: 6) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(displayTitle)
-                            .font(.system(size: 16, weight: article.isRead ? .regular : .semibold))
-                            .foregroundStyle(article.isRead ? .secondary : .primary)
-                            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                        if showTranslation && store.titleDisplayMode == .bilingual {
-                            Text(article.title).font(.system(size: 13))
-                                .foregroundStyle(.secondary).lineLimit(2)
-                        }
-                    }
-                    Spacer(minLength: 6)
-                    translateButton
+                Text(displayTitle)
+                    .font(.system(size: 16, weight: article.isRead ? .regular : .semibold))
+                    .foregroundStyle(article.isRead ? .secondary : .primary)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                if showTranslation && store.titleDisplayMode == .bilingual && article.translatedTitle != nil {
+                    Text(article.title).font(.system(size: 13))
+                        .foregroundStyle(.secondary).lineLimit(2)
                 }
                 HStack(spacing: 6) {
                     Text(article.feedTitle).font(.system(size: 12)).foregroundStyle(.secondary)
@@ -98,32 +147,5 @@ struct ArticleRow: View {
             .padding(.vertical, 14)
             Divider()
         }
-    }
-
-    var translateButton: some View {
-        Button { Task { await toggleTranslation() } } label: {
-            if isTranslatingTitle {
-                ProgressView().scaleEffect(0.65).frame(width: 24, height: 24)
-            } else {
-                Text("译").font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(showTranslation ? .white : .secondary)
-                    .frame(width: 24, height: 24)
-                    .background(showTranslation ? .black : Color.secondary.opacity(0.12),
-                                in: .rect(cornerRadius: 4))
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func toggleTranslation() async {
-        if showTranslation { showTranslation = false; return }
-        if let cached = article.translatedTitle { translatedTitle = cached; showTranslation = true; return }
-        isTranslatingTitle = true
-        if let result = try? await store.translateText(article.title) {
-            translatedTitle = result
-            var updated = article; updated.translatedTitle = result
-            store.updateArticle(updated); showTranslation = true
-        }
-        isTranslatingTitle = false
     }
 }

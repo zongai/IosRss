@@ -18,7 +18,8 @@
 		5C020000000000000000000b  = {isa = PBXBuildFile; fileRef = 5C010000000000000000000b ; };
 		5C020000000000000000000c  = {isa = PBXBuildFile; fileRef = 5C010000000000000000000c ; };
 		5C0000000000000000000006  = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "IosRss.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		5C0100000000000000000001  = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContentView.swift"; sourceTree = "<group>"; };
+		5C0100000000000000000000  = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Assets.xcassets"; sourceTree = "<group>";};
+        5C0100000000000000000001  = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContentView.swift"; sourceTree = "<group>"; };
 		5C0100000000000000000002  = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Models/AppStore.swift"; sourceTree = "<group>"; };
 		5C0100000000000000000003  = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Models/FeedModels.swift"; sourceTree = "<group>"; };
 		5C0100000000000000000004  = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Services/FeedParser.swift"; sourceTree = "<group>"; };

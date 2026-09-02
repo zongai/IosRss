@@ -82,7 +82,7 @@ struct AddFeedView: View {
                                     }
                                     Spacer()
                                     Image(systemName: "plus.circle")
-                                        .foregroundStyle(.black)
+                                        .foregroundStyle(Color.primary)
                                 }
                                 .padding(.vertical, 12)
                                 .padding(.horizontal, 20)
@@ -107,8 +107,8 @@ struct AddFeedView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
-                    .background(.black)
-                    .foregroundStyle(.white)
+                    .background(Color.primary)
+                    .foregroundStyle(Color(.systemBackground))
                     .clipShape(.rect(cornerRadius: 12))
                     .padding(.horizontal, 20)
                     .padding(.bottom, 24)

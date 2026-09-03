@@ -60,7 +60,6 @@ enum GoogleTranslate {
         }
 
         var request = URLRequest(url: url)
-        // 部分网络环境下没有 UA 会被拦截，加上常见浏览器 UA 更稳妥
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -76,7 +75,6 @@ enum GoogleTranslate {
             throw TranslationError.apiError("解析响应失败: \(raw)")
         }
 
-        // 逐个元素安全解析，跳过 NSNull 或其他非数组项，避免因单个字段异常导致整体失败
         let result = firstElement.compactMap { segment -> String? in
             guard let segArray = segment as? [Any],
                   let text = segArray.first as? String else { return nil }
@@ -91,6 +89,7 @@ enum GoogleTranslate {
         return result
     }
 }
+
 // MARK: - Microsoft Translator
 
 enum MicrosoftTranslate {
@@ -115,30 +114,34 @@ enum MicrosoftTranslate {
     }
 }
 
-// MARK: - AI Translation
+// MARK: - Unified AI Translation / Summary
 
 enum AITranslate {
     static func translate(text: String, provider: AIProvider, apiKey: String) async throws -> String {
         guard !apiKey.isEmpty else { throw TranslationError.apiError("未配置 API Key") }
         let prompt = "请将以下内容翻译成中文，只输出译文，不要解释：\n\n\(text)"
-        return try await callOpenAICompatible(prompt: prompt, provider: provider, apiKey: apiKey)
+        return try await callAI(prompt: prompt, provider: provider, apiKey: apiKey, maxTokens: 2048)
     }
 }
-
-// MARK: - AI Summary
 
 enum AISummary {
     static func summarize(article: Article, provider: AIProvider, apiKey: String) async throws -> String {
         guard !apiKey.isEmpty else { throw TranslationError.apiError("未配置 API Key") }
-        let content = article.content.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-        let prompt = "请用3-5句话概括以下文章的核心内容，用中文回答，每句话用换行分隔：\n\n标题：\(article.title)\n\n内容：\(content.prefix(2000))"
-        return try await callOpenAICompatible(prompt: prompt, provider: provider, apiKey: apiKey)
+        let content = HTMLUtils.stripTags(article.content)
+        let prompt = "请用3-5句话概括以下文章的核心内容，用中文回答，每句话用换行分隔：\n\n标题：\(article.title)\n\n内容：\(content.prefix(2500))"
+        return try await callAI(prompt: prompt, provider: provider, apiKey: apiKey, maxTokens: 600)
     }
 }
 
-// MARK: - OpenAI-Compatible API Call
+/// 统一入口：根据 provider.kind 走 Gemini 或 OpenAI 兼容接口
+func callAI(prompt: String, provider: AIProvider, apiKey: String, maxTokens: Int = 500) async throws -> String {
+    if provider.kind == "gemini" || provider.name.lowercased().contains("gemini") {
+        return try await callGemini(prompt: prompt, provider: provider, apiKey: apiKey)
+    }
+    return try await callOpenAICompatible(prompt: prompt, provider: provider, apiKey: apiKey, maxTokens: maxTokens)
+}
 
-func callOpenAICompatible(prompt: String, provider: AIProvider, apiKey: String) async throws -> String {
+func callOpenAICompatible(prompt: String, provider: AIProvider, apiKey: String, maxTokens: Int = 500) async throws -> String {
     let baseURL = provider.baseURL.hasSuffix("/") ? String(provider.baseURL.dropLast()) : provider.baseURL
     guard let url = URL(string: "\(baseURL)/chat/completions") else {
         throw TranslationError.apiError("无效的 Base URL")
@@ -150,7 +153,7 @@ func callOpenAICompatible(prompt: String, provider: AIProvider, apiKey: String) 
     let body: [String: Any] = [
         "model": provider.model,
         "messages": [["role": "user", "content": prompt]],
-        "max_tokens": 500
+        "max_tokens": maxTokens
     ]
     request.httpBody = try? JSONSerialization.data(withJSONObject: body)
     let (data, response) = try await URLSession.shared.data(for: request)
@@ -170,48 +173,113 @@ func callOpenAICompatible(prompt: String, provider: AIProvider, apiKey: String) 
     return content.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-// MARK: - Gemini
+func callGemini(prompt: String, provider: AIProvider, apiKey: String) async throws -> String {
+    let model = provider.model.isEmpty ? "gemini-2.0-flash" : provider.model
+    let urlStr = "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)"
+    guard let url = URL(string: urlStr) else {
+        throw TranslationError.apiError("无效的 Gemini URL")
+    }
 
-enum GeminiTranslate {
-    static func translate(text: String, apiKey: String, targetLang: String = "中文", model: String = "gemini-2.0-flash") async throws -> String {
-        guard !apiKey.isEmpty else { throw TranslationError.apiError("未配置 Gemini API Key") }
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let urlStr = "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)"
-        guard let url = URL(string: urlStr) else {
-            throw TranslationError.apiError("无效的 Gemini URL")
-        }
-
-        let prompt = "请将以下内容翻译成\(targetLang)，只输出译文，不要解释，不要添加任何前缀或引号：\n\n\(text)"
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let body: [String: Any] = [
-            "contents": [
-                ["parts": [["text": prompt]]]
-            ]
+    let body: [String: Any] = [
+        "contents": [
+            ["parts": [["text": prompt]]]
         ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+    ]
+    request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+    let (data, response) = try await URLSession.shared.data(for: request)
 
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw TranslationError.apiError("Gemini API 错误 \(http.statusCode): \(msg.prefix(200))")
+    if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+        let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
+        throw TranslationError.apiError("Gemini API 错误 \(http.statusCode): \(msg.prefix(200))")
+    }
+
+    struct Part: Decodable { let text: String }
+    struct Content: Decodable { let parts: [Part] }
+    struct Candidate: Decodable { let content: Content }
+    struct Resp: Decodable { let candidates: [Candidate] }
+
+    guard let resp = try? JSONDecoder().decode(Resp.self, from: data),
+          let text = resp.candidates.first?.content.parts.first?.text else {
+        let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
+        throw TranslationError.apiError("解析 Gemini 响应失败: \(raw)")
+    }
+
+    return text.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+// MARK: - HTML Utilities (entities + strip)
+
+enum HTMLUtils {
+    /// 解码常见 HTML 实体（含数字实体如 &#8216;）
+    static func decodeEntities(_ html: String) -> String {
+        var result = html
+        // 命名实体
+        let named: [(String, String)] = [
+            ("&amp;", "&"),
+            ("&lt;", "<"),
+            ("&gt;", ">"),
+            ("&quot;", "\""),
+            ("&apos;", "'"),
+            ("&#39;", "'"),
+            ("&nbsp;", " "),
+            ("&ldquo;", "\u{201C}"),
+            ("&rdquo;", "\u{201D}"),
+            ("&lsquo;", "\u{2018}"),
+            ("&rsquo;", "\u{2019}"),
+            ("&mdash;", "\u{2014}"),
+            ("&ndash;", "\u{2013}"),
+            ("&hellip;", "\u{2026}"),
+            ("&copy;", "©"),
+            ("&reg;", "®"),
+            ("&trade;", "™"),
+        ]
+        for (entity, char) in named {
+            result = result.replacingOccurrences(of: entity, with: char)
         }
-
-        struct Part: Decodable { let text: String }
-        struct Content: Decodable { let parts: [Part] }
-        struct Candidate: Decodable { let content: Content }
-        struct Resp: Decodable { let candidates: [Candidate] }
-
-        guard let resp = try? JSONDecoder().decode(Resp.self, from: data),
-              let text = resp.candidates.first?.content.parts.first?.text else {
-            let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
-            throw TranslationError.apiError("解析 Gemini 响应失败: \(raw)")
+        // 十进制数字实体 &#8216;
+        if let regex = try? NSRegularExpression(pattern: "&#(\\d+);", options: []) {
+            let ns = result as NSString
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()
+            for match in matches {
+                let numRange = match.range(at: 1)
+                if let range = Range(numRange, in: result),
+                   let code = Int(result[range]),
+                   let scalar = Unicode.Scalar(code) {
+                    let fullRange = Range(match.range, in: result)!
+                    result.replaceSubrange(fullRange, with: String(Character(scalar)))
+                }
+            }
         }
+        // 十六进制 &#x2018;
+        if let regex = try? NSRegularExpression(pattern: "&#x([0-9a-fA-F]+);", options: []) {
+            let ns = result as NSString
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()
+            for match in matches {
+                let numRange = match.range(at: 1)
+                if let range = Range(numRange, in: result),
+                   let code = Int(result[range], radix: 16),
+                   let scalar = Unicode.Scalar(code) {
+                    let fullRange = Range(match.range, in: result)!
+                    result.replaceSubrange(fullRange, with: String(Character(scalar)))
+                }
+            }
+        }
+        return result
+    }
 
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func stripTags(_ html: String) -> String {
+        var result = html
+        result = result.replacingOccurrences(of: "<![CDATA[", with: "")
+        result = result.replacingOccurrences(of: "]]>", with: "")
+        result = result.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
+        result = result.replacingOccurrences(of: #"</p>|</div>|</li>|</h[1-6]>"#, with: "\n", options: .regularExpression)
+        result = result.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        result = decodeEntities(result)
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

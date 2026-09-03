@@ -3,8 +3,8 @@ import SafariServices
 
 struct ArticleReaderView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
     let article: Article
-    @Binding var isPresented: Bool
 
     @State private var isTranslating = false
     @State private var isGeneratingSummary = false
@@ -28,6 +28,7 @@ struct ArticleReaderView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    // Header
                     VStack(alignment: .leading, spacing: 8) {
                         Text(currentArticle.title)
                             .font(.system(size: 24, weight: .bold, design: .serif))
@@ -56,6 +57,7 @@ struct ArticleReaderView: View {
 
                     Divider()
 
+                    // AI Summary card
                     if let summary = aiSummary ?? currentArticle.aiSummary {
                         AISummaryCard(summary: summary, expanded: $summaryExpanded)
                             .padding(.horizontal, 20).padding(.top, 16)
@@ -85,6 +87,7 @@ struct ArticleReaderView: View {
                             .padding(.horizontal, 20).padding(.top, 8)
                     }
 
+                    // 摘要过短时的提示条
                     if currentArticle.needsFullContentFetch && !isFetchingFull {
                         Button {
                             Task { await fetchFullContent() }
@@ -108,6 +111,7 @@ struct ArticleReaderView: View {
                         .padding(.top, 12)
                     }
 
+                    // Content
                     let displayContent = showTranslated
                         ? (translatedContent ?? currentArticle.translatedContent ?? currentArticle.content)
                         : currentArticle.content
@@ -120,7 +124,7 @@ struct ArticleReaderView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { isPresented = false } label: {
+                    Button { dismiss() } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "chevron.left").font(.system(size: 16, weight: .semibold))
                             Text("返回")
@@ -129,6 +133,7 @@ struct ArticleReaderView: View {
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    // 获取全文
                     Button {
                         Task { await fetchFullContent() }
                     } label: {
@@ -179,6 +184,7 @@ struct ArticleReaderView: View {
         .background(Color(.systemBackground))
         .onAppear {
             aiSummary = currentArticle.aiSummary
+            // 摘要很短时自动尝试抓取全文（仅一次）
             if currentArticle.needsFullContentFetch {
                 Task { await fetchFullContent(silent: true) }
             }
@@ -197,9 +203,11 @@ struct ArticleReaderView: View {
         }
         do {
             let updated = try await store.fetchFullContent(for: currentArticle)
+            // 若正在看译文，切换回新正文
             showTranslated = false
             translatedContent = nil
             fullContentHint = silent ? nil : "已获取全文（约 \(HTMLUtils.stripTags(updated.content).count) 字）"
+            // 自动提示几秒后消失
             if !silent {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 if fullContentHint?.contains("已获取全文") == true {
@@ -274,6 +282,8 @@ struct ArticleReaderView: View {
     }
 }
 
+// MARK: - In-App Safari Browser
+
 struct SafariView: UIViewControllerRepresentable {
     let url: URL
 
@@ -287,6 +297,8 @@ struct SafariView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
 }
+
+// MARK: - AI Summary Card
 
 struct AISummaryCard: View {
     let summary: String
@@ -346,6 +358,8 @@ struct AISummaryCard: View {
     }
 }
 
+// MARK: - Article Content View (supports images + HTML entities)
+
 struct ArticleContentView: View {
     let html: String
     let fontSize: Double
@@ -397,6 +411,8 @@ struct ArticleContentView: View {
         }
     }
 }
+
+// MARK: - Content Block Parser
 
 enum ContentBlock {
     case paragraph(String)

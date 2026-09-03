@@ -5,7 +5,17 @@ import Foundation
 enum DeepLTranslate {
     /// DeepL Free API Key 通常以 ":fx" 结尾，会自动使用对应的免费端点
     static func translate(text: String, apiKey: String, targetLang: String = "ZH") async throws -> String {
+        let all = try await translate(texts: [text], apiKey: apiKey, targetLang: targetLang)
+        guard let first = all.first, !first.isEmpty else {
+            throw TranslationError.apiError("解析 DeepL 响应失败")
+        }
+        return first
+    }
+
+    /// 一次请求翻译多段文本，顺序与输入一致
+    static func translate(texts: [String], apiKey: String, targetLang: String = "ZH") async throws -> [String] {
         guard !apiKey.isEmpty else { throw TranslationError.apiError("未配置 DeepL API Key") }
+        guard !texts.isEmpty else { return [] }
 
         let isFreeKey = apiKey.hasSuffix(":fx")
         let baseURL = isFreeKey
@@ -22,7 +32,7 @@ enum DeepLTranslate {
         request.setValue("DeepL-Auth-Key \(apiKey)", forHTTPHeaderField: "Authorization")
 
         let body: [String: Any] = [
-            "text": [text],
+            "text": texts,
             "target_lang": targetLang
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -41,11 +51,11 @@ enum DeepLTranslate {
         struct Resp: Decodable { let translations: [Translation] }
 
         guard let resp = try? JSONDecoder().decode(Resp.self, from: data),
-              let first = resp.translations.first else {
+              resp.translations.count == texts.count else {
             throw TranslationError.apiError("解析 DeepL 响应失败")
         }
 
-        return first.text
+        return resp.translations.map(\.text)
     }
 }
 
@@ -94,23 +104,37 @@ enum GoogleTranslate {
 
 enum MicrosoftTranslate {
     static func translate(text: String, apiKey: String, targetLang: String = "zh-Hans") async throws -> String {
+        let all = try await translate(texts: [text], apiKey: apiKey, targetLang: targetLang)
+        guard let first = all.first, !first.isEmpty else {
+            throw TranslationError.apiError("Microsoft Translator 返回无效响应")
+        }
+        return first
+    }
+
+    /// 一次请求翻译多段文本，顺序与输入一致
+    static func translate(texts: [String], apiKey: String, targetLang: String = "zh-Hans") async throws -> [String] {
         guard !apiKey.isEmpty else { throw TranslationError.apiError("未配置 Microsoft Translator API Key") }
+        guard !texts.isEmpty else { return [] }
         let url = URL(string: "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=\(targetLang)")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
-        request.httpBody = try? JSONEncoder().encode([["Text": text]])
-        let (data, _) = try await URLSession.shared.data(for: request)
+        request.httpBody = try JSONEncoder().encode(texts.map { ["Text": $0] })
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw TranslationError.apiError("Microsoft Translator 错误 \(http.statusCode): \(msg.prefix(200))")
+        }
         struct Response: Decodable {
             struct Translation: Decodable { let text: String; let to: String }
             let translations: [Translation]
         }
-        if let results = try? JSONDecoder().decode([Response].self, from: data),
-           let first = results.first?.translations.first {
-            return first.text
+        guard let results = try? JSONDecoder().decode([Response].self, from: data),
+              results.count == texts.count else {
+            throw TranslationError.apiError("Microsoft Translator 返回无效响应")
         }
-        throw TranslationError.apiError("Microsoft Translator 返回无效响应")
+        return results.map { $0.translations.first?.text ?? "" }
     }
 }
 

@@ -8,6 +8,7 @@
 - **智能命名**：添加时优先解析 `channel` / `feed` 的 title；没有名称时仅用清理后的域名（去掉协议、路径、`www.`）
 - **全文阅读**：RSS 摘要过短（约 <400 字）时自动或手动从原文页抓取正文（启发式可读性提取）
 - **翻译**：Google / Microsoft / DeepL，以及统一 AI 翻译（OpenAI 兼容接口 + Gemini）
+- **列表翻译**：点「译」同时翻译标题和文章预览；每 6 条一批，译完一批立刻刷新列表；DeepL / Microsoft 走批量接口，Google / AI 有限并发
 - **长文翻译**：`translateLongText` 按约 1800 字分块并发翻译后拼接
 - **AI 摘要**：可配置多个 Provider（OpenAI、Anthropic、Gemini 等），Key 存 Keychain
 - **已读清理**：启动与刷新时自动清理超过 7 天的已读文章
@@ -57,6 +58,8 @@ IosRss/
 | 全文抓取 | `ArticleContentFetcher` + `AppStore.fetchFullContent` |
 | AI 统一调用 | `callAI` → `callGemini` / `callOpenAICompatible` |
 | 长文分块翻译 | `AppStore.translateLongText`（约 1800 字符） |
+| 列表分批翻译（标题+预览） | `ArticleListView.toggleTranslateAll` + `AppStore.translateTexts` |
+| 文章列表首次打开 | `.sheet(item:)` 传 feed；本地为空时自动 `refreshFeed` |
 | 已读过期清理 | `AppStore.purgeOldReadArticles`（7 天） |
 
 ## License

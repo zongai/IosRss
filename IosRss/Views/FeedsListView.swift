@@ -3,7 +3,6 @@ import SwiftUI
 struct FeedsListView: View {
     @Environment(AppStore.self) private var store
     @State private var selectedFeed: RSSFeed?
-    @State private var showFeed = false
     @State private var showAddFeed = false
     @State private var showOPMLMenu = false
     @State private var showOPMLImport = false
@@ -18,8 +17,9 @@ struct FeedsListView: View {
                 } else {
                     ForEach(store.feeds) { feed in
                         Button {
+                            // Use sheet(item:) so the first presentation always
+                            // has a concrete feed (isPresented + optional was blank).
                             selectedFeed = feed
-                            showFeed = true
                         } label: { FeedRow(feed: feed) }
                         .buttonStyle(.plain)
                         .swipeActions(edge: .trailing) {
@@ -71,12 +71,13 @@ struct FeedsListView: View {
             }
         }
         .sheet(isPresented: $showOPMLExportSheet) { OPMLExportView(text: opmlExportText) }
-        .sheet(isPresented: $showFeed) {
-            if let feed = selectedFeed {
-                ArticleListView(feed: feed, isPresented: $showFeed)
-                    .presentationDetents([.large])
-                    .presentationDragIndicator(.hidden)
-            }
+        // Feed article list — presented from root; the article reader is
+        // now presented from within ArticleListView, so back-navigation is
+        // hierarchical: Reader → Article List → Feed List.
+        .sheet(item: $selectedFeed) { feed in
+            ArticleListView(feed: feed)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
         }
     }
 

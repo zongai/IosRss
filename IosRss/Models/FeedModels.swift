@@ -26,6 +26,7 @@ struct Article: Identifiable, Codable, Hashable {
     var publishedDate: Date?
     var isRead: Bool = false
     var translatedTitle: String?
+    var translatedSummary: String?
     var translatedContent: String?
     var aiSummary: String?
     /// 是否已从原文页抓取过全文
@@ -33,12 +34,13 @@ struct Article: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, feedID, feedTitle, title, link, summary, content
-        case publishedDate, isRead, translatedTitle, translatedContent, aiSummary, hasFullContent
+        case publishedDate, isRead, translatedTitle, translatedSummary, translatedContent, aiSummary, hasFullContent
     }
 
     init(id: UUID = UUID(), feedID: UUID, feedTitle: String, title: String, link: String,
          summary: String, content: String, publishedDate: Date? = nil, isRead: Bool = false,
-         translatedTitle: String? = nil, translatedContent: String? = nil, aiSummary: String? = nil,
+         translatedTitle: String? = nil, translatedSummary: String? = nil,
+         translatedContent: String? = nil, aiSummary: String? = nil,
          hasFullContent: Bool = false) {
         self.id = id
         self.feedID = feedID
@@ -50,6 +52,7 @@ struct Article: Identifiable, Codable, Hashable {
         self.publishedDate = publishedDate
         self.isRead = isRead
         self.translatedTitle = translatedTitle
+        self.translatedSummary = translatedSummary
         self.translatedContent = translatedContent
         self.aiSummary = aiSummary
         self.hasFullContent = hasFullContent
@@ -67,6 +70,7 @@ struct Article: Identifiable, Codable, Hashable {
         publishedDate = try c.decodeIfPresent(Date.self, forKey: .publishedDate)
         isRead = try c.decodeIfPresent(Bool.self, forKey: .isRead) ?? false
         translatedTitle = try c.decodeIfPresent(String.self, forKey: .translatedTitle)
+        translatedSummary = try c.decodeIfPresent(String.self, forKey: .translatedSummary)
         translatedContent = try c.decodeIfPresent(String.self, forKey: .translatedContent)
         aiSummary = try c.decodeIfPresent(String.self, forKey: .aiSummary)
         hasFullContent = try c.decodeIfPresent(Bool.self, forKey: .hasFullContent) ?? false
@@ -101,7 +105,7 @@ enum TranslationEngine: String, CaseIterable, Codable {
     case google = "Google 翻译"
     case microsoft = "Microsoft 翻译"
     case deepl = "DeepL"
-    case ai = "AI 翻译"
+    case ai = "AI 翻译"   // Gemini / OpenAI / Anthropic 等统一走 AI Provider
 }
 
 // MARK: - AI Provider
@@ -111,7 +115,8 @@ struct AIProvider: Identifiable, Codable, Hashable {
     var name: String
     var baseURL: String
     var model: String
-    var kind: String = "openai"
+    /// 特殊标识：gemini 走 Google Generative Language API，其余走 OpenAI 兼容接口
+    var kind: String = "openai" // "openai" | "gemini"
     var isDefaultSummary: Bool = false
     var isDefaultTranslation: Bool = false
 
@@ -156,6 +161,8 @@ struct AIProvider: Identifiable, Codable, Hashable {
     )
 }
 
+// MARK: - Keychain Helper (UserDefaults-backed, base64-encoded)
+
 enum Keychain {
     private static let prefix = "feed_kc_"
 
@@ -172,5 +179,22 @@ enum Keychain {
 
     static func delete(key: String) {
         UserDefaults.standard.removeObject(forKey: prefix + key)
+    }
+}
+
+// MARK: - Collection helpers
+
+extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0, !isEmpty else { return isEmpty ? [] : [self] }
+        var result: [[Element]] = []
+        result.reserveCapacity((count + size - 1) / size)
+        var i = startIndex
+        while i < endIndex {
+            let j = index(i, offsetBy: size, limitedBy: endIndex) ?? endIndex
+            result.append(Array(self[i..<j]))
+            i = j
+        }
+        return result
     }
 }

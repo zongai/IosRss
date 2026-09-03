@@ -91,6 +91,7 @@ class AppStore {
             let before = feeds[i].articles.count
             feeds[i].articles.removeAll { article in
                 guard article.isRead else { return false }
+                // 优先用发布时间，没有则视为可清理（已读且无日期）
                 if let date = article.publishedDate {
                     return date < cutoff
                 }
@@ -153,6 +154,95 @@ class AppStore {
         }
     }
 
+    /// 分批翻译多段短文本（列表标题/预览），保持输入顺序；失败项为 nil
+    func translateTexts(_ texts: [String], concurrency: Int? = nil) async -> [String?] {
+        guard !texts.isEmpty else { return [] }
+        let engine = defaultTranslationEngine
+        let limit = concurrency ?? defaultListConcurrency(for: engine)
+
+        switch engine {
+        case .deepl:
+            let key = Keychain.load(key: "deepl_translate_key") ?? ""
+            return await translateNativeBatch(texts, chunkSize: 40) { chunk in
+                try await DeepLTranslate.translate(texts: chunk, apiKey: key)
+            }
+        case .microsoft:
+            let key = Keychain.load(key: "microsoft_translate_key") ?? ""
+            return await translateNativeBatch(texts, chunkSize: 40) { chunk in
+                try await MicrosoftTranslate.translate(texts: chunk, apiKey: key)
+            }
+        case .google, .ai:
+            return await translateConcurrently(texts, concurrency: limit)
+        }
+    }
+
+    private func defaultListConcurrency(for engine: TranslationEngine) -> Int {
+        switch engine {
+        case .ai: return 3
+        case .google: return 4
+        default: return 5
+        }
+    }
+
+    private func translateNativeBatch(
+        _ texts: [String],
+        chunkSize: Int,
+        call: ([String]) async throws -> [String]
+    ) async -> [String?] {
+        var out = Array<String?>(repeating: nil, count: texts.count)
+        var offset = 0
+        for chunk in texts.chunked(into: chunkSize) {
+            do {
+                let translated = try await call(chunk)
+                for (i, t) in translated.enumerated() where offset + i < out.count {
+                    let trimmed = t.trimmingCharacters(in: .whitespacesAndNewlines)
+                    out[offset + i] = trimmed.isEmpty ? nil : trimmed
+                }
+            } catch {
+                for (i, text) in chunk.enumerated() {
+                    if let r = try? await translateText(text) {
+                        let trimmed = r.trimmingCharacters(in: .whitespacesAndNewlines)
+                        out[offset + i] = trimmed.isEmpty ? nil : trimmed
+                    }
+                }
+            }
+            offset += chunk.count
+        }
+        return out
+    }
+
+    private func translateConcurrently(_ texts: [String], concurrency: Int) async -> [String?] {
+        var results = Array<String?>(repeating: nil, count: texts.count)
+        await withTaskGroup(of: (Int, String?).self) { group in
+            var next = 0
+            let spawn = min(max(concurrency, 1), texts.count)
+            while next < spawn {
+                let i = next
+                let text = texts[i]
+                group.addTask {
+                    let r = try? await self.translateText(text)
+                    let trimmed = r?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return (i, (trimmed?.isEmpty == false) ? trimmed : nil)
+                }
+                next += 1
+            }
+            for await (index, result) in group {
+                results[index] = result
+                if next < texts.count {
+                    let i = next
+                    let text = texts[i]
+                    next += 1
+                    group.addTask {
+                        let r = try? await self.translateText(text)
+                        let trimmed = r?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        return (i, (trimmed?.isEmpty == false) ? trimmed : nil)
+                    }
+                }
+            }
+        }
+        return results
+    }
+
     /// 按长度分段翻译，支持并发；返回完整译文
     func translateLongText(_ text: String, maxChunkChars: Int = 1800) async throws -> String {
         let chunks = Self.splitTextIntoChunks(text, maxChars: maxChunkChars)
@@ -160,6 +250,7 @@ class AppStore {
         if chunks.count == 1 {
             return try await translateText(chunks[0])
         }
+        // 并发翻译各段
         return try await withThrowingTaskGroup(of: (Int, String).self) { group in
             for (index, chunk) in chunks.enumerated() {
                 group.addTask {
@@ -183,6 +274,7 @@ class AppStore {
 
         var chunks: [String] = []
         var current = ""
+        // 按换行优先，其次按句号/问号等
         let paragraphs = trimmed.components(separatedBy: CharacterSet.newlines)
 
         for para in paragraphs {
@@ -190,6 +282,7 @@ class AppStore {
             if p.isEmpty { continue }
             if current.isEmpty {
                 if p.count > maxChars {
+                    // 超长段落再按句子切
                     chunks.append(contentsOf: splitBySentence(p, maxChars: maxChars))
                 } else {
                     current = p
@@ -236,6 +329,7 @@ class AppStore {
             }
         }
         if !current.isEmpty { result.append(current) }
+        // 仍超长则硬切
         var final: [String] = []
         for piece in result {
             if piece.count <= maxChars {
@@ -268,6 +362,7 @@ class AppStore {
         var updated = article
         updated.content = result.contentHTML
         updated.hasFullContent = true
+        // 抓取全文后清空旧译文，避免与新正文不一致
         updated.translatedContent = nil
         updateArticle(updated)
         return updated
@@ -330,6 +425,7 @@ class AppStore {
         if let data = UserDefaults.standard.data(forKey: "aiProviders"),
            let decoded = try? JSONDecoder().decode([AIProvider].self, from: data) {
             aiProviders = decoded
+            // 兼容：旧数据没有 kind 字段时默认 openai；名称含 Gemini 的标为 gemini
             for i in aiProviders.indices {
                 if aiProviders[i].kind.isEmpty {
                     aiProviders[i].kind = "openai"
@@ -344,6 +440,7 @@ class AppStore {
             titleDisplayMode = TitleDisplayMode(rawValue: raw) ?? .original
         }
         if let raw = UserDefaults.standard.string(forKey: "defaultTranslationEngine") {
+            // 迁移旧的 Gemini 选项
             if raw == "Gemini" {
                 defaultTranslationEngine = .ai
             } else {

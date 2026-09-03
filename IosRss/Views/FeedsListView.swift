@@ -71,9 +71,6 @@ struct FeedsListView: View {
             }
         }
         .sheet(isPresented: $showOPMLExportSheet) { OPMLExportView(text: opmlExportText) }
-        // Feed article list — presented from root; the article reader is
-        // now presented from within ArticleListView, so back-navigation is
-        // hierarchical: Reader → Article List → Feed List.
         .sheet(isPresented: $showFeed) {
             if let feed = selectedFeed {
                 ArticleListView(feed: feed, isPresented: $showFeed)
@@ -103,13 +100,14 @@ struct FeedRow: View {
             FeedIcon(feed: feed, size: 38)
             Text(feed.title)
                 .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(.primary)
+                .foregroundStyle(Color.primary)
             Spacer()
             if feed.unreadCount > 0 {
                 Text("\(feed.unreadCount)")
-                    .font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color(.systemBackground))
                     .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(.black, in: .capsule)
+                    .background(Color.primary, in: .capsule)
             }
         }
         .padding(.vertical, 10)
@@ -121,9 +119,12 @@ struct FeedIcon: View {
     let size: CGFloat
     var body: some View {
         ZStack {
-            Circle().fill(.black).frame(width: size, height: size)
+            Circle()
+                .fill(Color.primary)
+                .frame(width: size, height: size)
             Text(String(feed.title.prefix(1)).uppercased())
-                .font(.system(size: size * 0.45, weight: .bold)).foregroundStyle(.white)
+                .font(.system(size: size * 0.45, weight: .bold))
+                .foregroundStyle(Color(.systemBackground))
         }
     }
 }

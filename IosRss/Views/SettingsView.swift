@@ -7,7 +7,6 @@ struct SettingsView: View {
         @Bindable var store = store
         NavigationStack {
             Form {
-                // General
                 Section("通用") {
                     HStack {
                         Text("阅读字号")
@@ -25,7 +24,6 @@ struct SettingsView: View {
                     }
                 }
 
-                // Translation Settings
                 Section {
                     NavigationLink(destination: TranslationSettingsView()) {
                         Label("翻译设置", systemImage: "text.bubble")
@@ -37,7 +35,6 @@ struct SettingsView: View {
                     Text("功能设置")
                 }
 
-                // About
                 Section("关于") {
                     HStack {
                         Text("默认翻译引擎")
@@ -67,14 +64,11 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Translation Settings
-
 struct TranslationSettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var googleKey = Keychain.load(key: "google_translate_key") ?? ""
     @State private var microsoftKey = Keychain.load(key: "microsoft_translate_key") ?? ""
-    @State private var deeplKey = Keychain.load(key: "deepl_translate_key") ?? ""   // 新增
-    @State private var geminiKey = Keychain.load(key: "gemini_translate_key") ?? ""   // 加在 @State 声明区
+    @State private var deeplKey = Keychain.load(key: "deepl_translate_key") ?? ""
 
     var body: some View {
         @Bindable var store = store
@@ -98,7 +92,7 @@ struct TranslationSettingsView: View {
                     Spacer()
                     if store.defaultTranslationEngine == .google {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.black)
+                            .foregroundStyle(Color.primary)
                     }
                 }
                 TextField("API Key（可选，免费模式无需填写）", text: $googleKey)
@@ -121,7 +115,7 @@ struct TranslationSettingsView: View {
                     Spacer()
                     if store.defaultTranslationEngine == .microsoft {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.black)
+                            .foregroundStyle(Color.primary)
                     }
                 }
                 TextField("Ocp-Apim-Subscription-Key", text: $microsoftKey)
@@ -135,7 +129,6 @@ struct TranslationSettingsView: View {
                 Text("Microsoft Translator")
             }
 
-            // 新增：DeepL Section
             Section {
                 HStack {
                     Text("DeepL 翻译")
@@ -143,7 +136,7 @@ struct TranslationSettingsView: View {
                     Spacer()
                     if store.defaultTranslationEngine == .deepl {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.black)
+                            .foregroundStyle(Color.primary)
                     }
                 }
                 TextField("DeepL API Key", text: $deeplKey)
@@ -161,35 +154,12 @@ struct TranslationSettingsView: View {
 
             Section {
                 HStack {
-                    Text("Gemini 翻译")
-                        .font(.system(size: 15, weight: .medium))
-                    Spacer()
-                    if store.defaultTranslationEngine == .gemini {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.black)
-                    }
-                }
-                TextField("Gemini API Key", text: $geminiKey)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .onChange(of: geminiKey) { _, new in
-                        if new.isEmpty { Keychain.delete(key: "gemini_translate_key") }
-                        else { Keychain.save(key: "gemini_translate_key", value: new) }
-                    }
-            } header: {
-                Text("Google Gemini")
-            } footer: {
-                Text("在 Google AI Studio 获取免费 API Key，默认使用 gemini-2.0-flash 模型")
-            }
-            
-            Section {
-                HStack {
                     Text("AI 翻译")
                         .font(.system(size: 15, weight: .medium))
                     Spacer()
                     if store.defaultTranslationEngine == .ai {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.black)
+                            .foregroundStyle(Color.primary)
                     }
                 }
                 if let pid = store.defaultTranslationProviderID,
@@ -198,20 +168,20 @@ struct TranslationSettingsView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("在 AI 设置中指定翻译 Provider")
+                    Text("在 AI 设置中指定翻译 Provider（支持 OpenAI / Anthropic / Gemini）")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 }
             } header: {
                 Text("AI 翻译")
+            } footer: {
+                Text("Gemini、OpenAI、Anthropic 等统一在「AI 设置」中配置，选择「AI 翻译」后即可使用")
             }
         }
         .navigationTitle("翻译设置")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
-
-// MARK: - AI Settings
 
 struct AISettingsView: View {
     @Environment(AppStore.self) private var store
@@ -241,6 +211,8 @@ struct AISettingsView: View {
                 }
             } header: {
                 Text("AI Provider")
+            } footer: {
+                Text("Gemini、OpenAI、Anthropic 等统一管理。添加时可选模板，Gemini 会自动走专用接口。")
             }
         }
         .navigationTitle("AI 设置")
@@ -266,10 +238,10 @@ struct AIProviderRow: View {
                 Spacer()
                 HStack(spacing: 8) {
                     if provider.isDefaultSummary || store.defaultSummaryProviderID == provider.id {
-                        ProviderTag(text: "摘要", color: .black)
+                        ProviderTag(text: "摘要", color: Color.primary)
                     }
                     if provider.isDefaultTranslation || store.defaultTranslationProviderID == provider.id {
-                        ProviderTag(text: "翻译", color: .gray)
+                        ProviderTag(text: "翻译", color: Color.secondary)
                     }
                 }
             }
@@ -292,14 +264,12 @@ struct ProviderTag: View {
     var body: some View {
         Text(text)
             .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(.white)
+            .foregroundStyle(Color(.systemBackground))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(color, in: .capsule)
     }
 }
-
-// MARK: - Edit Provider View
 
 struct EditProviderView: View {
     @Environment(\.dismiss) private var dismiss
@@ -310,6 +280,7 @@ struct EditProviderView: View {
     @State private var baseURL = ""
     @State private var model = ""
     @State private var apiKey = ""
+    @State private var kind = "openai"
     @State private var isDefaultSummary = false
     @State private var isDefaultTranslation = false
 
@@ -321,9 +292,11 @@ struct EditProviderView: View {
             Form {
                 Section("Provider 模板") {
                     Button("OpenAI") { applyTemplate(.openAITemplate) }
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(Color.primary)
                     Button("Anthropic") { applyTemplate(.anthropicTemplate) }
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(Color.primary)
+                    Button("Gemini") { applyTemplate(.geminiTemplate) }
+                        .foregroundStyle(Color.primary)
                 }
 
                 Section("基本信息") {
@@ -335,16 +308,20 @@ struct EditProviderView: View {
                     TextField("模型名", text: $model)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                    Picker("接口类型", selection: $kind) {
+                        Text("OpenAI 兼容").tag("openai")
+                        Text("Gemini").tag("gemini")
+                    }
                 }
 
                 Section {
-                    TextField("API Key", text: $apiKey)
+                    SecureField("API Key", text: $apiKey)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                 } header: {
                     Text("API Key")
                 } footer: {
-                    Text("API Key 加密存储在系统 Keychain 中，不会明文保存")
+                    Text("API Key 加密存储，不会明文保存。Gemini 在 Google AI Studio 获取免费 Key。")
                 }
 
                 Section("默认设置") {
@@ -372,6 +349,7 @@ struct EditProviderView: View {
         name = p.name
         baseURL = p.baseURL
         model = p.model
+        kind = p.kind.isEmpty ? (p.name.lowercased().contains("gemini") ? "gemini" : "openai") : p.kind
         apiKey = Keychain.load(key: "ai_key_\(p.id)") ?? ""
         isDefaultSummary = store.defaultSummaryProviderID == p.id
         isDefaultTranslation = store.defaultTranslationProviderID == p.id
@@ -381,6 +359,7 @@ struct EditProviderView: View {
         name = template.name
         baseURL = template.baseURL
         model = template.model
+        kind = template.kind
     }
 
     private func save() {
@@ -390,6 +369,7 @@ struct EditProviderView: View {
             name: name,
             baseURL: baseURL,
             model: model,
+            kind: kind,
             isDefaultSummary: isDefaultSummary,
             isDefaultTranslation: isDefaultTranslation
         )

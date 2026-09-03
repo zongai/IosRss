@@ -82,7 +82,7 @@ struct AddFeedView: View {
                                     }
                                     Spacer()
                                     Image(systemName: "plus.circle")
-                                        .foregroundStyle(.black)
+                                        .foregroundStyle(Color.primary)
                                 }
                                 .padding(.vertical, 12)
                                 .padding(.horizontal, 20)
@@ -107,8 +107,8 @@ struct AddFeedView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
-                    .background(.black)
-                    .foregroundStyle(.white)
+                    .background(Color.primary)
+                    .foregroundStyle(Color(.systemBackground))
                     .clipShape(.rect(cornerRadius: 12))
                     .padding(.horizontal, 20)
                     .padding(.bottom, 24)
@@ -159,9 +159,13 @@ struct AddFeedView: View {
             // Try parsing directly as feed
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
-                let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: url.host ?? raw)
+                let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
                 if !articles.isEmpty {
-                    await addFeed(DiscoveredFeed(title: url.host ?? raw, url: urlStr))
+                    let title = FeedNaming.resolveTitle(
+                        parsed: FeedParser.extractFeedTitle(from: data),
+                        url: urlStr
+                    )
+                    await addFeed(DiscoveredFeed(title: title, url: urlStr))
                 } else {
                     errorMessage = "无法解析该地址的 Feed：\(error.localizedDescription)"
                     phase = .input
@@ -183,10 +187,19 @@ struct AddFeedView: View {
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             let feedID = UUID()
-            let articles = FeedParser.parse(data: data, feedID: feedID, feedTitle: discovered.title)
+            // 优先用 Feed 内 channel/title；没有再用 link 上的 title；仍没有则用域名
+            let fromXML = FeedParser.extractFeedTitle(from: data)
+            let fallbackName = (discovered.title != discovered.url
+                                && discovered.title != FeedNaming.domainName(from: discovered.url))
+                ? discovered.title : nil
+            let resolvedTitle = FeedNaming.resolveTitle(
+                parsed: fromXML ?? fallbackName,
+                url: discovered.url
+            )
+            let articles = FeedParser.parse(data: data, feedID: feedID, feedTitle: resolvedTitle)
             let feed = RSSFeed(
                 id: feedID,
-                title: discovered.title,
+                title: resolvedTitle,
                 url: discovered.url,
                 unreadCount: articles.count,
                 articles: articles,

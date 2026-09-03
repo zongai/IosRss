@@ -15,6 +15,36 @@ enum FeedParser {
         }
     }
 
+    /// 从 RSS/Atom 中提取订阅源名称（channel/feed 的 title）
+    static func extractFeedTitle(from data: Data) -> String? {
+        guard let raw = String(data: data, encoding: .utf8) ??
+              String(data: data, encoding: .isoLatin1) else { return nil }
+
+        if raw.contains("<feed") && raw.contains("xmlns") {
+            // Atom: <feed> 下第一层 <title>，避免用到 entry 里的 title
+            if let feedBlock = firstTopLevelBlock(raw, tag: "feed") {
+                if let t = extractTag("title", from: feedBlock) {
+                    let cleaned = stripHTML(t).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleaned.isEmpty { return cleaned }
+                }
+            }
+        } else {
+            // RSS: 优先 channel 内的 title
+            if let channel = firstTopLevelBlock(raw, tag: "channel") {
+                if let t = extractTag("title", from: channel) {
+                    let cleaned = stripHTML(t).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleaned.isEmpty { return cleaned }
+                }
+            }
+        }
+        return nil
+    }
+
+    /// 取第一个顶层标签块（简单实现：第一个匹配的开闭标签）
+    private static func firstTopLevelBlock(_ xml: String, tag: String) -> String? {
+        extractBlocks(from: xml, tag: tag).first
+    }
+
     // MARK: RSS
 
     private static func parseRSS(_ xml: String, feedID: UUID, feedTitle: String) -> [Article] {
@@ -113,24 +143,7 @@ enum FeedParser {
     }
 
     static func stripHTML(_ html: String) -> String {
-        var result = html
-        // Remove CDATA
-        result = result.replacingOccurrences(of: "<![CDATA[", with: "")
-        result = result.replacingOccurrences(of: "]]>", with: "")
-        // Replace block tags with newlines
-        result = result.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
-        result = result.replacingOccurrences(of: #"</p>|</div>|</li>"#, with: "\n", options: .regularExpression)
-        // Strip all tags
-        result = result.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-        // Decode common HTML entities
-        result = result.replacingOccurrences(of: "&amp;", with: "&")
-        result = result.replacingOccurrences(of: "&lt;", with: "<")
-        result = result.replacingOccurrences(of: "&gt;", with: ">")
-        result = result.replacingOccurrences(of: "&quot;", with: "\"")
-        result = result.replacingOccurrences(of: "&#39;", with: "'")
-        result = result.replacingOccurrences(of: "&nbsp;", with: " ")
-        result = result.replacingOccurrences(of: "&apos;", with: "'")
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+        HTMLUtils.stripTags(html)
     }
 
     static func parseDate(_ str: String) -> Date? {
@@ -155,6 +168,49 @@ enum FeedParser {
     }
 }
 
+// MARK: - Feed Naming
+
+enum FeedNaming {
+    /// 有名称用名称；否则用清理后的域名（去掉协议、路径、www.）
+    static func resolveTitle(parsed: String?, url: String) -> String {
+        if let t = parsed?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+            return t
+        }
+        return domainName(from: url)
+    }
+
+    /// 只保留域名：去掉 https://、路径、查询参数、www.
+    static func domainName(from urlString: String) -> String {
+        var s = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: s), let host = url.host, !host.isEmpty {
+            return stripWWW(host)
+        }
+        // 手写解析兜底
+        if let range = s.range(of: "://") {
+            s = String(s[range.upperBound...])
+        }
+        if let slash = s.firstIndex(of: "/") {
+            s = String(s[..<slash])
+        }
+        if let q = s.firstIndex(of: "?") {
+            s = String(s[..<q])
+        }
+        if let hash = s.firstIndex(of: "#") {
+            s = String(s[..<hash])
+        }
+        s = s.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return stripWWW(s).isEmpty ? urlString : stripWWW(s)
+    }
+
+    private static func stripWWW(_ host: String) -> String {
+        let lower = host.lowercased()
+        if lower.hasPrefix("www.") {
+            return String(host.dropFirst(4))
+        }
+        return host
+    }
+}
+
 // MARK: - Feed Discovery
 
 struct FeedDiscovery {
@@ -171,14 +227,22 @@ struct FeedDiscovery {
         if contentType.contains("xml") || contentType.contains("rss") || contentType.contains("atom") {
             let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
             if !articles.isEmpty {
-                return [DiscoveredFeed(title: finalURL.host ?? finalURL.absoluteString, url: finalURL.absoluteString)]
+                let title = FeedNaming.resolveTitle(
+                    parsed: FeedParser.extractFeedTitle(from: data),
+                    url: finalURL.absoluteString
+                )
+                return [DiscoveredFeed(title: title, url: finalURL.absoluteString)]
             }
         }
 
         // Try parsing as feed anyway
         let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
         if !articles.isEmpty {
-            return [DiscoveredFeed(title: finalURL.host ?? finalURL.absoluteString, url: finalURL.absoluteString)]
+            let title = FeedNaming.resolveTitle(
+                parsed: FeedParser.extractFeedTitle(from: data),
+                url: finalURL.absoluteString
+            )
+            return [DiscoveredFeed(title: title, url: finalURL.absoluteString)]
         }
 
         // Parse HTML for <link rel="alternate" ...>
@@ -203,7 +267,8 @@ struct FeedDiscovery {
                   (type.contains("rss") || type.contains("atom")),
                   let href = extractAttr("href", from: tag) else { continue }
             let resolved = URL(string: href, relativeTo: baseURL)?.absoluteURL.absoluteString ?? href
-            let title = extractAttr("title", from: tag) ?? baseURL.host ?? resolved
+            let linkTitle = extractAttr("title", from: tag)
+            let title = FeedNaming.resolveTitle(parsed: linkTitle, url: resolved)
             feeds.append(DiscoveredFeed(title: title, url: resolved))
         }
         return feeds
@@ -213,7 +278,8 @@ struct FeedDiscovery {
         let paths = ["/feed", "/feed/", "/rss", "/rss.xml", "/atom.xml", "/feed.xml", "/index.xml"]
         return paths.compactMap { path in
             guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else { return nil }
-            return DiscoveredFeed(title: baseURL.host ?? path, url: url.absoluteString)
+            let title = FeedNaming.domainName(from: baseURL.absoluteString)
+            return DiscoveredFeed(title: title, url: url.absoluteString)
         }
     }
 
@@ -253,7 +319,8 @@ struct OPMLParser {
             guard let matchRange = Range(match.range, in: xml) else { continue }
             let tag = String(xml[matchRange])
             guard let url = extractAttr("xmlUrl", from: tag) ?? extractAttr("xmlurl", from: tag) else { continue }
-            let title = extractAttr("text", from: tag) ?? extractAttr("title", from: tag) ?? url
+            let rawTitle = extractAttr("text", from: tag) ?? extractAttr("title", from: tag)
+            let title = FeedNaming.resolveTitle(parsed: rawTitle, url: url)
             items.append(OPMLItem(title: title, url: url))
         }
         return items

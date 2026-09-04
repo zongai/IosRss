@@ -11,7 +11,6 @@ struct ArticleListView: View {
     @State private var translationTotal = 0
     @State private var readingIDs: Set<UUID> = []
 
-    /// 列表翻译每批条数（标题 + 预览各算一条任务）
     private let translationBatchSize = 6
 
     private var articles: [Article] {
@@ -49,14 +48,14 @@ struct ArticleListView: View {
                         Button {
                             store.markAsUnread(article)
                         } label: {
-                            Label("未读", systemImage: "circle")
+                            Label("未读", systemImage: "envelope.badge")
                         }
                         .tint(.blue)
                     } else {
                         Button {
                             store.markAsRead(article)
                         } label: {
-                            Label("已读", systemImage: "checkmark.circle")
+                            Label("已读", systemImage: "envelope.open")
                         }
                         .tint(.green)
                     }
@@ -98,20 +97,21 @@ struct ArticleListView: View {
                             }
                         }
                     } else {
-                        Text("译")
-                            .font(.system(size: 13, weight: .semibold))
+                        Image(systemName: "globe")
+                            .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(showAllTranslations ? Color(.systemBackground) : Color.primary)
-                            .frame(width: 26, height: 26)
+                            .frame(width: 28, height: 28)
                             .background(showAllTranslations ? Color.primary : Color.secondary.opacity(0.15),
                                         in: .rect(cornerRadius: 6))
                     }
                 }
+                .accessibilityLabel(showAllTranslations ? "显示原文标题" : "翻译列表")
                 .disabled(isTranslatingAll)
 
                 Button {
                     store.markAllAsRead(in: feed.id)
                 } label: {
-                    Image(systemName: "checkmark.circle")
+                    Image(systemName: "checklist")
                 }
                 .accessibilityLabel("全部已读")
             }
@@ -140,7 +140,6 @@ struct ArticleListView: View {
         }
     }
 
-    /// 第一次打开且本地还没有文章时自动拉取，避免空白列表
     private func loadIfNeeded() async {
         if !store.articlesForFeed(feed.id).isEmpty { return }
         isInitialLoading = true
@@ -148,7 +147,6 @@ struct ArticleListView: View {
         isInitialLoading = false
     }
 
-    /// 一次点击：分批翻译所有标题和预览；再次点击切换回原文
     private func toggleTranslateAll() async {
         if showAllTranslations {
             showAllTranslations = false
@@ -204,8 +202,6 @@ private struct ListTranslationJob {
     let field: Field
     let text: String
 }
-
-// MARK: - Article Row
 
 struct ArticleRow: View {
     @Environment(AppStore.self) private var store

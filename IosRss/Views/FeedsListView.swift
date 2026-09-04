@@ -1,13 +1,22 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct FeedsListView: View {
     @Environment(AppStore.self) private var store
-    @State private var selectedFeed: RSSFeed?
     @State private var showAddFeed = false
     @State private var showOPMLMenu = false
     @State private var showOPMLImport = false
     @State private var showOPMLExportSheet = false
     @State private var opmlExportText = ""
+    @State private var importMessage: String?
+
+    private var importTypes: [UTType] {
+        var types: [UTType] = [.xml, .text, .plainText, .data]
+        if let opml = UTType(filenameExtension: "opml") { types.append(opml) }
+        if let rss = UTType(filenameExtension: "rss") { types.append(rss) }
+        if let atom = UTType(filenameExtension: "atom") { types.append(atom) }
+        return types
+    }
 
     var body: some View {
         NavigationStack {
@@ -16,12 +25,9 @@ struct FeedsListView: View {
                     emptyState
                 } else {
                     ForEach(store.feeds) { feed in
-                        Button {
-                            // Use sheet(item:) so the first presentation always
-                            // has a concrete feed (isPresented + optional was blank).
-                            selectedFeed = feed
-                        } label: { FeedRow(feed: feed) }
-                        .buttonStyle(.plain)
+                        NavigationLink(value: feed) {
+                            FeedRow(feed: feed)
+                        }
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
                                 if let idx = store.feeds.firstIndex(where: { $0.id == feed.id }) {
@@ -38,6 +44,9 @@ struct FeedsListView: View {
             .listStyle(.plain)
             .navigationTitle("Feed")
             .navigationBarTitleDisplayMode(.large)
+            .navigationDestination(for: RSSFeed.self) { feed in
+                ArticleListView(feed: feed)
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 20) {
@@ -58,26 +67,58 @@ struct FeedsListView: View {
         }
         .sheet(isPresented: $showAddFeed) { AddFeedView() }
         .confirmationDialog("导入/导出", isPresented: $showOPMLMenu) {
-            Button("导入 OPML") { showOPMLImport = true }
+            Button("导入 OPML / XML") { showOPMLImport = true }
             Button("导出 OPML") { opmlExportText = store.exportOPML(); showOPMLExportSheet = true }
             Button("取消", role: .cancel) {}
         }
-        .fileImporter(isPresented: $showOPMLImport, allowedContentTypes: [.xml, .text]) { result in
-            if case .success(let url) = result,
-               url.startAccessingSecurityScopedResource(),
-               let data = try? Data(contentsOf: url) {
-                store.importOPML(data: data)
-                url.stopAccessingSecurityScopedResource()
-            }
+        .fileImporter(isPresented: $showOPMLImport, allowedContentTypes: importTypes) { result in
+            handleImport(result)
         }
         .sheet(isPresented: $showOPMLExportSheet) { OPMLExportView(text: opmlExportText) }
-        // Feed article list — presented from root; the article reader is
-        // now presented from within ArticleListView, so back-navigation is
-        // hierarchical: Reader → Article List → Feed List.
-        .sheet(item: $selectedFeed) { feed in
-            ArticleListView(feed: feed)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.hidden)
+        .alert("导入结果", isPresented: Binding(
+            get: { importMessage != nil },
+            set: { if !$0 { importMessage = nil } }
+        )) {
+            Button("好", role: .cancel) { importMessage = nil }
+        } message: {
+            Text(importMessage ?? "")
+        }
+    }
+
+    private func handleImport(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let url):
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            var data: Data?
+            let coordinator = NSFileCoordinator()
+            var coordError: NSError?
+            coordinator.coordinate(readingItemAt: url, error: &coordError) { coordinated in
+                data = try? Data(contentsOf: coordinated)
+            }
+            if data == nil {
+                data = try? Data(contentsOf: url)
+            }
+            guard let data else {
+                importMessage = "无法读取该文件"
+                return
+            }
+            let imported = store.importSubscriptions(data: data)
+            if imported.added == 0 && imported.skipped == 0 {
+                importMessage = "未能识别为 OPML、RSS 或 Atom，请检查文件内容"
+            } else {
+                let kind = imported.kind == "rss" ? "RSS/Atom" : "OPML"
+                var text = "已从 \(kind) 导入 \(imported.added) 个订阅"
+                if imported.skipped > 0 {
+                    text += "，跳过 \(imported.skipped) 个已存在的源"
+                }
+                importMessage = text
+                if imported.added > 0 {
+                    Task { await store.refreshAll() }
+                }
+            }
+        case .failure(let error):
+            importMessage = error.localizedDescription
         }
     }
 

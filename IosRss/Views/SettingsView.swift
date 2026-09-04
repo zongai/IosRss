@@ -22,7 +22,12 @@ struct SettingsView: View {
                             Text(mode.rawValue).tag(mode)
                         }
                     }
+
+                    Toggle("显示已读文章", isOn: $store.showReadArticles)
                 }
+                .onChange(of: store.fontSize) { _, _ in store.persistSettings() }
+                .onChange(of: store.titleDisplayMode) { _, _ in store.persistSettings() }
+                .onChange(of: store.showReadArticles) { _, _ in store.persistSettings() }
 
                 Section {
                     NavigationLink(destination: TranslationSettingsView()) {
@@ -52,14 +57,15 @@ struct SettingsView: View {
                         }
                     }
                     HStack {
-                        Text("Feed")
+                        Text("版本")
                         Spacer()
-                        Text("1.0")
+                        Text(AppVersion.display)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
             .navigationTitle("设置")
+            .onDisappear { store.persistSettings() }
         }
     }
 }
@@ -180,6 +186,8 @@ struct TranslationSettingsView: View {
         }
         .navigationTitle("翻译设置")
         .navigationBarTitleDisplayMode(.inline)
+        .onDisappear { store.persistSettings() }
+        .onChange(of: store.defaultTranslationEngine) { _, _ in store.persistSettings() }
     }
 }
 
@@ -189,6 +197,7 @@ struct AISettingsView: View {
     @State private var editingProvider: AIProvider?
 
     var body: some View {
+        @Bindable var store = store
         Form {
             Section {
                 ForEach(store.aiProviders) { provider in
@@ -198,6 +207,7 @@ struct AISettingsView: View {
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
                                 store.aiProviders.removeAll(where: { $0.id == provider.id })
+                                store.persistSettings()
                             } label: {
                                 Label("删除", systemImage: "trash")
                             }
@@ -214,9 +224,40 @@ struct AISettingsView: View {
             } footer: {
                 Text("Gemini、OpenAI、Anthropic 等统一管理。添加时可选模板，Gemini 会自动走专用接口。")
             }
+
+            Section {
+                TextEditor(text: $store.translationPrompt)
+                    .font(.system(size: 14, design: .monospaced))
+                    .frame(minHeight: 110)
+                Button("恢复默认翻译 Prompt") {
+                    store.translationPrompt = AppStore.defaultTranslationPrompt
+                    store.persistSettings()
+                }
+            } header: {
+                Text("翻译 Prompt")
+            } footer: {
+                Text("仅「AI 翻译」引擎使用。用 {{text}} 表示待译内容。")
+            }
+
+            Section {
+                TextEditor(text: $store.summaryPrompt)
+                    .font(.system(size: 14, design: .monospaced))
+                    .frame(minHeight: 130)
+                Button("恢复默认摘要 Prompt") {
+                    store.summaryPrompt = AppStore.defaultSummaryPrompt
+                    store.persistSettings()
+                }
+            } header: {
+                Text("摘要 Prompt")
+            } footer: {
+                Text("用 {{title}} 表示标题，{{content}} 表示正文（自动截取前 2500 字）。")
+            }
         }
         .navigationTitle("AI 设置")
         .navigationBarTitleDisplayMode(.inline)
+        .onDisappear { store.persistSettings() }
+        .onChange(of: store.translationPrompt) { _, _ in store.persistSettings() }
+        .onChange(of: store.summaryPrompt) { _, _ in store.persistSettings() }
         .sheet(isPresented: $showAddProvider) {
             EditProviderView(provider: nil)
         }
@@ -285,7 +326,6 @@ struct EditProviderView: View {
     @State private var isDefaultTranslation = false
 
     private var isNew: Bool { provider == nil }
-    private var providerID: UUID { provider?.id ?? UUID() }
 
     var body: some View {
         NavigationStack {
@@ -386,6 +426,7 @@ struct EditProviderView: View {
         } else {
             store.aiProviders.append(updated)
         }
+        store.persistSettings()
         dismiss()
     }
 }

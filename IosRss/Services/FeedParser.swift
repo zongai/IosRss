@@ -7,7 +7,6 @@ enum FeedParser {
         guard let raw = String(data: data, encoding: .utf8) ??
               String(data: data, encoding: .isoLatin1) else { return [] }
 
-        // Detect format
         if raw.contains("<feed") && raw.contains("xmlns") {
             return parseAtom(raw, feedID: feedID, feedTitle: feedTitle)
         } else {
@@ -15,13 +14,11 @@ enum FeedParser {
         }
     }
 
-    /// 从 RSS/Atom 中提取订阅源名称（channel/feed 的 title）
     static func extractFeedTitle(from data: Data) -> String? {
         guard let raw = String(data: data, encoding: .utf8) ??
               String(data: data, encoding: .isoLatin1) else { return nil }
 
         if raw.contains("<feed") && raw.contains("xmlns") {
-            // Atom: <feed> 下第一层 <title>，避免用到 entry 里的 title
             if let feedBlock = firstTopLevelBlock(raw, tag: "feed") {
                 if let t = extractTag("title", from: feedBlock) {
                     let cleaned = stripHTML(t).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -29,7 +26,6 @@ enum FeedParser {
                 }
             }
         } else {
-            // RSS: 优先 channel 内的 title
             if let channel = firstTopLevelBlock(raw, tag: "channel") {
                 if let t = extractTag("title", from: channel) {
                     let cleaned = stripHTML(t).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,12 +36,28 @@ enum FeedParser {
         return nil
     }
 
-    /// 取第一个顶层标签块（简单实现：第一个匹配的开闭标签）
+    static func extractFeedLink(from data: Data) -> String? {
+        guard let raw = String(data: data, encoding: .utf8) ??
+              String(data: data, encoding: .utf16) ??
+              String(data: data, encoding: .isoLatin1) else { return nil }
+
+        if raw.contains("<feed") && raw.contains("xmlns") {
+            if let feedBlock = firstTopLevelBlock(raw, tag: "feed") {
+                let href = extractLinkHref(from: feedBlock)
+                if !href.isEmpty { return href.trimmingCharacters(in: .whitespacesAndNewlines) }
+            }
+        } else if let channel = firstTopLevelBlock(raw, tag: "channel") {
+            if let link = extractTag("link", from: channel) {
+                let cleaned = stripHTML(link).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !cleaned.isEmpty { return cleaned }
+            }
+        }
+        return nil
+    }
+
     private static func firstTopLevelBlock(_ xml: String, tag: String) -> String? {
         extractBlocks(from: xml, tag: tag).first
     }
-
-    // MARK: RSS
 
     private static func parseRSS(_ xml: String, feedID: UUID, feedTitle: String) -> [Article] {
         let items = extractBlocks(from: xml, tag: "item")
@@ -74,14 +86,11 @@ enum FeedParser {
         }
     }
 
-    // MARK: Atom
-
     private static func parseAtom(_ xml: String, feedID: UUID, feedTitle: String) -> [Article] {
         let entries = extractBlocks(from: xml, tag: "entry")
         return entries.compactMap { block -> Article? in
             let title = extractTag("title", from: block) ?? ""
             guard !title.isEmpty else { return nil }
-            // Atom link is an attribute: <link href="..."/>
             let link = extractLinkHref(from: block)
             let summary = extractTag("summary", from: block) ?? ""
             let content = extractTag("content", from: block) ?? summary
@@ -101,8 +110,6 @@ enum FeedParser {
         }
     }
 
-    // MARK: Helpers
-
     static func extractBlocks(from xml: String, tag: String) -> [String] {
         var blocks: [String] = []
         var search = xml
@@ -118,14 +125,12 @@ enum FeedParser {
     }
 
     static func extractTag(_ tag: String, from xml: String) -> String? {
-        // Handles <tag>content</tag> and <tag><![CDATA[content]]></tag>
         let openPat = "<\(tag)[^>]*>"
         let closePat = "</\(tag)>"
         guard let openRange = xml.range(of: openPat, options: [.regularExpression, .caseInsensitive]),
               let closeRange = xml.range(of: closePat, options: [.regularExpression, .caseInsensitive],
                                          range: openRange.upperBound..<xml.endIndex) else { return nil }
         var content = String(xml[openRange.upperBound..<closeRange.lowerBound])
-        // Unwrap CDATA
         if content.hasPrefix("<![CDATA[") && content.hasSuffix("]]>") {
             content = String(content.dropFirst(9).dropLast(3))
         }
@@ -134,8 +139,7 @@ enum FeedParser {
     }
 
     private static func extractLinkHref(from xml: String) -> String {
-        // <link href="..." rel="alternate" .../>  or  <link href="..."/>
-        let pattern = #"<link[^>]+href=["']([^"']+)["'][^>]*/>"#
+        let pattern = #"<link[^>]+href=[\"']([^\"']+)[\"'][^>]*/>"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
               let match = regex.firstMatch(in: xml, range: NSRange(xml.startIndex..., in: xml)),
               let range = Range(match.range(at: 1), in: xml) else { return "" }
@@ -168,10 +172,7 @@ enum FeedParser {
     }
 }
 
-// MARK: - Feed Naming
-
 enum FeedNaming {
-    /// 有名称用名称；否则用清理后的域名（去掉协议、路径、www.）
     static func resolveTitle(parsed: String?, url: String) -> String {
         if let t = parsed?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
             return t
@@ -179,13 +180,11 @@ enum FeedNaming {
         return domainName(from: url)
     }
 
-    /// 只保留域名：去掉 https://、路径、查询参数、www.
     static func domainName(from urlString: String) -> String {
         var s = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: s), let host = url.host, !host.isEmpty {
             return stripWWW(host)
         }
-        // 手写解析兜底
         if let range = s.range(of: "://") {
             s = String(s[range.upperBound...])
         }
@@ -211,8 +210,6 @@ enum FeedNaming {
     }
 }
 
-// MARK: - Feed Discovery
-
 struct FeedDiscovery {
     static func discoverFeeds(from url: URL) async throws -> [DiscoveredFeed] {
         var finalURL = url
@@ -223,7 +220,6 @@ struct FeedDiscovery {
         let (data, response) = try await URLSession.shared.data(from: finalURL)
         let contentType = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? ""
 
-        // Direct feed
         if contentType.contains("xml") || contentType.contains("rss") || contentType.contains("atom") {
             let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
             if !articles.isEmpty {
@@ -235,7 +231,6 @@ struct FeedDiscovery {
             }
         }
 
-        // Try parsing as feed anyway
         let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
         if !articles.isEmpty {
             let title = FeedNaming.resolveTitle(
@@ -245,7 +240,6 @@ struct FeedDiscovery {
             return [DiscoveredFeed(title: title, url: finalURL.absoluteString)]
         }
 
-        // Parse HTML for <link rel="alternate" ...>
         let html = String(data: data, encoding: .utf8) ?? ""
         var found = parseAlternateFeedLinks(from: html, baseURL: finalURL)
         if found.isEmpty {
@@ -256,7 +250,7 @@ struct FeedDiscovery {
 
     private static func parseAlternateFeedLinks(from html: String, baseURL: URL) -> [DiscoveredFeed] {
         var feeds: [DiscoveredFeed] = []
-        let pattern = #"<link[^>]+rel=["']alternate["'][^>]*>"#
+        let pattern = #"<link[^>]+rel=[\"']alternate[\"'][^>]*>"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return [] }
         let range = NSRange(html.startIndex..., in: html)
         let matches = regex.matches(in: html, range: range)
@@ -298,8 +292,6 @@ struct DiscoveredFeed: Identifiable {
     let url: String
 }
 
-// MARK: - OPML Parser
-
 struct OPMLItem {
     let title: String
     let url: String
@@ -309,28 +301,121 @@ struct OPMLParser {
     let data: Data
 
     func parse() -> [OPMLItem] {
-        guard let xml = String(data: data, encoding: .utf8) else { return [] }
+        guard var xml = decodeXMLString(data) else { return [] }
+        if xml.hasPrefix("\u{FEFF}") { xml = String(xml.dropFirst()) }
+        xml = xml.replacingOccurrences(of: "\r\n", with: "\n")
+        xml = xml.replacingOccurrences(of: "\r", with: "\n")
+
         var items: [OPMLItem] = []
-        let pattern = #"<outline[^>]+>"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return [] }
+        var seen = Set<String>()
+
+        let pattern = #"<outline\b[\s\S]*?>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return []
+        }
         let range = NSRange(xml.startIndex..., in: xml)
         let matches = regex.matches(in: xml, range: range)
         for match in matches {
             guard let matchRange = Range(match.range, in: xml) else { continue }
             let tag = String(xml[matchRange])
-            guard let url = extractAttr("xmlUrl", from: tag) ?? extractAttr("xmlurl", from: tag) else { continue }
-            let rawTitle = extractAttr("text", from: tag) ?? extractAttr("title", from: tag)
-            let title = FeedNaming.resolveTitle(parsed: rawTitle, url: url)
+            guard let rawURL = firstFeedURL(in: tag) else { continue }
+            let url = HTMLUtils.decodeEntities(rawURL).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !url.isEmpty else { continue }
+            let canonical = FeedURL.canonical(url)
+            guard !canonical.isEmpty, !seen.contains(canonical) else { continue }
+            seen.insert(canonical)
+            let rawTitle = extractAttr("text", from: tag)
+                ?? extractAttr("title", from: tag)
+                ?? extractAttr("description", from: tag)
+            let title = FeedNaming.resolveTitle(
+                parsed: rawTitle.map { HTMLUtils.decodeEntities($0) },
+                url: url
+            )
             items.append(OPMLItem(title: title, url: url))
+        }
+
+        if items.isEmpty {
+            items.append(contentsOf: parseLinkAlternateFeeds(from: xml, seen: &seen))
         }
         return items
     }
 
+    private func decodeXMLString(_ data: Data) -> String? {
+        var bytes = data
+        if bytes.count >= 3, bytes[0] == 0xEF, bytes[1] == 0xBB, bytes[2] == 0xBF {
+            bytes = bytes.dropFirst(3)
+        }
+        if let s = String(data: bytes, encoding: .utf8), !s.isEmpty { return s }
+        if let s = String(data: data, encoding: .utf16), !s.isEmpty { return s }
+        if let s = String(data: data, encoding: .utf16LittleEndian), !s.isEmpty { return s }
+        if let s = String(data: data, encoding: .utf16BigEndian), !s.isEmpty { return s }
+        if let s = String(data: data, encoding: .isoLatin1), !s.isEmpty { return s }
+        if let s = String(data: data, encoding: .windowsCP1252), !s.isEmpty { return s }
+        return nil
+    }
+
+    private func firstFeedURL(in tag: String) -> String? {
+        let xmlKeys = ["xmlUrl", "xmlurl", "xmlURL", "XMLUrl", "xml_url", "xmluri", "xmlUri"]
+        for key in xmlKeys {
+            if let v = extractAttr(key, from: tag), looksLikeURL(v) { return v }
+        }
+
+        let type = (extractAttr("type", from: tag) ?? "").lowercased()
+        let isFeedType = type.contains("rss") || type.contains("atom") || type == "feed" || type.contains("xml")
+
+        if let v = extractAttr("url", from: tag), looksLikeURL(v) {
+            if isFeedType || looksLikeFeedURL(v) { return v }
+        }
+        if let v = extractAttr("htmlUrl", from: tag) ?? extractAttr("htmlurl", from: tag),
+           looksLikeFeedURL(v) {
+            return v
+        }
+        return nil
+    }
+
+    private func looksLikeURL(_ s: String) -> Bool {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return t.hasPrefix("http://") || t.hasPrefix("https://") || t.hasPrefix("feed://")
+    }
+
+    private func looksLikeFeedURL(_ s: String) -> Bool {
+        guard looksLikeURL(s) else { return false }
+        let t = s.lowercased()
+        return t.contains("rss") || t.contains("atom") || t.contains("feed")
+            || t.contains(".xml") || t.contains("/rdf") || t.contains("syndication")
+    }
+
     private func extractAttr(_ attr: String, from tag: String) -> String? {
-        let pattern = "\(attr)=[\"']([^\"']+)[\"']"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
-              let match = regex.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)),
-              let range = Range(match.range(at: 1), in: tag) else { return nil }
-        return String(tag[range])
+        let pattern = "\(attr)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+)"
+        // fixed below
+        return nil
+    }
+
+    private func parseLinkAlternateFeeds(from xml: String, seen: inout Set<String>) -> [OPMLItem] {
+        var items: [OPMLItem] = []
+        let pattern = #"<link\b[^>]*>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) else {
+            return []
+        }
+        let matches = regex.matches(in: xml, range: NSRange(xml.startIndex..., in: xml))
+        for match in matches {
+            guard let r = Range(match.range, in: xml) else { continue }
+            let tag = String(xml[r])
+            let type = (extractAttr("type", from: tag) ?? "").lowercased()
+            let rel = (extractAttr("rel", from: tag) ?? "").lowercased()
+            let isFeed = type.contains("rss") || type.contains("atom") || type.contains("xml")
+            guard isFeed || rel == "alternate" && (type.contains("rss") || type.contains("atom")) else { continue }
+            guard let href = extractAttr("href", from: tag), looksLikeURL(href) else { continue }
+            let url = HTMLUtils.decodeEntities(href).trimmingCharacters(in: .whitespacesAndNewlines)
+            let canonical = FeedURL.canonical(url)
+            guard !canonical.isEmpty, !seen.contains(canonical) else { continue }
+            seen.insert(canonical)
+            let title = extractAttr("title", from: tag).map { HTMLUtils.decodeEntities($0) }
+            items.append(OPMLItem(
+                title: FeedNaming.resolveTitle(parsed: title, url: url),
+                url: url
+            ))
+        }
+        return items
     }
 }

@@ -108,7 +108,7 @@ struct ArticleReaderView: View {
                             Task { await fetchFullContent() }
                         } label: {
                             HStack(spacing: 8) {
-                                Image(systemName: "doc.text.magnifyingglass")
+                                Image(systemName: "arrow.down.doc")
                                 Text("RSS 仅为摘要，点击获取全文")
                                     .font(.system(size: 14, weight: .medium))
                                 Spacer()
@@ -155,7 +155,7 @@ struct ArticleReaderView: View {
                         } else {
                             Label(
                                 currentArticle.hasFullContent ? "已获取全文" : "全文",
-                                systemImage: currentArticle.hasFullContent ? "doc.text.fill" : "doc.text.magnifyingglass"
+                                systemImage: currentArticle.hasFullContent ? "doc.richtext" : "arrow.down.doc"
                             )
                         }
                     }
@@ -165,8 +165,10 @@ struct ArticleReaderView: View {
                         Task { await toggleTranslation() }
                     } label: {
                         if isTranslating { ProgressView().scaleEffect(0.75) }
-                        else { Label(showTranslated ? "原文" : "翻译",
-                                     systemImage: showTranslated ? "text.bubble.fill" : "text.bubble") }
+                        else {
+                            Label(showTranslated ? "原文" : "翻译",
+                                  systemImage: showTranslated ? "text.alignleft" : "globe")
+                        }
                     }
                     .disabled(isTranslating)
 
@@ -174,7 +176,7 @@ struct ArticleReaderView: View {
                         Task { await generateSummary() }
                     } label: {
                         if isGeneratingSummary { ProgressView().scaleEffect(0.75) }
-                        else { Label("AI总结", systemImage: "sparkles") }
+                        else { Label("AI总结", systemImage: "wand.and.stars") }
                     }
                     .disabled(isGeneratingSummary)
 
@@ -182,7 +184,7 @@ struct ArticleReaderView: View {
                         Button {
                             showInAppBrowser = true
                         } label: {
-                            Label("浏览器", systemImage: "safari")
+                            Label("浏览器", systemImage: "arrow.up.right.square")
                         }
                     }
                 }
@@ -349,7 +351,7 @@ struct AISummaryCard: View {
                 withAnimation(.spring(duration: 0.3)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "sparkles")
+                    Image(systemName: "wand.and.stars")
                         .font(.system(size: 14, weight: .semibold))
                     Text("AI 摘要")
                         .font(.system(size: 15, weight: .semibold))
@@ -449,10 +451,8 @@ enum ContentBlockParser {
     static func parse(_ html: String) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var working = html
-
-        working = working.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
+        working = working.replacingOccurrences(of: #"<br\\s*/?>"#, with: "\n", options: .regularExpression)
         working = working.replacingOccurrences(of: #"</p>|</div>|</li>|</h[1-6]>"#, with: "\n\n", options: .regularExpression)
-
         let imgPattern = #"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*/?>"#
         var imageURLs: [String] = []
         if let regex = try? NSRegularExpression(pattern: imgPattern, options: .caseInsensitive) {
@@ -470,15 +470,11 @@ enum ContentBlockParser {
                 }
             }
         }
-
-        working = working.replacingOccurrences(of: "<[^>]+", with: "", options: .regularExpression)
-        working = working.replacingOccurrences(of: ">", with: "")
+        working = working.replacingOccurrences(of: "<[^">]+", with: "", options: .regularExpression)
         working = HTMLUtils.decodeEntities(working)
-
         let parts = working.components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-
         for part in parts {
             if part.hasPrefix("__IMG_"), part.hasSuffix("__") {
                 let idxStr = String(part.dropFirst(6).dropLast(2))
@@ -489,12 +485,9 @@ enum ContentBlockParser {
                 blocks.append(.paragraph(part))
             }
         }
-
         if blocks.isEmpty {
             let plain = HTMLUtils.stripTags(html)
-            if !plain.isEmpty {
-                blocks.append(.paragraph(plain))
-            }
+            if !plain.isEmpty { blocks.append(.paragraph(plain)) }
         }
         return blocks
     }

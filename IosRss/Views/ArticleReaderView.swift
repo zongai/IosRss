@@ -3,7 +3,6 @@ import SafariServices
 
 struct ArticleReaderView: View {
     @Environment(AppStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
     let article: Article
 
     @State private var isTranslating = false
@@ -24,16 +23,30 @@ struct ArticleReaderView: View {
         store.feeds.flatMap { $0.articles }.first(where: { $0.id == article.id }) ?? article
     }
 
+    private var displayTitle: String {
+        if showTranslated, let t = currentArticle.translatedTitle, !t.isEmpty {
+            return t
+        }
+        return currentArticle.title
+    }
+
     var body: some View {
-        NavigationStack {
-            ScrollView {
+        ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Header
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(currentArticle.title)
+                        Text(displayTitle)
                             .font(.system(size: 24, weight: .bold, design: .serif))
                             .foregroundStyle(Color.primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                        if showTranslated,
+                           let translated = currentArticle.translatedTitle,
+                           !translated.isEmpty,
+                           store.titleDisplayMode == .bilingual {
+                            Text(currentArticle.title)
+                                .font(.system(size: 15))
+                                .foregroundStyle(Color.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                         HStack(spacing: 8) {
                             Text(currentArticle.feedTitle)
                                 .font(.system(size: 13, weight: .medium))
@@ -57,9 +70,12 @@ struct ArticleReaderView: View {
 
                     Divider()
 
-                    // AI Summary card
                     if let summary = aiSummary ?? currentArticle.aiSummary {
-                        AISummaryCard(summary: summary, expanded: $summaryExpanded)
+                        AISummaryCard(
+                            summary: summary,
+                            expanded: $summaryExpanded,
+                            fontSize: max(store.fontSize + 5, 22)
+                        )
                             .padding(.horizontal, 20).padding(.top, 16)
                     }
                     if let err = summaryError {
@@ -87,7 +103,6 @@ struct ArticleReaderView: View {
                             .padding(.horizontal, 20).padding(.top, 8)
                     }
 
-                    // 摘要过短时的提示条
                     if currentArticle.needsFullContentFetch && !isFetchingFull {
                         Button {
                             Task { await fetchFullContent() }
@@ -111,7 +126,6 @@ struct ArticleReaderView: View {
                         .padding(.top, 12)
                     }
 
-                    // Content
                     let displayContent = showTranslated
                         ? (translatedContent ?? currentArticle.translatedContent ?? currentArticle.content)
                         : currentArticle.content
@@ -123,17 +137,16 @@ struct ArticleReaderView: View {
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { dismiss() } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left").font(.system(size: 16, weight: .semibold))
-                            Text("返回")
-                        }
-                        .foregroundStyle(Color.primary)
-                    }
-                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    // 获取全文
+                    Button {
+                        store.toggleFavorite(currentArticle)
+                    } label: {
+                        Label(
+                            currentArticle.isFavorite ? "已收藏" : "收藏",
+                            systemImage: currentArticle.isFavorite ? "star.fill" : "star"
+                        )
+                    }
+
                     Button {
                         Task { await fetchFullContent() }
                     } label: {
@@ -180,11 +193,9 @@ struct ArticleReaderView: View {
                         .ignoresSafeArea()
                 }
             }
-        }
         .background(Color(.systemBackground))
         .onAppear {
             aiSummary = currentArticle.aiSummary
-            // 摘要很短时自动尝试抓取全文（仅一次）
             if currentArticle.needsFullContentFetch {
                 Task { await fetchFullContent(silent: true) }
             }
@@ -198,16 +209,12 @@ struct ArticleReaderView: View {
         }
         fullContentError = nil
         isFetchingFull = true
-        if !silent {
-            fullContentHint = "正在获取全文…"
-        }
+        if !silent { fullContentHint = "正在获取全文…" }
         do {
             let updated = try await store.fetchFullContent(for: currentArticle)
-            // 若正在看译文，切换回新正文
             showTranslated = false
             translatedContent = nil
             fullContentHint = silent ? nil : "已获取全文（约 \(HTMLUtils.stripTags(updated.content).count) 字）"
-            // 自动提示几秒后消失
             if !silent {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 if fullContentHint?.contains("已获取全文") == true {
@@ -215,9 +222,7 @@ struct ArticleReaderView: View {
                 }
             }
         } catch {
-            if !silent {
-                fullContentError = error.localizedDescription
-            }
+            if !silent { fullContentError = error.localizedDescription }
             fullContentHint = nil
         }
         isFetchingFull = false
@@ -233,23 +238,47 @@ struct ArticleReaderView: View {
         if let cached = currentArticle.translatedContent {
             translatedContent = cached
             showTranslated = true
+            if currentArticle.translatedTitle == nil {
+                Task { await translateTitleIfNeeded() }
+            }
             return
         }
         translationError = nil
         isTranslating = true
         translationProgress = "正在翻译…"
         do {
-            let plain = HTMLUtils.stripTags(currentArticle.content)
-            let result = try await store.translateLongText(plain, maxChunkChars: 1800)
-            let htmlResult = result
+            let titleTask = Task { () -> String? in
+                if let existing = currentArticle.translatedTitle, !existing.isEmpty {
+                    return existing
+                }
+                let t = currentArticle.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !t.isEmpty else { return nil }
+                return try? await store.translateText(t)
+            }
+
+            let (plainWithPlaceholders, images) = HTMLUtils.extractImagesForTranslation(currentArticle.content)
+            let result = try await store.translateLongText(plainWithPlaceholders, maxChunkChars: 1800)
+            let restored = HTMLUtils.restoreImagesAfterTranslation(result, images: images)
+            let htmlResult = restored
                 .components(separatedBy: "\n\n")
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
-                .map { "<p>\($0)</p>" }
+                .map { part -> String in
+                    if part.localizedCaseInsensitiveContains("<img") {
+                        return part
+                    }
+                    return "<p>\(part)</p>"
+                }
                 .joined()
-            translatedContent = htmlResult.isEmpty ? "<p>\(result)</p>" : htmlResult
+            translatedContent = htmlResult.isEmpty ? "<p>\(restored)</p>" : htmlResult
+
+            let translatedTitle = await titleTask.value
+
             var updated = currentArticle
             updated.translatedContent = translatedContent
+            if let translatedTitle, !translatedTitle.isEmpty {
+                updated.translatedTitle = translatedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
             store.updateArticle(updated)
             showTranslated = true
             translationProgress = nil
@@ -258,6 +287,17 @@ struct ArticleReaderView: View {
             translationProgress = nil
         }
         isTranslating = false
+    }
+
+    private func translateTitleIfNeeded() async {
+        guard currentArticle.translatedTitle == nil else { return }
+        let t = currentArticle.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        if let result = try? await store.translateText(t), !result.isEmpty {
+            var updated = currentArticle
+            updated.translatedTitle = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            store.updateArticle(updated)
+        }
     }
 
     private func generateSummary() async {
@@ -282,11 +322,8 @@ struct ArticleReaderView: View {
     }
 }
 
-// MARK: - In-App Safari Browser
-
 struct SafariView: UIViewControllerRepresentable {
     let url: URL
-
     func makeUIViewController(context: Context) -> SFSafariViewController {
         let config = SFSafariViewController.Configuration()
         config.entersReaderIfAvailable = true
@@ -294,15 +331,13 @@ struct SafariView: UIViewControllerRepresentable {
         vc.preferredControlTintColor = .label
         return vc
     }
-
     func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
 }
-
-// MARK: - AI Summary Card
 
 struct AISummaryCard: View {
     let summary: String
     @Binding var expanded: Bool
+    var fontSize: Double = 22
 
     private var points: [String] {
         summary.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -335,13 +370,13 @@ struct AISummaryCard: View {
                     ForEach(Array(points.enumerated()), id: \.offset) { i, point in
                         HStack(alignment: .top, spacing: 8) {
                             Text("\(i + 1).")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(.system(size: fontSize, weight: .semibold))
                                 .foregroundStyle(Color.secondary)
-                                .frame(width: 22, alignment: .leading)
+                                .frame(width: 24, alignment: .leading)
                             Text(point)
-                                .font(.system(size: 16))
+                                .font(.system(size: fontSize))
                                 .foregroundStyle(Color.primary)
-                                .lineSpacing(4)
+                                .lineSpacing(5)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -357,8 +392,6 @@ struct AISummaryCard: View {
         )
     }
 }
-
-// MARK: - Article Content View (supports images + HTML entities)
 
 struct ArticleContentView: View {
     let html: String
@@ -388,18 +421,13 @@ struct ArticleContentView: View {
                                     .frame(height: 180)
                                     .overlay(ProgressView())
                             case .success(let image):
-                                image
-                                    .resizable()
-                                    .scaledToFit()
+                                image.resizable().scaledToFit()
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
                             case .failure:
                                 RoundedRectangle(cornerRadius: 8)
                                     .fill(Color(.secondarySystemBackground))
                                     .frame(height: 80)
-                                    .overlay(
-                                        Image(systemName: "photo")
-                                            .foregroundStyle(Color.secondary)
-                                    )
+                                    .overlay(Image(systemName: "photo").foregroundStyle(Color.secondary))
                             @unknown default:
                                 EmptyView()
                             }
@@ -411,8 +439,6 @@ struct ArticleContentView: View {
         }
     }
 }
-
-// MARK: - Content Block Parser
 
 enum ContentBlock {
     case paragraph(String)
@@ -427,7 +453,7 @@ enum ContentBlockParser {
         working = working.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
         working = working.replacingOccurrences(of: #"</p>|</div>|</li>|</h[1-6]>"#, with: "\n\n", options: .regularExpression)
 
-        let imgPattern = #"<img[^>]+src=["']([^"']+)["'][^>]*/?>"#
+        let imgPattern = #"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*/?>"#
         var imageURLs: [String] = []
         if let regex = try? NSRegularExpression(pattern: imgPattern, options: .caseInsensitive) {
             let ns = working as NSString
@@ -445,7 +471,8 @@ enum ContentBlockParser {
             }
         }
 
-        working = working.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        working = working.replacingOccurrences(of: "<[^>]+", with: "", options: .regularExpression)
+        working = working.replacingOccurrences(of: ">", with: "")
         working = HTMLUtils.decodeEntities(working)
 
         let parts = working.components(separatedBy: "\n")

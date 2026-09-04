@@ -3,7 +3,6 @@ import Foundation
 // MARK: - DeepL
 
 enum DeepLTranslate {
-    /// DeepL Free API Key 通常以 ":fx" 结尾，会自动使用对应的免费端点
     static func translate(text: String, apiKey: String, targetLang: String = "ZH") async throws -> String {
         let all = try await translate(texts: [text], apiKey: apiKey, targetLang: targetLang)
         guard let first = all.first, !first.isEmpty else {
@@ -12,7 +11,6 @@ enum DeepLTranslate {
         return first
     }
 
-    /// 一次请求翻译多段文本，顺序与输入一致
     static func translate(texts: [String], apiKey: String, targetLang: String = "ZH") async throws -> [String] {
         guard !apiKey.isEmpty else { throw TranslationError.apiError("未配置 DeepL API Key") }
         guard !texts.isEmpty else { return [] }
@@ -59,8 +57,6 @@ enum DeepLTranslate {
     }
 }
 
-// MARK: - Google Translate (free unofficial endpoint)
-
 enum GoogleTranslate {
     static func translate(text: String, targetLang: String = "zh") async throws -> String {
         let escaped = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? text
@@ -100,8 +96,6 @@ enum GoogleTranslate {
     }
 }
 
-// MARK: - Microsoft Translator
-
 enum MicrosoftTranslate {
     static func translate(text: String, apiKey: String, targetLang: String = "zh-Hans") async throws -> String {
         let all = try await translate(texts: [text], apiKey: apiKey, targetLang: targetLang)
@@ -111,7 +105,6 @@ enum MicrosoftTranslate {
         return first
     }
 
-    /// 一次请求翻译多段文本，顺序与输入一致
     static func translate(texts: [String], apiKey: String, targetLang: String = "zh-Hans") async throws -> [String] {
         guard !apiKey.isEmpty else { throw TranslationError.apiError("未配置 Microsoft Translator API Key") }
         guard !texts.isEmpty else { return [] }
@@ -138,26 +131,45 @@ enum MicrosoftTranslate {
     }
 }
 
-// MARK: - Unified AI Translation / Summary
-
 enum AITranslate {
     static func translate(text: String, provider: AIProvider, apiKey: String) async throws -> String {
+        try await translate(text: text, provider: provider, apiKey: apiKey, promptTemplate: AppStore.defaultTranslationPrompt)
+    }
+
+    static func translate(text: String, provider: AIProvider, apiKey: String, promptTemplate: String) async throws -> String {
         guard !apiKey.isEmpty else { throw TranslationError.apiError("未配置 API Key") }
-        let prompt = "请将以下内容翻译成中文，只输出译文，不要解释：\n\n\(text)"
+        let template = promptTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? AppStore.defaultTranslationPrompt
+            : promptTemplate
+        var prompt = template.replacingOccurrences(of: "{{text}}", with: text)
+        if !template.contains("{{text}}") {
+            prompt += "\n\n" + text
+        }
         return try await callAI(prompt: prompt, provider: provider, apiKey: apiKey, maxTokens: 2048)
     }
 }
 
 enum AISummary {
     static func summarize(article: Article, provider: AIProvider, apiKey: String) async throws -> String {
+        try await summarize(article: article, provider: provider, apiKey: apiKey, promptTemplate: AppStore.defaultSummaryPrompt)
+    }
+
+    static func summarize(article: Article, provider: AIProvider, apiKey: String, promptTemplate: String) async throws -> String {
         guard !apiKey.isEmpty else { throw TranslationError.apiError("未配置 API Key") }
-        let content = HTMLUtils.stripTags(article.content)
-        let prompt = "请用3-5句话概括以下文章的核心内容，用中文回答，每句话用换行分隔：\n\n标题：\(article.title)\n\n内容：\(content.prefix(2500))"
+        let content = String(HTMLUtils.stripTags(article.content).prefix(2500))
+        let template = promptTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? AppStore.defaultSummaryPrompt
+            : promptTemplate
+        var prompt = template
+            .replacingOccurrences(of: "{{title}}", with: article.title)
+            .replacingOccurrences(of: "{{content}}", with: content)
+        if !template.contains("{{title}}") && !template.contains("{{content}}") {
+            prompt += "\n\n标题：\(article.title)\n\n内容：\(content)"
+        }
         return try await callAI(prompt: prompt, provider: provider, apiKey: apiKey, maxTokens: 600)
     }
 }
 
-/// 统一入口：根据 provider.kind 走 Gemini 或 OpenAI 兼容接口
 func callAI(prompt: String, provider: AIProvider, apiKey: String, maxTokens: Int = 500) async throws -> String {
     if provider.kind == "gemini" || provider.name.lowercased().contains("gemini") {
         return try await callGemini(prompt: prompt, provider: provider, apiKey: apiKey)
@@ -236,36 +248,20 @@ func callGemini(prompt: String, provider: AIProvider, apiKey: String) async thro
     return text.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-// MARK: - HTML Utilities (entities + strip)
-
 enum HTMLUtils {
-    /// 解码常见 HTML 实体（含数字实体如 &#8216;）
     static func decodeEntities(_ html: String) -> String {
         var result = html
-        // 命名实体
         let named: [(String, String)] = [
-            ("&amp;", "&"),
-            ("&lt;", "<"),
-            ("&gt;", ">"),
-            ("&quot;", "\""),
-            ("&apos;", "'"),
-            ("&#39;", "'"),
-            ("&nbsp;", " "),
-            ("&ldquo;", "\u{201C}"),
-            ("&rdquo;", "\u{201D}"),
-            ("&lsquo;", "\u{2018}"),
-            ("&rsquo;", "\u{2019}"),
-            ("&mdash;", "\u{2014}"),
-            ("&ndash;", "\u{2013}"),
-            ("&hellip;", "\u{2026}"),
-            ("&copy;", "©"),
-            ("&reg;", "®"),
-            ("&trade;", "™"),
+            ("&", "&"), ("<", "<"), (">", ">"), (""", "\""),
+            ("'", "'"), ("&#39;", "'"), ("&nbsp;", " "),
+            ("&ldquo;", "\u{201C}"), ("&rdquo;", "\u{201D}"),
+            ("&lsquo;", "\u{2018}"), ("&rsquo;", "\u{2019}"),
+            ("&mdash;", "\u{2014}"), ("&ndash;", "\u{2013}"),
+            ("&hellip;", "\u{2026}"), ("&copy;", "©"), ("&reg;", "®"), ("&trade;", "™"),
         ]
         for (entity, char) in named {
             result = result.replacingOccurrences(of: entity, with: char)
         }
-        // 十进制数字实体 &#8216;
         if let regex = try? NSRegularExpression(pattern: "&#(\\d+);", options: []) {
             let ns = result as NSString
             let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()
@@ -279,7 +275,6 @@ enum HTMLUtils {
                 }
             }
         }
-        // 十六进制 &#x2018;
         if let regex = try? NSRegularExpression(pattern: "&#x([0-9a-fA-F]+);", options: []) {
             let ns = result as NSString
             let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()
@@ -302,8 +297,55 @@ enum HTMLUtils {
         result = result.replacingOccurrences(of: "]]>", with: "")
         result = result.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
         result = result.replacingOccurrences(of: #"</p>|</div>|</li>|</h[1-6]>"#, with: "\n", options: .regularExpression)
-        result = result.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        result = result.replacingOccurrences(of: "<[^>]+", with: "", options: .regularExpression)
+        result = result.replacingOccurrences(of: ">", with: "")
         result = decodeEntities(result)
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func extractImagesForTranslation(_ html: String) -> (text: String, images: [String]) {
+        var working = html
+        var images: [String] = []
+        let imgPattern = #"<img\b[^>]*>"#
+        guard let regex = try? NSRegularExpression(pattern: imgPattern, options: .caseInsensitive) else {
+            return (stripTags(html), [])
+        }
+        let ns = working as NSString
+        let matches = regex.matches(in: working, range: NSRange(location: 0, length: ns.length))
+        for match in matches.reversed() {
+            guard let fullRange = Range(match.range, in: working) else { continue }
+            let tag = String(working[fullRange])
+            images.insert(tag, at: 0)
+            let placeholder = "\n\n[[IMG_\(images.count - 1)]]\n\n"
+            working.replaceSubrange(fullRange, with: placeholder)
+        }
+        working = working.replacingOccurrences(of: "<![CDATA[", with: "")
+        working = working.replacingOccurrences(of: "]]>", with: "")
+        working = working.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
+        working = working.replacingOccurrences(of: #"</p>|</div>|</li>|</h[1-6]>"#, with: "\n\n", options: .regularExpression)
+        working = working.replacingOccurrences(of: "<[^>]+", with: "", options: .regularExpression)
+        working = working.replacingOccurrences(of: ">", with: "")
+        working = decodeEntities(working)
+        return (working.trimmingCharacters(in: .whitespacesAndNewlines), images)
+    }
+
+    static func restoreImagesAfterTranslation(_ text: String, images: [String]) -> String {
+        guard !images.isEmpty else { return text }
+        var result = text
+        for (i, tag) in images.enumerated() {
+            let patterns = [
+                "[[IMG_\(i)]]",
+                "【IMG_\(i)】",
+                "[IMG_\(i)]",
+                "IMG_\(i)"
+            ]
+            for p in patterns {
+                if result.contains(p) {
+                    result = result.replacingOccurrences(of: p, with: "\n\n\(tag)\n\n")
+                    break
+                }
+            }
+        }
+        return result
     }
 }

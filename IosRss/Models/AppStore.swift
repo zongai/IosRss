@@ -598,34 +598,3 @@ class AppStore {
 
     private func seedSampleData() {}
 }
-
-enum TitleDisplayMode: String, CaseIterable {
-    case original = "原文"
-    case translated = "译文"
-    case bilingual = "双语"
-}
-
-struct SubscriptionImportResult {
-    let added: Int
-    let skipped: Int
-    let failed: Int
-}
-
-enum FeedURL {
-    static func canonical(_ raw: String) -> String {
-        AppStore.canonicalLink(raw)
-    }
-}
-
-extension Array {
-    func chunked(into size: Int) -> [[Element]] {
-        guard size > 0 else { return [self] }
-        var result: [[Element]] = []
-        var i = 0
-        while i < count {
-            result.append(Array(self[i..<Swift.min(i + size, count)]))
-            i += size
-        }
-        return result
-    }
-}

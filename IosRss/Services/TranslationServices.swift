@@ -251,33 +251,33 @@ func callGemini(prompt: String, provider: AIProvider, apiKey: String) async thro
 // MARK: - HTML Utilities (entities + strip)
 
 enum HTMLUtils {
-    /// 解码常见 HTML 实体（含数字实体如 &#8216;）
+    /// 解码常见 HTML 实体（含数字实体）
     static func decodeEntities(_ html: String) -> String {
         var result = html
-        // 命名实体
+        // 命名实体：拼接避免源码中出现完整实体字面量
         let named: [(String, String)] = [
-            ("&", "&"),
-            ("<", "<"),
-            (">", ">"),
-            (""", "\""),
-            ("'", "'"),
-            ("&#39;", "'"),
-            ("&nbsp;", " "),
-            ("&ldquo;", "\u{201C}"),
-            ("&rdquo;", "\u{201D}"),
-            ("&lsquo;", "\u{2018}"),
-            ("&rsquo;", "\u{2019}"),
-            ("&mdash;", "\u{2014}"),
-            ("&ndash;", "\u{2013}"),
-            ("&hellip;", "\u{2026}"),
-            ("&copy;", "©"),
-            ("&reg;", "®"),
-            ("&trade;", "™"),
+            ("&" + "amp;", "&"),
+            ("&" + "lt;", "<"),
+            ("&" + "gt;", ">"),
+            ("&" + "quot;", "\""),
+            ("&" + "apos;", "'"),
+            ("&" + "#39;", "'"),
+            ("&" + "nbsp;", " "),
+            ("&" + "ldquo;", "\u{201C}"),
+            ("&" + "rdquo;", "\u{201D}"),
+            ("&" + "lsquo;", "\u{2018}"),
+            ("&" + "rsquo;", "\u{2019}"),
+            ("&" + "mdash;", "\u{2014}"),
+            ("&" + "ndash;", "\u{2013}"),
+            ("&" + "hellip;", "\u{2026}"),
+            ("&" + "copy;", "©"),
+            ("&" + "reg;", "®"),
+            ("&" + "trade;", "™"),
         ]
         for (entity, char) in named {
             result = result.replacingOccurrences(of: entity, with: char)
         }
-        // 十进制数字实体 &#8216;
+        // 十进制数字实体
         if let regex = try? NSRegularExpression(pattern: "&#(\\d+);", options: []) {
             let ns = result as NSString
             let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()
@@ -291,7 +291,7 @@ enum HTMLUtils {
                 }
             }
         }
-        // 十六进制 &#x2018;
+        // 十六进制
         if let regex = try? NSRegularExpression(pattern: "&#x([0-9a-fA-F]+);", options: []) {
             let ns = result as NSString
             let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()

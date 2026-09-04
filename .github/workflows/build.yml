@@ -1,10 +1,10 @@
 name: Build Unsigned IPA
 
 on:
-  #push:
-  #  branches: [ main ]
-  #  tags:
-  #    - 'v*'          # 推送 tag 时也触发,比如 v1.0.0
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'          # 推送 tag 时也触发,比如 v1.0.0
   workflow_dispatch:
 
 permissions:

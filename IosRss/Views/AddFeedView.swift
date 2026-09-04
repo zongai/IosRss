@@ -15,7 +15,6 @@ struct AddFeedView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // URL Input Area
                 VStack(alignment: .leading, spacing: 8) {
                     Text("粘贴网站或 Feed 地址")
                         .font(.system(size: 13))
@@ -156,7 +155,6 @@ struct AddFeedView: View {
                 phase = .select
             }
         } catch {
-            // Try parsing directly as feed
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
                 let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
@@ -187,7 +185,6 @@ struct AddFeedView: View {
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             let feedID = UUID()
-            // 优先用 Feed 内 channel/title；没有再用 link 上的 title；仍没有则用域名
             let fromXML = FeedParser.extractFeedTitle(from: data)
             let fallbackName = (discovered.title != discovered.url
                                 && discovered.title != FeedNaming.domainName(from: discovered.url))
@@ -197,10 +194,12 @@ struct AddFeedView: View {
                 url: discovered.url
             )
             let articles = FeedParser.parse(data: data, feedID: feedID, feedTitle: resolvedTitle)
+            let favicon = FeedParser.resolveFaviconURL(from: data, feedURL: discovered.url)
             let feed = RSSFeed(
                 id: feedID,
                 title: resolvedTitle,
                 url: discovered.url,
+                faviconURL: favicon,
                 unreadCount: articles.count,
                 articles: articles,
                 lastFetched: Date()

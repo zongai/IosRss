@@ -11,6 +11,7 @@ struct ArticleListView: View {
     @State private var translationTotal = 0
     @State private var readingIDs: Set<UUID> = []
 
+    /// 列表翻译每批条数（标题 + 预览各算一条任务）
     private let translationBatchSize = 6
 
     private var articles: [Article] {
@@ -140,6 +141,7 @@ struct ArticleListView: View {
         }
     }
 
+    /// 第一次打开且本地还没有文章时自动拉取，避免空白列表
     private func loadIfNeeded() async {
         if !store.articlesForFeed(feed.id).isEmpty { return }
         isInitialLoading = true
@@ -147,6 +149,7 @@ struct ArticleListView: View {
         isInitialLoading = false
     }
 
+    /// 一次点击：分批翻译所有标题和预览；再次点击切换回原文
     private func toggleTranslateAll() async {
         if showAllTranslations {
             showAllTranslations = false
@@ -203,6 +206,8 @@ private struct ListTranslationJob {
     let text: String
 }
 
+// MARK: - Article Row
+
 struct ArticleRow: View {
     @Environment(AppStore.self) private var store
     let article: Article
@@ -223,36 +228,36 @@ struct ArticleRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .top, spacing: 6) {
                     Text(displayTitle)
-                        .font(.system(size: 18, weight: article.isRead ? .regular : .semibold))
+                        .font(.system(size: store.listTitleFontSize, weight: article.isRead ? .regular : .semibold))
                         .foregroundStyle(article.isRead ? Color.secondary : Color.primary)
                         .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     if article.isFavorite {
                         Image(systemName: "star.fill")
-                            .font(.system(size: 12))
+                            .font(.system(size: max(11, store.listTitleFontSize - 6)))
                             .foregroundStyle(.orange)
                             .padding(.top, 3)
                     }
                 }
                 if showTranslation && store.titleDisplayMode == .bilingual && article.translatedTitle != nil {
-                    Text(article.title).font(.system(size: 14))
+                    Text(article.title).font(.system(size: max(12, store.listTitleFontSize - 4)))
                         .foregroundStyle(Color.secondary).lineLimit(2)
                 }
                 HStack(spacing: 6) {
-                    Text(article.feedTitle).font(.system(size: 13)).foregroundStyle(Color.secondary)
+                    Text(article.feedTitle).font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary)
                     if !article.relativeTime.isEmpty {
-                        Text("·").font(.system(size: 13)).foregroundStyle(Color.secondary.opacity(0.6))
-                        Text(article.relativeTime).font(.system(size: 13)).foregroundStyle(Color.secondary)
+                        Text("·").font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary.opacity(0.6))
+                        Text(article.relativeTime).font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary)
                     }
                 }
                 if !displaySummary.isEmpty {
                     Text(displaySummary)
-                        .font(.system(size: 15))
+                        .font(.system(size: store.listSummaryFontSize))
                         .foregroundStyle(Color.secondary)
                         .lineLimit(2)
                     if showTranslation && store.titleDisplayMode == .bilingual
                         && article.translatedSummary != nil && !article.summary.isEmpty {
                         Text(article.summary)
-                            .font(.system(size: 13))
+                            .font(.system(size: max(12, store.listSummaryFontSize - 2)))
                             .foregroundStyle(Color.secondary.opacity(0.8))
                             .lineLimit(2)
                     }

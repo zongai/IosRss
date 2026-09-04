@@ -17,6 +17,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Read app version
+        id: ver
+        run: |
+          # 从 pbxproj 读取 MARKETING_VERSION / CURRENT_PROJECT_VERSION
+          MARKETING=$(grep -m1 'MARKETING_VERSION' IosRss.xcodeproj/project.pbxproj | sed 's/.*= *//;s/;//;s/"//g' | tr -d '[:space:]')
+          BUILD=$(grep -m1 'CURRENT_PROJECT_VERSION' IosRss.xcodeproj/project.pbxproj | sed 's/.*= *//;s/;//;s/"//g' | tr -d '[:space:]')
+          if [ -z "$MARKETING" ]; then MARKETING="0.0"; fi
+          if [ -z "$BUILD" ]; then BUILD="0"; fi
+          IPA_NAME="IosRss-${MARKETING}-${BUILD}.ipa"
+          echo "version=${MARKETING}" >> "$GITHUB_OUTPUT"
+          echo "build=${BUILD}" >> "$GITHUB_OUTPUT"
+          echo "ipa_name=${IPA_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${MARKETING} (${BUILD}) → ${IPA_NAME}"
+
       - name: Build app (no signing)
         run: |
           xcodebuild -project IosRss.xcodeproj \
@@ -34,18 +48,19 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/Build/Products/Release-iphoneos/*.app Payload/
-          zip -r IosRss.ipa Payload
+          zip -r "${{ steps.ver.outputs.ipa_name }}" Payload
+          ls -lh "${{ steps.ver.outputs.ipa_name }}"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v6
         with:
-          name: IosRss-ipa
-          path: IosRss.ipa
+          name: IosRss-ipa-${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.build }}
+          path: ${{ steps.ver.outputs.ipa_name }}
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
-          files: IosRss.ipa
-          tag_name: build-${{ github.run_number }}
-          name: Build ${{ github.run_number }}
+          files: ${{ steps.ver.outputs.ipa_name }}
+          tag_name: v${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.build }}-build${{ github.run_number }}
+          name: IosRss ${{ steps.ver.outputs.version }} (${{ steps.ver.outputs.build }}) #${{ github.run_number }}
           generate_release_notes: true

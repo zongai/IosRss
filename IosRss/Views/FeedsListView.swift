@@ -211,7 +211,7 @@ struct OPMLExportView: View {
             }
             .navigationTitle("导出 OPML").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() }
+                ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } }
                 ToolbarItem(placement: .topBarLeading) {
                     ShareLink(item: text, subject: Text("Feed 订阅列表"), message: Text("Feed OPML Export"))
                 }

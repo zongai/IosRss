@@ -476,11 +476,19 @@ class AppStore {
         OfflineCache.clearContentCache()
     }
 
+    private static func xmlEscape(_ s: String) -> String {
+        s
+            .replacingOccurrences(of: "&", with: "\u{0026}amp;")
+            .replacingOccurrences(of: "\"", with: "\u{0026}quot;")
+            .replacingOccurrences(of: "<", with: "\u{0026}lt;")
+            .replacingOccurrences(of: ">", with: "\u{0026}gt;")
+    }
+
     func exportOPML() -> String {
         var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<opml version=\"2.0\">\n  <head><title>Feed Subscriptions</title></head>\n  <body>\n"
         for feed in feeds {
-            let t = feed.title.replacingOccurrences(of: "&", with: "&").replacingOccurrences(of: "\"", with: """).replacingOccurrences(of: "<", with: "<")
-            let u = feed.url.replacingOccurrences(of: "&", with: "&").replacingOccurrences(of: "\"", with: """)
+            let t = Self.xmlEscape(feed.title)
+            let u = Self.xmlEscape(feed.url)
             xml += "    <outline type=\"rss\" text=\"\(t)\" xmlUrl=\"\(u)\"/>\n"
         }
         xml += "  </body>\n</opml>"

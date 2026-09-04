@@ -138,17 +138,18 @@ struct FeedsListView: View {
 }
 
 struct FeedRow: View {
+    @Environment(AppStore.self) private var store
     let feed: RSSFeed
     var body: some View {
         HStack(spacing: 14) {
             FeedIcon(feed: feed, size: 38)
             Text(feed.title)
-                .font(.system(size: 17, weight: .medium))
+                .font(.system(size: store.feedTitleFontSize, weight: .medium))
                 .foregroundStyle(Color.primary)
             Spacer()
             if feed.unreadCount > 0 {
                 Text("\(feed.unreadCount)")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: max(11, store.feedTitleFontSize - 4), weight: .bold))
                     .foregroundStyle(Color(.systemBackground))
                     .padding(.horizontal, 8).padding(.vertical, 4)
                     .background(Color.primary, in: .capsule)
@@ -210,7 +211,7 @@ struct OPMLExportView: View {
             }
             .navigationTitle("导出 OPML").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() }
                 ToolbarItem(placement: .topBarLeading) {
                     ShareLink(item: text, subject: Text("Feed 订阅列表"), message: Text("Feed OPML Export"))
                 }

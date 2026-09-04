@@ -248,20 +248,36 @@ func callGemini(prompt: String, provider: AIProvider, apiKey: String) async thro
     return text.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
+// MARK: - HTML Utilities (entities + strip)
+
 enum HTMLUtils {
+    /// 解码常见 HTML 实体（含数字实体如 &#8216;）
     static func decodeEntities(_ html: String) -> String {
         var result = html
+        // 命名实体
         let named: [(String, String)] = [
-            ("&", "&"), ("<", "<"), (">", ">"), (""", "\""),
-            ("'", "'"), ("&#39;", "'"), ("&nbsp;", " "),
-            ("&ldquo;", "\u{201C}"), ("&rdquo;", "\u{201D}"),
-            ("&lsquo;", "\u{2018}"), ("&rsquo;", "\u{2019}"),
-            ("&mdash;", "\u{2014}"), ("&ndash;", "\u{2013}"),
-            ("&hellip;", "\u{2026}"), ("&copy;", "©"), ("&reg;", "®"), ("&trade;", "™"),
+            ("&", "&"),
+            ("<", "<"),
+            (">", ">"),
+            (""", "\""),
+            ("'", "'"),
+            ("&#39;", "'"),
+            ("&nbsp;", " "),
+            ("&ldquo;", "\u{201C}"),
+            ("&rdquo;", "\u{201D}"),
+            ("&lsquo;", "\u{2018}"),
+            ("&rsquo;", "\u{2019}"),
+            ("&mdash;", "\u{2014}"),
+            ("&ndash;", "\u{2013}"),
+            ("&hellip;", "\u{2026}"),
+            ("&copy;", "©"),
+            ("&reg;", "®"),
+            ("&trade;", "™"),
         ]
         for (entity, char) in named {
             result = result.replacingOccurrences(of: entity, with: char)
         }
+        // 十进制数字实体 &#8216;
         if let regex = try? NSRegularExpression(pattern: "&#(\\d+);", options: []) {
             let ns = result as NSString
             let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()
@@ -275,6 +291,7 @@ enum HTMLUtils {
                 }
             }
         }
+        // 十六进制 &#x2018;
         if let regex = try? NSRegularExpression(pattern: "&#x([0-9a-fA-F]+);", options: []) {
             let ns = result as NSString
             let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()
@@ -297,12 +314,12 @@ enum HTMLUtils {
         result = result.replacingOccurrences(of: "]]>", with: "")
         result = result.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
         result = result.replacingOccurrences(of: #"</p>|</div>|</li>|</h[1-6]>"#, with: "\n", options: .regularExpression)
-        result = result.replacingOccurrences(of: "<[^>]+", with: "", options: .regularExpression)
-        result = result.replacingOccurrences(of: ">", with: "")
+        result = result.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
         result = decodeEntities(result)
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// 提取 img 标签，用占位符替换，便于翻译纯文本后再还原图片
     static func extractImagesForTranslation(_ html: String) -> (text: String, images: [String]) {
         var working = html
         var images: [String] = []
@@ -312,6 +329,7 @@ enum HTMLUtils {
         }
         let ns = working as NSString
         let matches = regex.matches(in: working, range: NSRange(location: 0, length: ns.length))
+        // 从后往前替换，保持 range 有效
         for match in matches.reversed() {
             guard let fullRange = Range(match.range, in: working) else { continue }
             let tag = String(working[fullRange])
@@ -319,16 +337,17 @@ enum HTMLUtils {
             let placeholder = "\n\n[[IMG_\(images.count - 1)]]\n\n"
             working.replaceSubrange(fullRange, with: placeholder)
         }
+        // 去掉其余标签，保留占位符与段落结构
         working = working.replacingOccurrences(of: "<![CDATA[", with: "")
         working = working.replacingOccurrences(of: "]]>", with: "")
         working = working.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
         working = working.replacingOccurrences(of: #"</p>|</div>|</li>|</h[1-6]>"#, with: "\n\n", options: .regularExpression)
-        working = working.replacingOccurrences(of: "<[^>]+", with: "", options: .regularExpression)
-        working = working.replacingOccurrences(of: ">", with: "")
+        working = working.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
         working = decodeEntities(working)
         return (working.trimmingCharacters(in: .whitespacesAndNewlines), images)
     }
 
+    /// 将翻译结果中的 [[IMG_n]] 占位还原为原始 img 标签
     static func restoreImagesAfterTranslation(_ text: String, images: [String]) -> String {
         guard !images.isEmpty else { return text }
         var result = text

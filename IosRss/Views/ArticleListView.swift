@@ -2,22 +2,25 @@ import SwiftUI
 
 struct ArticleListView: View {
     @Environment(AppStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
     let feed: RSSFeed
 
-    @State private var selectedArticle: Article?
     @State private var showAllTranslations = false
     @State private var isTranslatingAll = false
     @State private var isInitialLoading = false
     @State private var translationDone = 0
     @State private var translationTotal = 0
+    @State private var readingIDs: Set<UUID> = []
 
     /// 列表翻译每批条数（标题 + 预览各算一条任务）
     private let translationBatchSize = 6
 
-    /// 自动隐藏已读文章
     private var articles: [Article] {
-        store.articlesForFeed(feed.id).filter { !$0.isRead }
+        let all = store.articlesForFeed(feed.id)
+            .sorted { ($0.publishedDate ?? .distantPast) > ($1.publishedDate ?? .distantPast) }
+        if store.showReadArticles {
+            return all
+        }
+        return all.filter { !$0.isRead || readingIDs.contains($0.id) }
     }
 
     private var liveFeedTitle: String {
@@ -25,92 +28,115 @@ struct ArticleListView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                ForEach(articles) { article in
-                    Button {
-                        store.markAsRead(article)
-                        selectedArticle = article
-                    } label: {
-                        ArticleRow(article: article, showTranslation: showAllTranslations)
-                    }
-                    .buttonStyle(.plain)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-                    .listRowSeparator(.hidden)
+        List {
+            ForEach(articles) { article in
+                NavigationLink(value: article) {
+                    ArticleRow(article: article, showTranslation: showAllTranslations)
                 }
-            }
-            .listStyle(.plain)
-            .animation(.default, value: articles.map(\.id))
-            .navigationTitle(liveFeedTitle)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                .listRowSeparator(.hidden)
+                .swipeActions(edge: .leading) {
                     Button {
-                        dismiss()
+                        store.toggleFavorite(article)
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left").font(.system(size: 16, weight: .semibold))
-                            Text("Feed")
+                        Label(article.isFavorite ? "取消收藏" : "收藏",
+                              systemImage: article.isFavorite ? "star.slash.fill" : "star.fill")
+                    }
+                    .tint(.orange)
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    if article.isRead {
+                        Button {
+                            store.markAsUnread(article)
+                        } label: {
+                            Label("未读", systemImage: "circle")
                         }
-                        .foregroundStyle(.primary)
-                    }
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button {
-                        Task { await toggleTranslateAll() }
-                    } label: {
-                        if isTranslatingAll {
-                            HStack(spacing: 5) {
-                                ProgressView().scaleEffect(0.75)
-                                if translationTotal > 0 {
-                                    Text("\(translationDone)/\(translationTotal)")
-                                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                                        .foregroundStyle(.secondary)
-                                        .monospacedDigit()
-                                }
-                            }
-                        } else {
-                            Text("译")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(showAllTranslations ? Color(.systemBackground) : Color.primary)
-                                .frame(width: 26, height: 26)
-                                .background(showAllTranslations ? Color.primary : Color.secondary.opacity(0.15),
-                                            in: .rect(cornerRadius: 6))
+                        .tint(.blue)
+                    } else {
+                        Button {
+                            store.markAsRead(article)
+                        } label: {
+                            Label("已读", systemImage: "checkmark.circle")
                         }
-                    }
-                    .disabled(isTranslatingAll)
-
-                    Button("刷新", systemImage: "arrow.clockwise") {
-                        Task { await store.refreshFeed(feed.id) }
+                        .tint(.green)
                     }
                 }
-            }
-            .overlay {
-                if isInitialLoading {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("正在加载文章…")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(.systemBackground))
-                } else if articles.isEmpty {
-                    ContentUnavailableView("暂无文章", systemImage: "newspaper",
-                                          description: Text("下拉刷新或稍后再来"))
-                }
-            }
-            .refreshable { await store.refreshFeed(feed.id) }
-            .task(id: feed.id) {
-                await loadIfNeeded()
             }
         }
-        // Article reader — nested under the article list, so returning from
-        // the reader comes back here rather than jumping to the feed list.
-        .sheet(item: $selectedArticle) { article in
+        .listStyle(.plain)
+        .animation(.default, value: articles.map(\.id))
+        .navigationTitle(liveFeedTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(for: Article.self) { article in
             ArticleReaderView(article: article)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.hidden)
+                .onAppear {
+                    readingIDs.insert(article.id)
+                    store.markAsRead(article)
+                }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    store.showReadArticles.toggle()
+                    store.persistSettings()
+                } label: {
+                    Image(systemName: store.showReadArticles ? "eye" : "eye.slash")
+                }
+                .accessibilityLabel(store.showReadArticles ? "隐藏已读" : "显示已读")
+
+                Button {
+                    Task { await toggleTranslateAll() }
+                } label: {
+                    if isTranslatingAll {
+                        HStack(spacing: 5) {
+                            ProgressView().scaleEffect(0.75)
+                            if translationTotal > 0 {
+                                Text("\(translationDone)/\(translationTotal)")
+                                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+                    } else {
+                        Text("译")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(showAllTranslations ? Color(.systemBackground) : Color.primary)
+                            .frame(width: 26, height: 26)
+                            .background(showAllTranslations ? Color.primary : Color.secondary.opacity(0.15),
+                                        in: .rect(cornerRadius: 6))
+                    }
+                }
+                .disabled(isTranslatingAll)
+
+                Button {
+                    store.markAllAsRead(in: feed.id)
+                } label: {
+                    Image(systemName: "checkmark.circle")
+                }
+                .accessibilityLabel("全部已读")
+            }
+        }
+        .overlay {
+            if isInitialLoading {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("正在加载文章…")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(.systemBackground))
+            } else if articles.isEmpty {
+                ContentUnavailableView(
+                    store.showReadArticles ? "暂无文章" : "暂无未读文章",
+                    systemImage: "newspaper",
+                    description: Text(store.showReadArticles ? "下拉刷新或稍后再来" : "点右上角眼睛可显示已读文章")
+                )
+            }
+        }
+        .refreshable { await store.refreshFeed(feed.id) }
+        .task(id: feed.id) {
+            await loadIfNeeded()
         }
     }
 
@@ -128,7 +154,6 @@ struct ArticleListView: View {
             showAllTranslations = false
             return
         }
-        // 立刻展示已有译文，其余分批补齐
         showAllTranslations = true
 
         let snapshot = articles
@@ -200,30 +225,38 @@ struct ArticleRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(displayTitle)
-                    .font(.system(size: 16, weight: article.isRead ? .regular : .semibold))
-                    .foregroundStyle(article.isRead ? Color.secondary : Color.primary)
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .top, spacing: 6) {
+                    Text(displayTitle)
+                        .font(.system(size: 18, weight: article.isRead ? .regular : .semibold))
+                        .foregroundStyle(article.isRead ? Color.secondary : Color.primary)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    if article.isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.orange)
+                            .padding(.top, 3)
+                    }
+                }
                 if showTranslation && store.titleDisplayMode == .bilingual && article.translatedTitle != nil {
-                    Text(article.title).font(.system(size: 13))
+                    Text(article.title).font(.system(size: 14))
                         .foregroundStyle(Color.secondary).lineLimit(2)
                 }
                 HStack(spacing: 6) {
-                    Text(article.feedTitle).font(.system(size: 12)).foregroundStyle(Color.secondary)
+                    Text(article.feedTitle).font(.system(size: 13)).foregroundStyle(Color.secondary)
                     if !article.relativeTime.isEmpty {
-                        Text("·").font(.system(size: 12)).foregroundStyle(Color.secondary.opacity(0.6))
-                        Text(article.relativeTime).font(.system(size: 12)).foregroundStyle(Color.secondary)
+                        Text("·").font(.system(size: 13)).foregroundStyle(Color.secondary.opacity(0.6))
+                        Text(article.relativeTime).font(.system(size: 13)).foregroundStyle(Color.secondary)
                     }
                 }
                 if !displaySummary.isEmpty {
                     Text(displaySummary)
-                        .font(.system(size: 13))
+                        .font(.system(size: 15))
                         .foregroundStyle(Color.secondary)
                         .lineLimit(2)
                     if showTranslation && store.titleDisplayMode == .bilingual
                         && article.translatedSummary != nil && !article.summary.isEmpty {
                         Text(article.summary)
-                            .font(.system(size: 12))
+                            .font(.system(size: 13))
                             .foregroundStyle(Color.secondary.opacity(0.8))
                             .lineLimit(2)
                     }

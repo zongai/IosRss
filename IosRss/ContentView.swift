@@ -8,6 +8,9 @@ struct ContentView: View {
             Tab("订阅", systemImage: "newspaper") {
                 FeedsListView()
             }
+            Tab("收藏", systemImage: "star") {
+                FavoritesListView()
+            }
             Tab("设置", systemImage: "gearshape") {
                 SettingsView()
             }

@@ -31,10 +31,10 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink(destination: TranslationSettingsView()) {
-                        Label("翻译设置", systemImage: "text.bubble")
+                        Label("翻译设置", systemImage: "globe")
                     }
                     NavigationLink(destination: AISettingsView()) {
-                        Label("AI 设置", systemImage: "sparkles")
+                        Label("AI 设置", systemImage: "wand.and.stars")
                     }
                 } header: {
                     Text("功能设置")

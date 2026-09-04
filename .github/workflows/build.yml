@@ -4,11 +4,11 @@ on:
   push:
     branches: [ main ]
     tags:
-      - 'v*'          # 推送 tag 时也触发,比如 v1.0.0
+      - 'v*'
   workflow_dispatch:
 
 permissions:
-  contents: write        # 关键:允许创建 Release,默认是只读
+  contents: write
 
 jobs:
   build:
@@ -20,11 +20,14 @@ jobs:
       - name: Read app version
         id: ver
         run: |
-          # 从 pbxproj 读取 MARKETING_VERSION / CURRENT_PROJECT_VERSION
-          MARKETING=$(grep -m1 'MARKETING_VERSION' IosRss.xcodeproj/project.pbxproj | sed 's/.*= *//;s/;//;s/"//g' | tr -d '[:space:]')
-          BUILD=$(grep -m1 'CURRENT_PROJECT_VERSION' IosRss.xcodeproj/project.pbxproj | sed 's/.*= *//;s/;//;s/"//g' | tr -d '[:space:]')
+          # 精确匹配 KEY = VALUE;（避免整行贪婪 sed 吃到 name = Debug）
+          MARKETING=$(grep -oE 'MARKETING_VERSION = [^;]+' IosRss.xcodeproj/project.pbxproj | head -1 | sed 's/.*= *//;s/"//g' | tr -d '[:space:]')
+          BUILD=$(grep -oE 'CURRENT_PROJECT_VERSION = [^;]+' IosRss.xcodeproj/project.pbxproj | head -1 | sed 's/.*= *//;s/"//g' | tr -d '[:space:]')
           if [ -z "$MARKETING" ]; then MARKETING="0.0"; fi
           if [ -z "$BUILD" ]; then BUILD="0"; fi
+          # 只保留安全字符，防止路径注入
+          MARKETING=$(echo "$MARKETING" | tr -cd 'A-Za-z0-9._-')
+          BUILD=$(echo "$BUILD" | tr -cd 'A-Za-z0-9._-')
           IPA_NAME="IosRss-${MARKETING}-${BUILD}.ipa"
           echo "version=${MARKETING}" >> "$GITHUB_OUTPUT"
           echo "build=${BUILD}" >> "$GITHUB_OUTPUT"

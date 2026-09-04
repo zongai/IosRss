@@ -55,11 +55,13 @@ struct FeedsListView: View {
                                 .font(.system(size: 18, weight: .medium))
                                 .foregroundStyle(.primary)
                         }
+                        .accessibilityLabel("添加订阅")
                         Button { showOPMLMenu = true } label: {
-                            Image(systemName: "ellipsis")
-                                .font(.system(size: 18, weight: .medium))
+                            Image(systemName: "square.and.arrow.down.on.square")
+                                .font(.system(size: 16, weight: .medium))
                                 .foregroundStyle(.primary)
                         }
+                        .accessibilityLabel("导入导出")
                     }
                 }
             }
@@ -160,6 +162,32 @@ struct FeedIcon: View {
     let feed: RSSFeed
     let size: CGFloat
     var body: some View {
+        Group {
+            if let urlStr = feed.faviconURL, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: size, height: size)
+                            .clipShape(Circle())
+                    case .failure:
+                        letterFallback
+                    case .empty:
+                        ProgressView()
+                            .frame(width: size, height: size)
+                    @unknown default:
+                        letterFallback
+                    }
+                }
+            } else {
+                letterFallback
+            }
+        }
+    }
+
+    private var letterFallback: some View {
         ZStack {
             Circle()
                 .fill(Color.primary)
@@ -182,7 +210,7 @@ struct OPMLExportView: View {
             }
             .navigationTitle("导出 OPML").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() }
                 ToolbarItem(placement: .topBarLeading) {
                     ShareLink(item: text, subject: Text("Feed 订阅列表"), message: Text("Feed OPML Export"))
                 }

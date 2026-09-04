@@ -1,5 +1,19 @@
 import Foundation
 
+// MARK: - App Version
+
+enum AppVersion {
+    static var marketing: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.2"
+    }
+    static var build: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "3"
+    }
+    static var display: String {
+        "\(marketing) (\(build))"
+    }
+}
+
 // MARK: - Core Models
 
 struct RSSFeed: Identifiable, Codable, Hashable {
@@ -25,6 +39,7 @@ struct Article: Identifiable, Codable, Hashable {
     var content: String
     var publishedDate: Date?
     var isRead: Bool = false
+    var isFavorite: Bool = false
     var translatedTitle: String?
     var translatedSummary: String?
     var translatedContent: String?
@@ -34,11 +49,12 @@ struct Article: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, feedID, feedTitle, title, link, summary, content
-        case publishedDate, isRead, translatedTitle, translatedSummary, translatedContent, aiSummary, hasFullContent
+        case publishedDate, isRead, isFavorite, translatedTitle, translatedSummary, translatedContent, aiSummary, hasFullContent
     }
 
     init(id: UUID = UUID(), feedID: UUID, feedTitle: String, title: String, link: String,
          summary: String, content: String, publishedDate: Date? = nil, isRead: Bool = false,
+         isFavorite: Bool = false,
          translatedTitle: String? = nil, translatedSummary: String? = nil,
          translatedContent: String? = nil, aiSummary: String? = nil,
          hasFullContent: Bool = false) {
@@ -51,6 +67,7 @@ struct Article: Identifiable, Codable, Hashable {
         self.content = content
         self.publishedDate = publishedDate
         self.isRead = isRead
+        self.isFavorite = isFavorite
         self.translatedTitle = translatedTitle
         self.translatedSummary = translatedSummary
         self.translatedContent = translatedContent
@@ -69,6 +86,7 @@ struct Article: Identifiable, Codable, Hashable {
         content = try c.decodeIfPresent(String.self, forKey: .content) ?? ""
         publishedDate = try c.decodeIfPresent(Date.self, forKey: .publishedDate)
         isRead = try c.decodeIfPresent(Bool.self, forKey: .isRead) ?? false
+        isFavorite = try c.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
         translatedTitle = try c.decodeIfPresent(String.self, forKey: .translatedTitle)
         translatedSummary = try c.decodeIfPresent(String.self, forKey: .translatedSummary)
         translatedContent = try c.decodeIfPresent(String.self, forKey: .translatedContent)
@@ -196,5 +214,24 @@ extension Array {
             i = j
         }
         return result
+    }
+}
+
+// MARK: - Import result
+
+struct SubscriptionImportResult {
+    var added: Int = 0
+    var skipped: Int = 0
+    var kind: String = "" // "opml" | "rss" | "empty"
+}
+
+enum FeedURL {
+    static func canonical(_ raw: String) -> String {
+        var s = HTMLUtils.decodeEntities(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.lowercased().hasPrefix("feed://") {
+            s = "https://" + String(s.dropFirst(7))
+        }
+        if s.hasSuffix("/") { s = String(s.dropLast()) }
+        return s
     }
 }

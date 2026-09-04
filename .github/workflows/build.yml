@@ -37,25 +37,15 @@ jobs:
           zip -r IosRss.ipa Payload
 
       - name: Upload IPA artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: IosRss-ipa
           path: IosRss.ipa
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: IosRss.ipa
           tag_name: build-${{ github.run_number }}
           name: Build ${{ github.run_number }}
           generate_release_notes: true
-          
-      # 方案 B(推荐):用 gh CLI,零第三方依赖,无警告
-      # - name: Create Release
-      #   env:
-      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #   run: |
-      #     gh release create "build-${{ github.run_number }}" \
-      #       --title "Build ${{ github.run_number }}" \
-      #       --generate-notes \
-      #       IosRss.ipa

@@ -84,26 +84,28 @@ struct SettingsView: View {
                     store.pruneFullContentCache()
                 }
 
+                // 离线缓存
                 Section {
                     HStack {
-                        Text("内容缓存")
+                        Label("内容缓存", systemImage: "internaldrive")
                         Spacer()
                         Text(cacheSizeText)
                             .foregroundStyle(.secondary)
                     }
                     Button(role: .destructive) {
-                        store.clearContentCache()
+                        store.clearOfflineContentCache()
                         cacheSizeText = store.cacheSizeDescription()
                     } label: {
-                        Text("清除内容缓存")
+                        Label("清除离线缓存", systemImage: "trash")
                     }
                 } header: {
-                    Text("离线缓存")
+                    Text("离线")
                 } footer: {
-                    Text("包含文章全文 HTML、Feed XML 快照与图片。订阅列表不会被清除。")
+                    Text("订阅列表与已读标记始终保存在本地。清除后仅删除文章全文、Feed 快照与图片缓存，不影响订阅。")
                 }
                 .onAppear { cacheSizeText = store.cacheSizeDescription() }
 
+                // About
                 Section("关于") {
                     HStack {
                         Text("默认翻译引擎")

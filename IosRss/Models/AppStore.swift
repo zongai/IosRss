@@ -192,7 +192,8 @@ class AppStore {
 
     func refreshFeed(_ feedID: UUID) async {
         guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
-        guard let url = URL(string: feeds[idx].url) else { return }
+        let urlStr = feeds[idx].url
+        guard let url = URL(string: urlStr) else { return }
         isLoading = true
         defer { isLoading = false }
         do {
@@ -209,6 +210,16 @@ class AppStore {
             feeds[idx].articles.insert(contentsOf: newArticles, at: 0)
             feeds[idx].unreadCount = feeds[idx].articles.filter { !$0.isRead }.count
             feeds[idx].lastFetched = Date()
+            if let resolved = FeedParser.resolveFaviconURL(from: data, feedURL: urlStr) {
+                let current = feeds[idx].faviconURL ?? ""
+                let isFallbackOnly = current.isEmpty
+                    || current.contains("duckduckgo.com/ip3/")
+                    || current.contains("google.com/s2/favicons")
+                let fromFeed = FeedParser.extractFeedImage(from: data) != nil
+                if isFallbackOnly || fromFeed {
+                    feeds[idx].faviconURL = resolved
+                }
+            }
             purgeOldReadArticles()
             saveToStorage()
         } catch {
@@ -448,7 +459,11 @@ class AppStore {
                     continue
                 }
                 let title = FeedNaming.resolveTitle(parsed: item.title, url: url)
-                feeds.append(RSSFeed(title: title, url: url))
+                feeds.append(RSSFeed(
+                    title: title,
+                    url: url,
+                    faviconURL: FeedParser.siteFaviconURL(for: url)
+                ))
                 added += 1
             }
             if added > 0 || skipped > 0 {
@@ -456,16 +471,19 @@ class AppStore {
                 return SubscriptionImportResult(added: added, skipped: skipped, kind: "opml")
             }
         }
+
         let feedID = UUID()
         let parsedTitle = FeedParser.extractFeedTitle(from: data)
         var feedURL = FeedParser.extractFeedLink(from: data)
         let resolvedTitle = FeedNaming.resolveTitle(parsed: parsedTitle, url: feedURL ?? "")
         let articles = FeedParser.parse(data: data, feedID: feedID, feedTitle: resolvedTitle)
+
         if (feedURL == nil || feedURL?.isEmpty == true),
            let firstLink = articles.first(where: { !$0.link.isEmpty })?.link,
            let host = URL(string: firstLink)?.host {
             feedURL = "https://\(host)/"
         }
+
         guard !articles.isEmpty else {
             return SubscriptionImportResult(added: 0, skipped: 0, kind: "empty")
         }
@@ -476,10 +494,12 @@ class AppStore {
         if feeds.contains(where: { FeedURL.canonical($0.url) == canonical }) {
             return SubscriptionImportResult(added: 0, skipped: 1, kind: "rss")
         }
+        let favicon = FeedParser.resolveFaviconURL(from: data, feedURL: canonical)
         let feed = RSSFeed(
             id: feedID,
             title: resolvedTitle.isEmpty ? FeedNaming.domainName(from: canonical) : resolvedTitle,
             url: canonical,
+            faviconURL: favicon,
             unreadCount: articles.filter { !$0.isRead }.count,
             articles: articles,
             lastFetched: Date()
@@ -490,13 +510,21 @@ class AppStore {
     }
 
     private func saveToStorage() {
-        if let data = try? JSONEncoder().encode(feeds) { UserDefaults.standard.set(data, forKey: "feeds") }
-        if let data = try? JSONEncoder().encode(aiProviders) { UserDefaults.standard.set(data, forKey: "aiProviders") }
+        if let data = try? JSONEncoder().encode(feeds) {
+            UserDefaults.standard.set(data, forKey: "feeds")
+        }
+        if let data = try? JSONEncoder().encode(aiProviders) {
+            UserDefaults.standard.set(data, forKey: "aiProviders")
+        }
         UserDefaults.standard.set(fontSize, forKey: "fontSize")
         UserDefaults.standard.set(titleDisplayMode.rawValue, forKey: "titleDisplayMode")
         UserDefaults.standard.set(defaultTranslationEngine.rawValue, forKey: "defaultTranslationEngine")
-        if let id = defaultSummaryProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultSummaryProviderID") }
-        if let id = defaultTranslationProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultTranslationProviderID") }
+        if let id = defaultSummaryProviderID {
+            UserDefaults.standard.set(id.uuidString, forKey: "defaultSummaryProviderID")
+        }
+        if let id = defaultTranslationProviderID {
+            UserDefaults.standard.set(id.uuidString, forKey: "defaultTranslationProviderID")
+        }
         UserDefaults.standard.set(showReadArticles, forKey: "showReadArticles")
         UserDefaults.standard.set(translationPrompt, forKey: "translationPrompt")
         UserDefaults.standard.set(summaryPrompt, forKey: "summaryPrompt")
@@ -532,9 +560,11 @@ class AppStore {
         }
         showReadArticles = UserDefaults.standard.bool(forKey: "showReadArticles")
         let storedTranslation = UserDefaults.standard.string(forKey: "translationPrompt") ?? ""
-        translationPrompt = storedTranslation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Self.defaultTranslationPrompt : storedTranslation
+        translationPrompt = storedTranslation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? Self.defaultTranslationPrompt : storedTranslation
         let storedSummary = UserDefaults.standard.string(forKey: "summaryPrompt") ?? ""
-        summaryPrompt = storedSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Self.defaultSummaryPrompt : storedSummary
+        summaryPrompt = storedSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? Self.defaultSummaryPrompt : storedSummary
     }
 
     private func seedSampleData() {
@@ -542,14 +572,23 @@ class AppStore {
         let vergeID = UUID()
         let dfID = UUID()
         feeds = [
-            RSSFeed(id: tcID, title: "TechCrunch", url: "https://techcrunch.com/feed/", unreadCount: 3, articles: sampleArticles(feedID: tcID, feedTitle: "TechCrunch")),
-            RSSFeed(id: vergeID, title: "The Verge", url: "https://www.theverge.com/rss/index.xml", unreadCount: 2, articles: sampleArticles(feedID: vergeID, feedTitle: "The Verge")),
-            RSSFeed(id: dfID, title: "Daring Fireball", url: "https://daringfireball.net/feeds/main", unreadCount: 0, articles: [])
+            RSSFeed(id: tcID, title: "TechCrunch", url: "https://techcrunch.com/feed/",
+                    faviconURL: nil, unreadCount: 3, articles: sampleArticles(feedID: tcID, feedTitle: "TechCrunch")),
+            RSSFeed(id: vergeID, title: "The Verge", url: "https://www.theverge.com/rss/index.xml",
+                    faviconURL: nil, unreadCount: 2, articles: sampleArticles(feedID: vergeID, feedTitle: "The Verge")),
+            RSSFeed(id: dfID, title: "Daring Fireball", url: "https://daringfireball.net/feeds/main",
+                    faviconURL: nil, unreadCount: 0, articles: [])
         ]
     }
 
     private func sampleArticles(feedID: UUID, feedTitle: String) -> [Article] {
-        let titles = ["Apple's New M4 Chip: What to Expect", "Google I/O 2024: Everything Announced", "Amazon Earnings Beat Wall Street Expectations", "OpenAI Launches New Reasoning Model", "Meta's AR Glasses Strategy for 2025"]
+        let titles = [
+            "Apple's New M4 Chip: What to Expect",
+            "Google I/O 2024: Everything Announced",
+            "Amazon Earnings Beat Wall Street Expectations",
+            "OpenAI Launches New Reasoning Model",
+            "Meta's AR Glasses Strategy for 2025"
+        ]
         let summaries = [
             "The much-anticipated M4 chip promises significant performance gains over the M3 series, with a focus on AI and machine learning workloads.",
             "Google officially announced a suite of new AI features across Search, Workspace, and Android at this year's developer conference.",
@@ -559,9 +598,13 @@ class AppStore {
         ]
         return titles.enumerated().map { i, title in
             Article(
-                id: UUID(), feedID: feedID, feedTitle: feedTitle, title: title,
-                link: "https://example.com/article/\(i)", summary: summaries[i],
-                content: "<p>\(summaries[i])</p><p>Lorem ipsum dolor sit amet.</p>",
+                id: UUID(),
+                feedID: feedID,
+                feedTitle: feedTitle,
+                title: title,
+                link: "https://example.com/article/\(i)",
+                summary: summaries[i],
+                content: "<p>\(summaries[i])</p><p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>",
                 publishedDate: Date().addingTimeInterval(-Double(i * 3600 + Int.random(in: 0...1800))),
                 isRead: i > 2
             )

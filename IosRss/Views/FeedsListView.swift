@@ -11,15 +11,18 @@ struct FeedsListView: View {
     @State private var opmlExportText = ""
     @State private var importMessage: String?
 
-    /// OPML/XML 在不同 App 导出时 UTI 不一致（常为 public.data / public.xml），尽量放宽以便可选中
+    /// 仅展示可导入类型：OPML / XML / RSS / Atom（按扩展名与标准 UTI，不含 public.data）
     private var importTypes: [UTType] {
-        var types: [UTType] = [.xml, .data, .plainText, .text]
-        for ext in ["opml", "rss", "atom", "xml", "txt"] {
+        var types: [UTType] = [.xml]
+        for ext in ["opml", "xml", "rss", "atom"] {
             if let t = UTType(filenameExtension: ext) { types.append(t) }
         }
-        if let t = UTType("public.xml") { types.append(t) }
-        if let t = UTType("public.data") { types.append(t) }
-        return types
+        if let t = UTType(mimeType: "application/xml") { types.append(t) }
+        if let t = UTType(mimeType: "text/xml") { types.append(t) }
+        if let t = UTType(mimeType: "application/rss+xml") { types.append(t) }
+        if let t = UTType(mimeType: "application/atom+xml") { types.append(t) }
+        var seen = Set<String>()
+        return types.filter { seen.insert($0.identifier).inserted }
     }
 
     var body: some View {

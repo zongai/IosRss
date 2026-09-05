@@ -160,7 +160,7 @@ struct ArticleReaderView: View {
                         } else {
                             Label(
                                 currentArticle.hasFullContent ? "已获取全文" : "全文",
-                                systemImage: currentArticle.hasFullContent ? "text.book.closed" : "text.book.closed.fill"
+                                systemImage: currentArticle.hasFullContent ? "arrow.down.doc" : "arrow.down.doc.fill"
                             )
                         }
                     }

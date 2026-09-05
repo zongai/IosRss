@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 @Observable
 @MainActor
@@ -217,9 +218,7 @@ class AppStore {
             guard let gid = feed.groupID else { return true }
             return !groups.contains(where: { $0.id == gid })
         }
-        if !ungrouped.isEmpty || sections.isEmpty {
-            sections.append((nil, ungrouped))
-        }
+        if !ungrouped.isEmpty || sections.isEmpty { sections.append((nil, ungrouped)) }
         return sections
     }
 
@@ -240,9 +239,7 @@ class AppStore {
     }
 
     func deleteGroup(_ id: UUID) {
-        for i in feeds.indices where feeds[i].groupID == id {
-            feeds[i].groupID = nil
-        }
+        for i in feeds.indices where feeds[i].groupID == id { feeds[i].groupID = nil }
         groups.removeAll { $0.id == id }
         saveToStorage()
     }
@@ -324,9 +321,7 @@ class AppStore {
         feeds[idx].lastFetched = Date()
         if let resolved = FeedParser.resolveFaviconURL(from: data, feedURL: urlStr) {
             let current = feeds[idx].faviconURL ?? ""
-            let isFallbackOnly = current.isEmpty
-                || current.contains("duckduckgo.com/ip3/")
-                || current.contains("google.com/s2/favicons")
+            let isFallbackOnly = current.isEmpty || current.contains("duckduckgo.com/ip3/") || current.contains("google.com/s2/favicons")
             let fromFeed = FeedParser.extractFeedImage(from: data) != nil
             if isFallbackOnly || fromFeed { feeds[idx].faviconURL = resolved }
         }
@@ -361,7 +356,7 @@ class AppStore {
     func translateTexts(_ texts: [String], concurrency: Int? = nil) async -> [String?] {
         guard !texts.isEmpty else { return [] }
         let engine = defaultTranslationEngine
-        let limit = concurrency ?? defaultListConcurrency(for: engine)
+        let limit = concurrency ?? (engine == .ai ? 3 : (engine == .google ? 4 : 5))
         switch engine {
         case .deepl:
             let key = Keychain.load(key: "deepl_translate_key") ?? ""
@@ -371,14 +366,6 @@ class AppStore {
             return await translateNativeBatch(texts, chunkSize: 40) { try await MicrosoftTranslate.translate(texts: $0, apiKey: key) }
         case .google, .ai:
             return await translateConcurrently(texts, concurrency: limit)
-        }
-    }
-
-    private func defaultListConcurrency(for engine: TranslationEngine) -> Int {
-        switch engine {
-        case .ai: return 3
-        case .google: return 4
-        default: return 5
         }
     }
 
@@ -411,8 +398,7 @@ class AppStore {
             var next = 0
             let spawn = min(max(concurrency, 1), texts.count)
             while next < spawn {
-                let i = next
-                let text = texts[i]
+                let i = next; let text = texts[i]
                 group.addTask {
                     let r = try? await self.translateText(text)
                     let trimmed = r?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -423,9 +409,7 @@ class AppStore {
             for await (index, result) in group {
                 results[index] = result
                 if next < texts.count {
-                    let i = next
-                    let text = texts[i]
-                    next += 1
+                    let i = next; let text = texts[i]; next += 1
                     group.addTask {
                         let r = try? await self.translateText(text)
                         let trimmed = r?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -461,31 +445,22 @@ class AppStore {
             let p = para.trimmingCharacters(in: .whitespaces)
             if p.isEmpty { continue }
             if current.isEmpty {
-                if p.count > maxChars { chunks.append(contentsOf: hardSplit(p, maxChars: maxChars)) }
-                else { current = p }
+                if p.count > maxChars {
+                    var start = p.startIndex
+                    while start < p.endIndex {
+                        let end = p.index(start, offsetBy: maxChars, limitedBy: p.endIndex) ?? p.endIndex
+                        chunks.append(String(p[start..<end])); start = end
+                    }
+                } else { current = p }
             } else if current.count + p.count + 1 <= maxChars {
                 current += "\n" + p
             } else {
                 chunks.append(current)
-                if p.count > maxChars {
-                    chunks.append(contentsOf: hardSplit(p, maxChars: maxChars))
-                    current = ""
-                } else { current = p }
+                current = p.count > maxChars ? String(p.prefix(maxChars)) : p
             }
         }
         if !current.isEmpty { chunks.append(current) }
         return chunks
-    }
-
-    private static func hardSplit(_ text: String, maxChars: Int) -> [String] {
-        var final: [String] = []
-        var start = text.startIndex
-        while start < text.endIndex {
-            let end = text.index(start, offsetBy: maxChars, limitedBy: text.endIndex) ?? text.endIndex
-            final.append(String(text[start..<end]))
-            start = end
-        }
-        return final
     }
 
     func generateSummary(for article: Article) async throws -> String {
@@ -529,27 +504,56 @@ class AppStore {
     private static func xmlEscape(_ s: String) -> String {
         s.replacingOccurrences(of: "&", with: "\u{0026}amp;")
             .replacingOccurrences(of: "\"", with: "\u{0026}quot;")
+            .replacingOccurrences(of: "'", with: "\u{0026}apos;")
             .replacingOccurrences(of: "<", with: "\u{0026}lt;")
             .replacingOccurrences(of: ">", with: "\u{0026}gt;")
     }
 
+    /// 标准 OPML 2.0：分组为父 outline，源为 type=rss 且带 xmlUrl
     func exportOPML() -> String {
-        var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<opml version=\"2.0\">\n  <head><title>Feed Subscriptions</title></head>\n  <body>\n"
-        let sortedGroups = groups.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name) }
+        var lines: [String] = []
+        lines.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+        lines.append("<opml version=\"2.0\">")
+        lines.append("  <head>")
+        lines.append("    <title>IosRss Subscriptions</title>")
+        lines.append("    <dateCreated>\(opmlDateString(Date()))</dateCreated>")
+        lines.append("  </head>")
+        lines.append("  <body>")
+
+        let sortedGroups = groups.sorted {
+            $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name)
+        }
         for g in sortedGroups {
             let gFeeds = feeds.filter { $0.groupID == g.id }
             guard !gFeeds.isEmpty else { continue }
-            xml += "    <outline text=\"\(Self.xmlEscape(g.name))\">\n"
+            let gName = Self.xmlEscape(g.name)
+            lines.append("    <outline text=\"\(gName)\" title=\"\(gName)\">")
             for feed in gFeeds {
-                xml += "      <outline type=\"rss\" text=\"\(Self.xmlEscape(feed.title))\" xmlUrl=\"\(Self.xmlEscape(feed.url))\"/>\n"
+                lines.append(opmlFeedOutlineLine(feed, indent: "      "))
             }
-            xml += "    </outline>\n"
+            lines.append("    </outline>")
         }
+
         for feed in feeds where feed.groupID == nil || !groups.contains(where: { $0.id == feed.groupID }) {
-            xml += "    <outline type=\"rss\" text=\"\(Self.xmlEscape(feed.title))\" xmlUrl=\"\(Self.xmlEscape(feed.url))\"/>\n"
+            lines.append(opmlFeedOutlineLine(feed, indent: "    "))
         }
-        xml += "  </body>\n</opml>"
-        return xml
+
+        lines.append("  </body>")
+        lines.append("</opml>")
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private func opmlFeedOutlineLine(_ feed: RSSFeed, indent: String) -> String {
+        let t = Self.xmlEscape(feed.title)
+        let u = Self.xmlEscape(feed.url)
+        return "\(indent)<outline type=\"rss\" text=\"\(t)\" title=\"\(t)\" xmlUrl=\"\(u)\"/>"
+    }
+
+    private func opmlDateString(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss Z"
+        return f.string(from: date)
     }
 
     func exportTXT() -> String {
@@ -580,15 +584,27 @@ class AppStore {
         return lines.joined(separator: "\n")
     }
 
+    /// 写入临时文件；.opml 标记为 XML，文件名为 *.opml
     func writeExportFile(content: String, filename: String) -> URL? {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
         do {
             if FileManager.default.fileExists(atPath: url.path) {
                 try FileManager.default.removeItem(at: url)
             }
-            try content.data(using: .utf8)?.write(to: url)
+            guard let data = content.data(using: .utf8) else { return nil }
+            try data.write(to: url, options: .atomic)
+            var values = URLResourceValues()
+            let ext = url.pathExtension.lowercased()
+            if ext == "opml" || ext == "xml" {
+                values.contentType = .xml
+            } else if ext == "txt" {
+                values.contentType = .plainText
+            }
+            try? url.setResourceValues(values)
             return url
-        } catch { return nil }
+        } catch {
+            return nil
+        }
     }
 
     func importOPML(data: Data) { _ = importSubscriptions(data: data) }

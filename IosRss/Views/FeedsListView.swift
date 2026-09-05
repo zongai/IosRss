@@ -45,6 +45,23 @@ struct FeedsListView: View {
                                         Label("分组", systemImage: "folder")
                                     }.tint(.orange)
                                 }
+                                .contextMenu {
+                                    Button { moveFeedTarget = feed } label: {
+                                        Label("移动到分组…", systemImage: "folder")
+                                    }
+                                    if feed.groupID != nil {
+                                        Button { store.moveFeed(feed.id, toGroup: nil) } label: {
+                                            Label("移出分组", systemImage: "folder.badge.minus")
+                                        }
+                                    }
+                                    ForEach(store.groups.sorted(by: { $0.sortOrder < $1.sortOrder })) { group in
+                                        if feed.groupID != group.id {
+                                            Button { store.moveFeed(feed.id, toGroup: group.id) } label: {
+                                                Label(group.name, systemImage: "folder.fill")
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         } header: {
                             Text(section.group?.name ?? "未分组")
@@ -335,7 +352,7 @@ struct GroupManagerView: View {
                         }
                     }
                 } header: { Text("已有分组") }
-                footer: { Text("点分组可重命名；删除分组后源会回到「未分组」。左滑源可移动分组。") }
+                footer: { Text("点分组可重命名；删除分组后源会回到「未分组」。左滑源或长按可移动分组。") }
                 Section("新建分组") {
                     HStack {
                         TextField("分组名称", text: $newName)
@@ -424,44 +441,29 @@ struct FeedIcon: View {
         if let preferred = feed.faviconURL, !preferred.isEmpty { candidates.append(preferred) }
         else if let first = FeedParser.faviconCandidates(for: feed.url).first { candidates.append(first) }
         var seen = Set<String>()
-        candidates = candidates.filter { seen.insert($0).inserted }
-        for urlStr in candidates {
-            if let cached = FaviconCache.shared.image(for: urlStr) { commitSuccess(cached); return }
-            if let data = OfflineCache.loadImage(url: urlStr), let ui = UIImage(data: data), ui.size.width > 1 {
-                FaviconCache.shared.store(ui, for: urlStr); commitSuccess(ui); return
-            }
-            guard let url = URL(string: urlStr) else { continue }
+        for raw in candidates {
+            guard !raw.isEmpty, seen.insert(raw).inserted, let url = URL(string: raw) else { continue }
             do {
-                var req = URLRequest(url: url); req.timeoutInterval = 6
-                req.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
-                let (data, response) = try await URLSession.shared.data(for: req)
-                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) { continue }
-                guard data.count > 32, let ui = UIImage(data: data), ui.size.width > 1 else { continue }
-                OfflineCache.saveImage(url: urlStr, data: data)
-                FaviconCache.shared.store(ui, for: urlStr)
-                commitSuccess(ui)
+                let (data, response) = try await URLSession.shared.data(from: url)
+                if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { continue }
+                guard let ui = UIImage(data: data), ui.size.width > 1 else { continue }
+                FaviconCache.shared.store(ui, for: cacheKey)
+                OfflineCache.saveImage(url: cacheKey, data: data)
+                image = ui
                 return
             } catch { continue }
         }
-        OfflineCache.saveImage(url: cacheKey, data: Data())
         useLetter = true
-    }
-    private func commitSuccess(_ ui: UIImage) {
-        if let data = ui.pngData() ?? ui.jpegData(compressionQuality: 0.9) {
-            OfflineCache.saveImage(url: cacheKey, data: data)
-        }
-        FaviconCache.shared.store(ui, for: cacheKey)
-        image = ui
+        OfflineCache.saveImage(url: cacheKey, data: Data())
     }
 }
 
-final class FaviconCache {
-    static let shared = FaviconCache()
-    private let cache = NSCache<NSString, UIImage>()
-    private init() { cache.countLimit = 200; cache.totalCostLimit = 16 * 1024 * 1024 }
-    func image(for key: String) -> UIImage? { cache.object(forKey: key as NSString) }
-    func store(_ image: UIImage, for key: String) {
-        cache.setObject(image, forKey: key as NSString, cost: Int(image.size.width * image.size.height * 4))
+enum FaviconCache {
+    static let shared = Cache()
+    final class Cache {
+        private let cache = NSCache<NSString, UIImage>()
+        func image(for key: String) -> UIImage? { cache.object(forKey: key as NSString) }
+        func store(_ image: UIImage, for key: String) { cache.setObject(image, forKey: key as NSString) }
     }
 }
 
@@ -469,17 +471,19 @@ struct OPMLDocumentPicker: UIViewControllerRepresentable {
     var onPick: (URL?) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
-        picker.delegate = context.coordinator
+        let types: [UTType] = [.item]
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
         picker.allowsMultipleSelection = false
-        picker.shouldShowFileExtensions = true
+        picker.delegate = context.coordinator
         return picker
     }
     func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
         let onPick: (URL?) -> Void
         init(onPick: @escaping (URL?) -> Void) { self.onPick = onPick }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { onPick(urls.first) }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onPick(urls.first)
+        }
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onPick(nil) }
     }
 }
@@ -491,7 +495,6 @@ struct DocumentExportPicker: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         let picker = UIDocumentPickerViewController(forExporting: [fileURL], asCopy: true)
         picker.delegate = context.coordinator
-        picker.shouldShowFileExtensions = true
         return picker
     }
     func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}

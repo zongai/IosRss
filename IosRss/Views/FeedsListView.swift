@@ -69,13 +69,10 @@ struct FeedsListView: View {
             Button("导出 OPML") { opmlExportText = store.exportOPML(); showOPMLExportSheet = true }
             Button("取消", role: .cancel) {}
         }
-        // 使用 UIDocumentPicker（asCopy + public.item），避免 SwiftUI fileImporter 发灰无法点选
         .sheet(isPresented: $showOPMLImport) {
             OPMLDocumentPicker { url in
                 showOPMLImport = false
-                if let url {
-                    importFile(from: url)
-                }
+                if let url { importFile(from: url) }
             }
             .ignoresSafeArea()
         }
@@ -104,20 +101,15 @@ struct FeedsListView: View {
         coordinator.coordinate(readingItemAt: url, error: &coordError) { coordinated in
             data = try? Data(contentsOf: coordinated)
         }
-        if data == nil {
-            data = try? Data(contentsOf: url)
-        }
-        if data == nil, let copied = try? Data(contentsOf: URL(fileURLWithPath: url.path)) {
-            data = copied
-        }
+        if data == nil { data = try? Data(contentsOf: url) }
+        if data == nil, let copied = try? Data(contentsOf: URL(fileURLWithPath: url.path)) { data = copied }
         guard let data, !data.isEmpty else {
             importMessage = "无法读取该文件（\(url.lastPathComponent)）"
             return
         }
         if ext.isEmpty {
             let head = String(data: data.prefix(200), encoding: .utf8)?.lowercased() ?? ""
-            let looksOK = head.contains("opml") || head.contains("outline")
-                || head.contains("<rss") || head.contains("<feed")
+            let looksOK = head.contains("opml") || head.contains("outline") || head.contains("<rss") || head.contains("<feed")
             if !looksOK {
                 importMessage = "仅支持 OPML / XML / RSS / Atom 订阅文件"
                 return
@@ -126,12 +118,9 @@ struct FeedsListView: View {
         let imported = store.importSubscriptions(data: data)
         if imported.added == 0 && imported.skipped == 0 {
             let head = String(data: data.prefix(400), encoding: .utf8) ?? ""
-            if head.localizedCaseInsensitiveContains("opml")
-                || head.localizedCaseInsensitiveContains("outline")
-                || head.localizedCaseInsensitiveContains("xmlUrl") {
+            if head.localizedCaseInsensitiveContains("opml") || head.localizedCaseInsensitiveContains("outline") || head.localizedCaseInsensitiveContains("xmlUrl") {
                 importMessage = "已识别为 OPML，但未找到有效的 xmlUrl 订阅地址"
-            } else if head.localizedCaseInsensitiveContains("<rss")
-                        || head.localizedCaseInsensitiveContains("<feed") {
+            } else if head.localizedCaseInsensitiveContains("<rss") || head.localizedCaseInsensitiveContains("<feed") {
                 importMessage = "已识别为 RSS/Atom，但未找到可用的源地址"
             } else {
                 importMessage = "未能识别为 OPML、RSS 或 Atom（\(url.lastPathComponent)）"
@@ -139,13 +128,9 @@ struct FeedsListView: View {
         } else {
             let kind = imported.kind == "rss" ? "RSS/Atom" : "OPML"
             var text = "已从 \(kind) 导入 \(imported.added) 个订阅"
-            if imported.skipped > 0 {
-                text += "，跳过 \(imported.skipped) 个已存在的源"
-            }
+            if imported.skipped > 0 { text += "，跳过 \(imported.skipped) 个已存在的源" }
             importMessage = text
-            if imported.added > 0 {
-                Task { await store.refreshAll() }
-            }
+            if imported.added > 0 { Task { await store.refreshAll() } }
         }
     }
 
@@ -165,17 +150,11 @@ struct FeedsListView: View {
 struct FeedRow: View {
     @Environment(AppStore.self) private var store
     let feed: RSSFeed
-
-    private var live: RSSFeed {
-        store.feeds.first(where: { $0.id == feed.id }) ?? feed
-    }
-
+    private var live: RSSFeed { store.feeds.first(where: { $0.id == feed.id }) ?? feed }
     var body: some View {
         HStack(spacing: 14) {
             FeedIcon(feed: live, size: 38)
-            Text(live.title)
-                .font(.system(size: store.feedTitleFontSize, weight: .medium))
-                .foregroundStyle(Color.primary)
+            Text(live.title).font(.system(size: store.feedTitleFontSize, weight: .medium)).foregroundStyle(Color.primary)
             Spacer()
             if live.unreadCount > 0 {
                 Text("\(live.unreadCount)")
@@ -195,115 +174,66 @@ struct FeedRow: View {
 struct FeedIcon: View {
     let feed: RSSFeed
     let size: CGFloat
-
     @State private var image: UIImage?
     @State private var loading = false
     @State private var useLetter = false
-
     private var cacheKey: String { "feed-icon:\(feed.id.uuidString)" }
-
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: size, height: size)
-                    .clipShape(Circle())
+                Image(uiImage: image).resizable().scaledToFill().frame(width: size, height: size).clipShape(Circle())
             } else if loading {
-                ProgressView()
-                    .frame(width: size, height: size)
-            } else {
-                letterFallback
-            }
+                ProgressView().frame(width: size, height: size)
+            } else { letterFallback }
         }
-        .task(id: feed.id) {
-            await loadIcon()
-        }
+        .task(id: feed.id) { await loadIcon() }
     }
-
     private var letterFallback: some View {
         ZStack {
-            Circle()
-                .fill(Color.primary)
-                .frame(width: size, height: size)
+            Circle().fill(Color.primary).frame(width: size, height: size)
             Text(String(feed.title.prefix(1)).uppercased())
                 .font(.system(size: size * 0.45, weight: .bold))
                 .foregroundStyle(Color(.systemBackground))
         }
     }
-
     private func loadIcon() async {
         if image != nil || useLetter { return }
-
-        if let cached = FaviconCache.shared.image(for: cacheKey) {
-            image = cached
-            return
-        }
-
+        if let cached = FaviconCache.shared.image(for: cacheKey) { image = cached; return }
         if let data = OfflineCache.loadImage(url: cacheKey) {
-            if data.isEmpty {
-                useLetter = true
-                return
-            }
+            if data.isEmpty { useLetter = true; return }
             if let ui = UIImage(data: data), ui.size.width > 1 {
-                FaviconCache.shared.store(ui, for: cacheKey)
-                image = ui
-                return
+                FaviconCache.shared.store(ui, for: cacheKey); image = ui; return
             }
         }
-
         loading = true
         defer { loading = false }
-
         var candidates: [String] = []
-        if let preferred = feed.faviconURL, !preferred.isEmpty {
-            candidates.append(preferred)
-        } else if let first = FeedParser.faviconCandidates(for: feed.url).first {
-            candidates.append(first)
-        }
+        if let preferred = feed.faviconURL, !preferred.isEmpty { candidates.append(preferred) }
+        else if let first = FeedParser.faviconCandidates(for: feed.url).first { candidates.append(first) }
         var seen = Set<String>()
         candidates = candidates.filter { seen.insert($0).inserted }
-
         for urlStr in candidates {
-            if let cached = FaviconCache.shared.image(for: urlStr) {
-                commitSuccess(cached, sourceURL: urlStr)
-                return
-            }
-            if let data = OfflineCache.loadImage(url: urlStr),
-               let ui = UIImage(data: data), ui.size.width > 1 {
-                FaviconCache.shared.store(ui, for: urlStr)
-                commitSuccess(ui, sourceURL: urlStr)
-                return
+            if let cached = FaviconCache.shared.image(for: urlStr) { commitSuccess(cached, sourceURL: urlStr); return }
+            if let data = OfflineCache.loadImage(url: urlStr), let ui = UIImage(data: data), ui.size.width > 1 {
+                FaviconCache.shared.store(ui, for: urlStr); commitSuccess(ui, sourceURL: urlStr); return
             }
             guard let url = URL(string: urlStr) else { continue }
             do {
                 var req = URLRequest(url: url)
                 req.timeoutInterval = 6
-                req.setValue(
-                    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-                    forHTTPHeaderField: "User-Agent"
-                )
+                req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
                 let (data, response) = try await URLSession.shared.data(for: req)
-                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                    continue
-                }
-                guard data.count > 32, let ui = UIImage(data: data), ui.size.width > 1 else {
-                    continue
-                }
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) { continue }
+                guard data.count > 32, let ui = UIImage(data: data), ui.size.width > 1 else { continue }
                 OfflineCache.saveImage(url: urlStr, data: data)
                 FaviconCache.shared.store(ui, for: urlStr)
                 commitSuccess(ui, sourceURL: urlStr)
                 return
-            } catch {
-                continue
-            }
+            } catch { continue }
         }
-
         OfflineCache.saveImage(url: cacheKey, data: Data())
         useLetter = true
     }
-
     private func commitSuccess(_ ui: UIImage, sourceURL: String) {
         if let data = ui.pngData() ?? ui.jpegData(compressionQuality: 0.9) {
             OfflineCache.saveImage(url: cacheKey, data: data)
@@ -316,52 +246,29 @@ struct FeedIcon: View {
 final class FaviconCache {
     static let shared = FaviconCache()
     private let cache = NSCache<NSString, UIImage>()
-    private init() {
-        cache.countLimit = 200
-        cache.totalCostLimit = 16 * 1024 * 1024
-    }
-    func image(for key: String) -> UIImage? {
-        cache.object(forKey: key as NSString)
-    }
+    private init() { cache.countLimit = 200; cache.totalCostLimit = 16 * 1024 * 1024 }
+    func image(for key: String) -> UIImage? { cache.object(forKey: key as NSString) }
     func store(_ image: UIImage, for key: String) {
-        let cost = Int(image.size.width * image.size.height * 4)
-        cache.setObject(image, forKey: key as NSString, cost: cost)
+        cache.setObject(image, forKey: key as NSString, cost: Int(image.size.width * image.size.height * 4))
     }
 }
 
-/// UIKit 文档选择器：asCopy + public.item，保证任意位置的 .opml/.xml 都可点选
 struct OPMLDocumentPicker: UIViewControllerRepresentable {
     var onPick: (URL?) -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onPick: onPick)
-    }
-
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        // public.item 覆盖几乎所有文件，避免因 UTI 不匹配发灰
-        let picker = UIDocumentPickerViewController(
-            forOpeningContentTypes: [.item],
-            asCopy: true
-        )
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
         picker.delegate = context.coordinator
         picker.allowsMultipleSelection = false
         picker.shouldShowFileExtensions = true
         return picker
     }
-
     func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
         let onPick: (URL?) -> Void
         init(onPick: @escaping (URL?) -> Void) { self.onPick = onPick }
-
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            onPick(urls.first)
-        }
-
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            onPick(nil)
-        }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { onPick(urls.first) }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onPick(nil) }
     }
 }
 

@@ -158,7 +158,6 @@ struct ArticleListView: View {
         .refreshable { await store.refreshFeed(feed.id) }
         .task(id: feed.id) {
             await loadIfNeeded()
-            // 本 feed 已有缓存译文时，打开列表直接显示译文
             let hasCachedTranslation = store.articlesForFeed(feed.id).contains {
                 ($0.translatedTitle?.isEmpty == false) || ($0.translatedSummary?.isEmpty == false)
             }
@@ -168,7 +167,6 @@ struct ArticleListView: View {
         }
     }
 
-    /// 第一次打开且本地还没有文章时自动拉取，避免空白列表
     private func loadIfNeeded() async {
         if !store.articlesForFeed(feed.id).isEmpty { return }
         isInitialLoading = true
@@ -176,7 +174,6 @@ struct ArticleListView: View {
         isInitialLoading = false
     }
 
-    /// 一次点击：分批翻译所有标题和预览；再次点击切换回原文
     private func toggleTranslateAll() async {
         if showAllTranslations {
             showAllTranslations = false
@@ -219,7 +216,6 @@ struct ArticleListView: View {
             if !updates.isEmpty {
                 store.applyListTranslations(updates)
             }
-            // 让出主线程，确保本批翻译结果先刷新到列表（避免前几条卡住仍显示原文）
             await Task.yield()
         }
 
@@ -268,7 +264,7 @@ struct ArticleRow: View {
                         .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     if live.isFavorite {
                         Image(systemName: "star.fill")
-                            .font(.system(size: max(11, store.listTitleFontSize - 6))
+                            .font(.system(size: max(11, store.listTitleFontSize - 6)))
                             .foregroundStyle(.orange)
                             .padding(.top, 3)
                     }

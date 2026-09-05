@@ -179,7 +179,11 @@ struct FeedIcon: View {
 
     @State private var image: UIImage?
     @State private var loading = false
-    @State private var didFail = false
+    /// 已确认无图标：固定字母头像，不再请求网络
+    @State private var useLetter = false
+
+    /// 按 feed.id 缓存，与候选 URL 解耦，避免反复探测
+    private var cacheKey: String { "feed-icon:\(feed.id.uuidString)" }
 
     var body: some View {
         Group {
@@ -196,7 +200,8 @@ struct FeedIcon: View {
                 letterFallback
             }
         }
-        .task(id: feed.id.uuidString + (feed.faviconURL ?? "") + feed.url) {
+        // 只跟 feed.id 绑定：成功或失败后不再因 faviconURL 变化重复拉取
+        .task(id: feed.id) {
             await loadIcon()
         }
     }
@@ -213,36 +218,59 @@ struct FeedIcon: View {
     }
 
     private func loadIcon() async {
-        if image != nil { return }
+        if image != nil || useLetter { return }
+
+        // 1) 内存缓存（按 feed）
+        if let cached = FaviconCache.shared.image(for: cacheKey) {
+            image = cached
+            return
+        }
+
+        // 2) 磁盘：有图用图；空 Data 表示永久字母
+        if let data = OfflineCache.loadImage(url: cacheKey) {
+            if data.isEmpty {
+                useLetter = true
+                return
+            }
+            if let ui = UIImage(data: data), ui.size.width > 1 {
+                FaviconCache.shared.store(ui, for: cacheKey)
+                image = ui
+                return
+            }
+        }
+
+        // 3) 网络：只试一次（首选 faviconURL + 至多 1 个站点候选），失败则固化字母
         loading = true
         defer { loading = false }
 
         var candidates: [String] = []
         if let preferred = feed.faviconURL, !preferred.isEmpty {
             candidates.append(preferred)
+        } else if let first = FeedParser.faviconCandidates(for: feed.url).first {
+            candidates.append(first)
         }
-        candidates.append(contentsOf: FeedParser.faviconCandidates(for: feed.url))
         var seen = Set<String>()
         candidates = candidates.filter { seen.insert($0).inserted }
 
         for urlStr in candidates {
-            // 内存 → 磁盘 → 网络，三级缓存
             if let cached = FaviconCache.shared.image(for: urlStr) {
-                image = cached
+                commitSuccess(cached, sourceURL: urlStr)
                 return
             }
             if let data = OfflineCache.loadImage(url: urlStr),
                let ui = UIImage(data: data), ui.size.width > 1 {
                 FaviconCache.shared.store(ui, for: urlStr)
-                image = ui
+                commitSuccess(ui, sourceURL: urlStr)
                 return
             }
             guard let url = URL(string: urlStr) else { continue }
             do {
                 var req = URLRequest(url: url)
-                req.timeoutInterval = 8
-                req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-                             forHTTPHeaderField: "User-Agent")
+                req.timeoutInterval = 6
+                req.setValue(
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+                    forHTTPHeaderField: "User-Agent"
+                )
                 let (data, response) = try await URLSession.shared.data(for: req)
                 if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                     continue
@@ -252,13 +280,24 @@ struct FeedIcon: View {
                 }
                 OfflineCache.saveImage(url: urlStr, data: data)
                 FaviconCache.shared.store(ui, for: urlStr)
-                image = ui
+                commitSuccess(ui, sourceURL: urlStr)
                 return
             } catch {
                 continue
             }
         }
-        didFail = true
+
+        // 全部失败：磁盘写入空标记，之后只显示首字符
+        OfflineCache.saveImage(url: cacheKey, data: Data())
+        useLetter = true
+    }
+
+    private func commitSuccess(_ ui: UIImage, sourceURL: String) {
+        if let data = ui.pngData() ?? ui.jpegData(compressionQuality: 0.9) {
+            OfflineCache.saveImage(url: cacheKey, data: data)
+        }
+        FaviconCache.shared.store(ui, for: cacheKey)
+        image = ui
     }
 }
 
@@ -270,12 +309,12 @@ final class FaviconCache {
         cache.countLimit = 200
         cache.totalCostLimit = 16 * 1024 * 1024
     }
-    func image(for url: String) -> UIImage? {
-        cache.object(forKey: url as NSString)
+    func image(for key: String) -> UIImage? {
+        cache.object(forKey: key as NSString)
     }
-    func store(_ image: UIImage, for url: String) {
+    func store(_ image: UIImage, for key: String) {
         let cost = Int(image.size.width * image.size.height * 4)
-        cache.setObject(image, forKey: url as NSString, cost: cost)
+        cache.setObject(image, forKey: key as NSString, cost: cost)
     }
 }
 

@@ -11,11 +11,21 @@ struct FeedsListView: View {
     @State private var opmlExportText = ""
     @State private var importMessage: String?
 
-    /// 仅展示可导入类型：OPML / XML / RSS / Atom（按扩展名与标准 UTI，不含 public.data）
+    /// 可选类型：按扩展名声明 + xml/data。
+    /// 说明：很多 OPML 在系统里 UTI 是 public.data（不是 public.xml），若不包含 .data 会发灰无法点选。
+    /// 选中后仍按扩展名/内容严格校验，拒绝无关文件。
     private var importTypes: [UTType] {
-        var types: [UTType] = [.xml]
+        var types: [UTType] = [.xml, .data]
         for ext in ["opml", "xml", "rss", "atom"] {
-            if let t = UTType(filenameExtension: ext) { types.append(t) }
+            if let t = UTType(tag: ext, tagClass: .filenameExtension, conformingTo: .data) {
+                types.append(t)
+            }
+            if let t = UTType(tag: ext, tagClass: .filenameExtension, conformingTo: .xml) {
+                types.append(t)
+            }
+            if let t = UTType(filenameExtension: ext) {
+                types.append(t)
+            }
         }
         if let t = UTType(mimeType: "application/xml") { types.append(t) }
         if let t = UTType(mimeType: "text/xml") { types.append(t) }
@@ -24,6 +34,8 @@ struct FeedsListView: View {
         var seen = Set<String>()
         return types.filter { seen.insert($0.identifier).inserted }
     }
+
+    private static let allowedImportExtensions: Set<String> = ["opml", "xml", "rss", "atom"]
 
     var body: some View {
         NavigationStack {
@@ -106,6 +118,11 @@ struct FeedsListView: View {
                 importMessage = "未选择文件"
                 return
             }
+            let ext = url.pathExtension.lowercased()
+            if !Self.allowedImportExtensions.contains(ext) {
+                importMessage = "仅支持 .opml / .xml / .rss / .atom 文件（当前：.\(ext.isEmpty ? "无扩展名" : ext)）"
+                return
+            }
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
             var data: Data?
@@ -126,10 +143,14 @@ struct FeedsListView: View {
             }
             let imported = store.importSubscriptions(data: data)
             if imported.added == 0 && imported.skipped == 0 {
-                let head = String(data: data.prefix(200), encoding: .utf8) ?? ""
+                let head = String(data: data.prefix(400), encoding: .utf8) ?? ""
                 if head.localizedCaseInsensitiveContains("opml")
-                    || head.localizedCaseInsensitiveContains("outline") {
+                    || head.localizedCaseInsensitiveContains("outline")
+                    || head.localizedCaseInsensitiveContains("xmlUrl") {
                     importMessage = "已识别为 OPML，但未找到有效的 xmlUrl 订阅地址"
+                } else if head.localizedCaseInsensitiveContains("<rss")
+                            || head.localizedCaseInsensitiveContains("<feed") {
+                    importMessage = "已识别为 RSS/Atom，但未找到可用的源地址"
                 } else {
                     importMessage = "未能识别为 OPML、RSS 或 Atom（\(url.lastPathComponent)）"
                 }

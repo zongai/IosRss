@@ -51,7 +51,6 @@ struct SelectableParagraphView: UIViewRepresentable {
         let mutable = NSMutableAttributedString(attributedString: ns)
         let full = NSRange(location: 0, length: mutable.length)
         let font = UIFont.systemFont(ofSize: fontSize, weight: .regular)
-        // 保留链接，统一正文字体与颜色、行距
         mutable.enumerateAttributes(in: full, options: []) { attrs, range, _ in
             var next = attrs
             next[.font] = font
@@ -129,12 +128,20 @@ struct SelectableParagraphView: UIViewRepresentable {
 // MARK: - AI 解释结果面板
 
 struct AIExplainSheet: View {
+    @Environment(AppStore.self) private var store
     let query: String
     let result: String?
     let error: String?
     let isLoading: Bool
     var onRetry: () -> Void
     var onDismiss: () -> Void
+
+    private var providerName: String? {
+        let id = store.defaultExplainProviderID
+            ?? store.defaultSummaryProviderID
+            ?? store.defaultTranslationProviderID
+        return store.aiProviders.first(where: { $0.id == id })?.name
+    }
 
     var body: some View {
         NavigationStack {
@@ -153,9 +160,19 @@ struct AIExplainSheet: View {
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("AI 解释")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            Text("AI 解释")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            if let providerName {
+                                Text(providerName)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(Color(.systemBackground))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 2)
+                                    .background(Color.secondary, in: .capsule)
+                            }
+                        }
 
                         if isLoading {
                             HStack(spacing: 10) {

@@ -3,17 +3,27 @@ import Foundation
 // MARK: - App Version
 
 enum AppVersion {
+    /// 营销版本，如 1.2（MARKETING_VERSION）
     static var marketing: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.2"
     }
+    /// 工程构建号，如 4（CURRENT_PROJECT_VERSION）
     static var build: String {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "4"
     }
+    /// CI 在编译前写入 run_number；本地为空字符串
+    /// 勿改字面量格式，build.yml 依赖此行做 sed 替换
+    static let githubBuildNumber: String = ""
+    /// GitHub Actions run_number（优先编译期常量，其次 Info.plist）
     static var githubBuild: String? {
-        let v = Bundle.main.infoDictionary?["IosRssGitHubBuild"] as? String
-        guard let v, !v.isEmpty else { return nil }
-        return v
+        if !githubBuildNumber.isEmpty { return githubBuildNumber }
+        for key in ["IosRssGitHubBuild", "GitHubBuild", "CI_BUILD_NUMBER"] {
+            if let v = Bundle.main.infoDictionary?[key] as? String, !v.isEmpty { return v }
+            if let n = Bundle.main.infoDictionary?[key] as? NSNumber { return n.stringValue }
+        }
+        return nil
     }
+    /// 展示：CI 为 v1.2-4-build43；本地为 v1.2-4
     static var display: String {
         if let g = githubBuild {
             return "v\(marketing)-\(build)-build\(g)"
@@ -91,7 +101,6 @@ struct Article: Identifiable, Codable, Hashable {
     var translatedSummary: String?
     var translatedContent: String?
     var aiSummary: String?
-    /// 生成该摘要时使用的 AI Provider 名称
     var aiSummaryProvider: String?
     var hasFullContent: Bool = false
 

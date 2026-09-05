@@ -51,6 +51,7 @@ struct SelectableParagraphView: UIViewRepresentable {
         let mutable = NSMutableAttributedString(attributedString: ns)
         let full = NSRange(location: 0, length: mutable.length)
         let font = UIFont.systemFont(ofSize: fontSize, weight: .regular)
+        // 保留链接，统一正文字体与颜色、行距
         mutable.enumerateAttributes(in: full, options: []) { attrs, range, _ in
             var next = attrs
             next[.font] = font
@@ -65,7 +66,7 @@ struct SelectableParagraphView: UIViewRepresentable {
         }
         if tv.attributedText?.string != mutable.string {
             tv.attributedText = mutable
-        } else if tv.font?.pointSize != fontSize {
+        } else if let current = tv.font?.pointSize, abs(Double(current) - fontSize) > 0.1 {
             tv.attributedText = mutable
         }
     }

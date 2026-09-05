@@ -196,15 +196,8 @@ class AppStore {
         if changed { saveToStorage() }
     }
 
-    func addFeed(_ feed: RSSFeed) {
-        feeds.append(feed)
-        saveToStorage()
-    }
-
-    func deleteFeed(at offsets: IndexSet) {
-        feeds.remove(atOffsets: offsets)
-        saveToStorage()
-    }
+    func addFeed(_ feed: RSSFeed) { feeds.append(feed); saveToStorage() }
+    func deleteFeed(at offsets: IndexSet) { feeds.remove(atOffsets: offsets); saveToStorage() }
 
     var feedsByGroup: [(group: FeedGroup?, feeds: [RSSFeed])] {
         let sortedGroups = groups.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name) }
@@ -329,9 +322,7 @@ class AppStore {
         saveToStorage()
     }
 
-    func refreshAll() async {
-        for feed in feeds { await refreshFeed(feed.id) }
-    }
+    func refreshAll() async { for feed in feeds { await refreshFeed(feed.id) } }
 
     func translateText(_ text: String) async throws -> String {
         switch defaultTranslationEngine {
@@ -471,6 +462,15 @@ class AppStore {
         return try await AISummary.summarize(article: article, provider: provider, apiKey: key, promptTemplate: summaryPrompt)
     }
 
+    func explainText(_ text: String) async throws -> String {
+        guard let providerID = defaultSummaryProviderID ?? defaultTranslationProviderID,
+              let provider = aiProviders.first(where: { $0.id == providerID }) else {
+            throw TranslationError.noProvider
+        }
+        let key = Keychain.load(key: "ai_key_\(provider.id)") ?? ""
+        return try await AIExplain.explain(text: text, provider: provider, apiKey: key)
+    }
+
     func fetchFullContent(for article: Article) async throws -> Article {
         if article.hasFullContent, !article.content.isEmpty {
             OfflineCache.saveArticleHTML(link: article.link, html: article.content)
@@ -492,13 +492,8 @@ class AppStore {
         return updated
     }
 
-    func cacheSizeDescription() -> String {
-        OfflineCache.formattedSize(OfflineCache.contentCacheSize())
-    }
-
-    func clearOfflineContentCache() {
-        OfflineCache.clearContentCache()
-    }
+    func cacheSizeDescription() -> String { OfflineCache.formattedSize(OfflineCache.contentCacheSize()) }
+    func clearOfflineContentCache() { OfflineCache.clearContentCache() }
 
     private static func xmlEscape(_ s: String) -> String {
         s.replacingOccurrences(of: "&", with: "\u{0026}amp;")
@@ -525,9 +520,7 @@ class AppStore {
             guard !gFeeds.isEmpty else { continue }
             let gName = Self.xmlEscape(g.name)
             lines.append("    <outline text=\"\(gName)\" title=\"\(gName)\">")
-            for feed in gFeeds {
-                lines.append(opmlFeedOutlineLine(feed, indent: "      "))
-            }
+            for feed in gFeeds { lines.append(opmlFeedOutlineLine(feed, indent: "      ")) }
             lines.append("    </outline>")
         }
         for feed in feeds where feed.groupID == nil || !groups.contains(where: { $0.id == feed.groupID }) {
@@ -559,9 +552,7 @@ class AppStore {
             guard !gFeeds.isEmpty else { continue }
             lines.append("# \(g.name)")
             for feed in gFeeds {
-                lines.append(feed.title)
-                lines.append(feed.url)
-                lines.append("")
+                lines.append(feed.title); lines.append(feed.url); lines.append("")
             }
         }
         let ungrouped = feeds.filter { feed in
@@ -571,9 +562,7 @@ class AppStore {
         if !ungrouped.isEmpty {
             lines.append("# 未分组")
             for feed in ungrouped {
-                lines.append(feed.title)
-                lines.append(feed.url)
-                lines.append("")
+                lines.append(feed.title); lines.append(feed.url); lines.append("")
             }
         }
         return lines.joined(separator: "\n")
@@ -588,9 +577,7 @@ class AppStore {
             guard let data = content.data(using: .utf8) else { return nil }
             try data.write(to: url, options: .atomic)
             return url
-        } catch {
-            return nil
-        }
+        } catch { return nil }
     }
 
     func importOPML(data: Data) { _ = importSubscriptions(data: data) }
@@ -603,9 +590,7 @@ class AppStore {
             for item in opmlItems {
                 let url = FeedURL.canonical(item.url)
                 guard !url.isEmpty else { continue }
-                if feeds.contains(where: { FeedURL.canonical($0.url) == url }) {
-                    skipped += 1; continue
-                }
+                if feeds.contains(where: { FeedURL.canonical($0.url) == url }) { skipped += 1; continue }
                 let title = FeedNaming.resolveTitle(parsed: item.title, url: url)
                 var groupID: UUID?
                 if let gName = item.groupName?.trimmingCharacters(in: .whitespacesAndNewlines), !gName.isEmpty {

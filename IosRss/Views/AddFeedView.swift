@@ -9,13 +9,22 @@ struct AddFeedView: View {
     @State private var errorMessage: String?
     @State private var phase: Phase = .input
     @FocusState private var isURLFocused: Bool
+    /// 新源加入的分组；nil = 未分组
+    @State private var selectedGroupID: UUID?
+    @State private var showNewGroupAlert = false
+    @State private var newGroupName = ""
 
     enum Phase { case input, discovering, select, adding }
+
+    private var sortedGroups: [FeedGroup] {
+        store.groups.sorted {
+            $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name)
+        }
+    }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // URL Input Area
                 VStack(alignment: .leading, spacing: 8) {
                     Text("粘贴网站或 Feed 地址")
                         .font(.system(size: 13))
@@ -37,6 +46,34 @@ struct AddFeedView: View {
                     .padding(14)
                     .background(.secondary.opacity(0.1), in: .rect(cornerRadius: 10))
                     .padding(.horizontal, 20)
+
+                    HStack(spacing: 10) {
+                        Image(systemName: "folder")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18)
+                        Picker("加入分组", selection: $selectedGroupID) {
+                            Text("未分组").tag(Optional<UUID>.none)
+                            ForEach(sortedGroups) { group in
+                                Text(group.name).tag(Optional(group.id))
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        Spacer(minLength: 0)
+                        Button {
+                            newGroupName = ""
+                            showNewGroupAlert = true
+                        } label: {
+                            Image(systemName: "folder.badge.plus")
+                                .font(.system(size: 16, weight: .medium))
+                        }
+                        .accessibilityLabel("新建分组")
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.secondary.opacity(0.1), in: .rect(cornerRadius: 10))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 4)
                 }
 
                 if let error = errorMessage {
@@ -122,8 +159,23 @@ struct AddFeedView: View {
                     Button("取消") { dismiss() }
                 }
             }
+            .alert("新建分组", isPresented: $showNewGroupAlert) {
+                TextField("分组名称", text: $newGroupName)
+                Button("创建") {
+                    let name = newGroupName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty else { return }
+                    store.addGroup(name: name)
+                    if let g = store.groups.first(where: { $0.name == name }) {
+                        selectedGroupID = g.id
+                    }
+                    newGroupName = ""
+                }
+                Button("取消", role: .cancel) { newGroupName = "" }
+            } message: {
+                Text("创建后将自动选中该分组")
+            }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
         .onAppear { isURLFocused = true }
     }
 
@@ -156,7 +208,6 @@ struct AddFeedView: View {
                 phase = .select
             }
         } catch {
-            // Try parsing directly as feed
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
                 let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
@@ -188,7 +239,6 @@ struct AddFeedView: View {
             let (data, _) = try await URLSession.shared.data(from: url)
             OfflineCache.saveFeedXML(url: discovered.url, data: data)
             let feedID = UUID()
-            // 优先用 Feed 内 channel/title；没有再用 link 上的 title；仍没有则用域名
             let fromXML = FeedParser.extractFeedTitle(from: data)
             let fallbackName = (discovered.title != discovered.url
                                 && discovered.title != FeedNaming.domainName(from: discovered.url))
@@ -199,6 +249,10 @@ struct AddFeedView: View {
             )
             let articles = FeedParser.parse(data: data, feedID: feedID, feedTitle: resolvedTitle)
             let favicon = FeedParser.resolveFaviconURL(from: data, feedURL: discovered.url)
+            let groupID: UUID? = {
+                guard let gid = selectedGroupID else { return nil }
+                return store.groups.contains(where: { $0.id == gid }) ? gid : nil
+            }()
             let feed = RSSFeed(
                 id: feedID,
                 title: resolvedTitle,
@@ -206,7 +260,8 @@ struct AddFeedView: View {
                 faviconURL: favicon,
                 unreadCount: articles.count,
                 articles: articles,
-                lastFetched: Date()
+                lastFetched: Date(),
+                groupID: groupID
             )
             store.addFeed(feed)
             dismiss()

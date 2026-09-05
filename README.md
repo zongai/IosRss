@@ -22,7 +22,7 @@
 - **分区字号**：订阅列表、文章列表标题/摘要、阅读器标题/正文、AI 摘要均可在设置中独立调节
 - **深色模式**：`Color.primary` / `Color(.systemBackground)` 自适应
 - **阅读体验**：HTML 实体解码、`AsyncImage` 配图、应用内 `SFSafariViewController`
-- **CI**：GitHub Actions 产出 `IosRss-{版本}-{构建号}.ipa`
+- **CI**：GitHub Actions 仅在手动指定 commit 或推送 `v*` 标签时构建，产出 `IosRss-{版本}-{构建号}-{shortSHA}.ipa`
 
 ## 结构
 
@@ -76,6 +76,15 @@ API Key 仅保存在本机 Keychain，不会写入仓库。
 | 已读持久化 | `readArticleLinks` 规范化 URL |
 | 已读 / 全文清理 | `purgeOldReadArticles` / `pruneFullContentCache` |
 | 分区字号 | `AppStore` 各 `*FontSize` + Settings 步进器 |
+
+## CI
+
+推送到 `main` **不会**自动构建。只在下面两种情况产出未签名 IPA：
+
+1. **手动指定提交**：Actions → *Build Unsigned IPA* → *Run workflow*，可选填 commit SHA（留空则构建所选分支最新提交）。
+2. **打版本标签**：`git tag v1.2.4 && git push origin v1.2.4`
+
+产物名：`IosRss-{版本}-{构建号}-{shortSHA}-build{run}.ipa`。
 
 ## License
 

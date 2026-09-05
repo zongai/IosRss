@@ -2,10 +2,14 @@ name: Build Unsigned IPA
 
 on:
   push:
-    branches: [ main ]
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      commit:
+        description: '要构建的 commit SHA（留空则构建所选分支的最新提交）'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -14,8 +18,21 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
+      - name: Resolve commit
+        id: ref
+        run: |
+          SHA="${{ github.event.inputs.commit }}"
+          SHA="$(echo "$SHA" | tr -d '[:space:]')"
+          if [ -z "$SHA" ]; then
+            SHA="${{ github.sha }}"
+          fi
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "Building SHA: ${SHA}"
+
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.ref.outputs.sha }}
 
       - name: Read app version
         id: ver
@@ -27,8 +44,9 @@ jobs:
           MARKETING=$(echo "$MARKETING" | tr -cd 'A-Za-z0-9._-')
           BUILD=$(echo "$BUILD" | tr -cd 'A-Za-z0-9._-')
           RUN="${{ github.run_number }}"
-          IPA_NAME="IosRss-${MARKETING}-${BUILD}-build${RUN}.ipa"
-          DISPLAY="v${MARKETING}-${BUILD}-build${RUN}"
+          SHORT=$(echo "${{ steps.ref.outputs.sha }}" | cut -c1-7)
+          IPA_NAME="IosRss-${MARKETING}-${BUILD}-${SHORT}-build${RUN}.ipa"
+          DISPLAY="v${MARKETING}-${BUILD}-${SHORT}-build${RUN}"
           echo "version=${MARKETING}" >> "$GITHUB_OUTPUT"
           echo "build=${BUILD}" >> "$GITHUB_OUTPUT"
           echo "run=${RUN}" >> "$GITHUB_OUTPUT"
@@ -70,3 +88,4 @@ jobs:
           tag_name: ${{ steps.ver.outputs.display }}
           name: IosRss ${{ steps.ver.outputs.display }}
           generate_release_notes: true
+          target_commitish: ${{ steps.ref.outputs.sha }}

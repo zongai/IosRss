@@ -14,7 +14,6 @@ struct SettingsView: View {
                             Text(mode.rawValue).tag(mode)
                         }
                     }
-
                     Toggle("显示已读文章", isOn: $store.showReadArticles)
                 }
                 .onChange(of: store.titleDisplayMode) { _, _ in store.persistSettings() }
@@ -56,16 +55,14 @@ struct SettingsView: View {
                         Spacer()
                         Text(store.readRetentionDays == 0 ? "不清理" : "\(store.readRetentionDays) 天")
                             .foregroundStyle(.secondary)
-                        Stepper("", value: $store.readRetentionDays, in: 0...90, step: 1)
-                            .labelsHidden()
+                        Stepper("", value: $store.readRetentionDays, in: 0...90, step: 1).labelsHidden()
                     }
                     HStack {
                         Text("全文缓存")
                         Spacer()
                         Text(store.fullContentCacheDays == 0 ? "不清理" : "\(store.fullContentCacheDays) 天")
                             .foregroundStyle(.secondary)
-                        Stepper("", value: $store.fullContentCacheDays, in: 0...180, step: 1)
-                            .labelsHidden()
+                        Stepper("", value: $store.fullContentCacheDays, in: 0...180, step: 1).labelsHidden()
                     }
                 } header: {
                     Text("自动清理")
@@ -85,8 +82,7 @@ struct SettingsView: View {
                     HStack {
                         Label("内容缓存", systemImage: "internaldrive")
                         Spacer()
-                        Text(cacheSizeText)
-                            .foregroundStyle(.secondary)
+                        Text(cacheSizeText).foregroundStyle(.secondary)
                     }
                     Button(role: .destructive) {
                         store.clearOfflineContentCache()
@@ -105,23 +101,28 @@ struct SettingsView: View {
                     HStack {
                         Text("默认翻译引擎")
                         Spacer()
-                        Text(store.defaultTranslationEngine.rawValue)
-                            .foregroundStyle(.secondary)
+                        Text(store.defaultTranslationEngine.rawValue).foregroundStyle(.secondary)
                     }
                     if let pid = store.defaultSummaryProviderID,
                        let provider = store.aiProviders.first(where: { $0.id == pid }) {
                         HStack {
                             Text("默认摘要引擎")
                             Spacer()
-                            Text(provider.name)
-                                .foregroundStyle(.secondary)
+                            Text(provider.name).foregroundStyle(.secondary)
+                        }
+                    }
+                    if let pid = store.defaultExplainProviderID,
+                       let provider = store.aiProviders.first(where: { $0.id == pid }) {
+                        HStack {
+                            Text("默认解释引擎")
+                            Spacer()
+                            Text(provider.name).foregroundStyle(.secondary)
                         }
                     }
                     HStack {
                         Text("版本")
                         Spacer()
-                        Text(AppVersion.display)
-                            .foregroundStyle(.secondary)
+                        Text(AppVersion.display).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -135,16 +136,11 @@ struct SettingsView: View {
         HStack {
             Text(title)
             Spacer()
-            Text("\(Int(value.wrappedValue))")
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-            Stepper("", value: value, in: range, step: 1)
-                .labelsHidden()
+            Text("\(Int(value.wrappedValue))").foregroundStyle(.secondary).monospacedDigit()
+            Stepper("", value: value, in: range, step: 1).labelsHidden()
         }
     }
 }
-
-// MARK: - Translation Settings
 
 struct TranslationSettingsView: View {
     @Environment(AppStore.self) private var store
@@ -169,12 +165,10 @@ struct TranslationSettingsView: View {
 
             Section {
                 HStack {
-                    Text("Google 翻译")
-                        .font(.system(size: 15, weight: .medium))
+                    Text("Google 翻译").font(.system(size: 15, weight: .medium))
                     Spacer()
                     if store.defaultTranslationEngine == .google {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(Color.primary)
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.primary)
                     }
                 }
                 TextField("API Key（可选，免费模式无需填写）", text: $googleKey)
@@ -184,20 +178,15 @@ struct TranslationSettingsView: View {
                         if new.isEmpty { Keychain.delete(key: "google_translate_key") }
                         else { Keychain.save(key: "google_translate_key", value: new) }
                     }
-            } header: {
-                Text("Google 翻译")
-            } footer: {
-                Text("不填 API Key 时使用免费翻译接口，有请求频率限制")
-            }
+            } header: { Text("Google 翻译") }
+            footer: { Text("不填 API Key 时使用免费翻译接口，有请求频率限制") }
 
             Section {
                 HStack {
-                    Text("Microsoft 翻译")
-                        .font(.system(size: 15, weight: .medium))
+                    Text("Microsoft 翻译").font(.system(size: 15, weight: .medium))
                     Spacer()
                     if store.defaultTranslationEngine == .microsoft {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(Color.primary)
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.primary)
                     }
                 }
                 TextField("Ocp-Apim-Subscription-Key", text: $microsoftKey)
@@ -207,18 +196,14 @@ struct TranslationSettingsView: View {
                         if new.isEmpty { Keychain.delete(key: "microsoft_translate_key") }
                         else { Keychain.save(key: "microsoft_translate_key", value: new) }
                     }
-            } header: {
-                Text("Microsoft Translator")
-            }
+            } header: { Text("Microsoft Translator") }
 
             Section {
                 HStack {
-                    Text("DeepL 翻译")
-                        .font(.system(size: 15, weight: .medium))
+                    Text("DeepL 翻译").font(.system(size: 15, weight: .medium))
                     Spacer()
                     if store.defaultTranslationEngine == .deepl {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(Color.primary)
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.primary)
                     }
                 }
                 TextField("DeepL API Key", text: $deeplKey)
@@ -228,37 +213,27 @@ struct TranslationSettingsView: View {
                         if new.isEmpty { Keychain.delete(key: "deepl_translate_key") }
                         else { Keychain.save(key: "deepl_translate_key", value: new) }
                     }
-            } header: {
-                Text("DeepL")
-            } footer: {
-                Text("免费版 Key 以 \":fx\" 结尾，会自动使用免费端点；付费版 Key 使用正式端点")
-            }
+            } header: { Text("DeepL") }
+            footer: { Text("免费版 Key 以 \":fx\" 结尾，会自动使用免费端点；付费版 Key 使用正式端点") }
 
             Section {
                 HStack {
-                    Text("AI 翻译")
-                        .font(.system(size: 15, weight: .medium))
+                    Text("AI 翻译").font(.system(size: 15, weight: .medium))
                     Spacer()
                     if store.defaultTranslationEngine == .ai {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(Color.primary)
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.primary)
                     }
                 }
                 if let pid = store.defaultTranslationProviderID,
                    let provider = store.aiProviders.first(where: { $0.id == pid }) {
                     Text("使用 \(provider.name) · \(provider.model)")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
                 } else {
                     Text("在 AI 设置中指定翻译 Provider（支持 OpenAI / Anthropic / Gemini）")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
                 }
-            } header: {
-                Text("AI 翻译")
-            } footer: {
-                Text("Gemini、OpenAI、Anthropic 等统一在「AI 设置」中配置，选择「AI 翻译」后即可使用")
-            }
+            } header: { Text("AI 翻译") }
+            footer: { Text("Gemini、OpenAI、Anthropic 等统一在「AI 设置」中配置，选择「AI 翻译」后即可使用") }
         }
         .navigationTitle("翻译设置")
         .navigationBarTitleDisplayMode(.inline)
@@ -266,8 +241,6 @@ struct TranslationSettingsView: View {
         .onChange(of: store.defaultTranslationEngine) { _, _ in store.persistSettings() }
     }
 }
-
-// MARK: - AI Settings
 
 struct AISettingsView: View {
     @Environment(AppStore.self) private var store
@@ -289,16 +262,22 @@ struct AISettingsView: View {
                                 if store.aiBlacklistFallbackProviderID == provider.id {
                                     store.aiBlacklistFallbackProviderID = nil
                                 }
+                                if store.defaultExplainProviderID == provider.id {
+                                    store.defaultExplainProviderID = nil
+                                }
+                                if store.defaultSummaryProviderID == provider.id {
+                                    store.defaultSummaryProviderID = store.aiProviders.first?.id
+                                }
+                                if store.defaultTranslationProviderID == provider.id {
+                                    store.defaultTranslationProviderID = store.aiProviders.first?.id
+                                }
                                 store.persistSettings()
                             } label: {
                                 Label("删除", systemImage: "trash")
                             }
                         }
                 }
-
-                Button {
-                    showAddProvider = true
-                } label: {
+                Button { showAddProvider = true } label: {
                     Label("添加 Provider", systemImage: "plus")
                 }
             } header: {
@@ -308,22 +287,35 @@ struct AISettingsView: View {
             }
 
             Section {
+                Picker("默认解释引擎", selection: Binding(
+                    get: { store.defaultExplainProviderID },
+                    set: { store.defaultExplainProviderID = $0; store.persistSettings() }
+                )) {
+                    Text("跟随摘要引擎").tag(Optional<UUID>.none)
+                    ForEach(store.aiProviders) { p in
+                        Text(p.name).tag(Optional(p.id))
+                    }
+                }
+            } header: {
+                Text("AI 解释")
+            } footer: {
+                Text("框选文章文字后的「AI解释」使用此 Provider。选「跟随摘要引擎」时与摘要共用。")
+            }
+
+            Section {
                 ForEach(Array(store.aiBlacklistTerms.enumerated()), id: \.offset) { index, term in
                     HStack {
-                        Text(term)
-                            .font(.system(size: 15))
+                        Text(term).font(.system(size: 15))
                         Spacer()
                         Button {
                             store.aiBlacklistTerms.remove(at: index)
                             store.persistSettings()
                         } label: {
-                            Image(systemName: "minus.circle.fill")
-                                .foregroundStyle(.red)
+                            Image(systemName: "minus.circle.fill").foregroundStyle(.red)
                         }
                         .buttonStyle(.plain)
                     }
                 }
-
                 HStack {
                     TextField("添加关键词，如敏感词", text: $newBlacklistTerm)
                         .textInputAutocapitalization(.never)
@@ -332,7 +324,6 @@ struct AISettingsView: View {
                     Button("添加") { addBlacklistTerm() }
                         .disabled(newBlacklistTerm.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-
                 Picker("命中后使用", selection: Binding(
                     get: { store.aiBlacklistFallbackProviderID },
                     set: { store.aiBlacklistFallbackProviderID = $0; store.persistSettings() }
@@ -381,12 +372,8 @@ struct AISettingsView: View {
         .onDisappear { store.persistSettings() }
         .onChange(of: store.translationPrompt) { _, _ in store.persistSettings() }
         .onChange(of: store.summaryPrompt) { _, _ in store.persistSettings() }
-        .sheet(isPresented: $showAddProvider) {
-            EditProviderView(provider: nil)
-        }
-        .sheet(item: $editingProvider) { provider in
-            EditProviderView(provider: provider)
-        }
+        .sheet(isPresented: $showAddProvider) { EditProviderView(provider: nil) }
+        .sheet(item: $editingProvider) { provider in EditProviderView(provider: provider) }
     }
 
     private func addBlacklistTerm() {
@@ -410,8 +397,7 @@ struct AIProviderRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(provider.name)
-                    .font(.system(size: 15, weight: .medium))
+                Text(provider.name).font(.system(size: 15, weight: .medium))
                 Spacer()
                 HStack(spacing: 8) {
                     if provider.isDefaultSummary || store.defaultSummaryProviderID == provider.id {
@@ -420,15 +406,13 @@ struct AIProviderRow: View {
                     if provider.isDefaultTranslation || store.defaultTranslationProviderID == provider.id {
                         ProviderTag(text: "翻译", color: Color.secondary)
                     }
+                    if store.defaultExplainProviderID == provider.id {
+                        ProviderTag(text: "解释", color: .orange)
+                    }
                 }
             }
-            Text(provider.model)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-            Text(provider.baseURL)
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
+            Text(provider.model).font(.system(size: 12)).foregroundStyle(.secondary)
+            Text(provider.baseURL).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
         }
         .padding(.vertical, 2)
     }
@@ -437,7 +421,6 @@ struct AIProviderRow: View {
 struct ProviderTag: View {
     let text: String
     let color: Color
-
     var body: some View {
         Text(text)
             .font(.system(size: 10, weight: .medium))
@@ -447,8 +430,6 @@ struct ProviderTag: View {
             .background(color, in: .capsule)
     }
 }
-
-// MARK: - Edit Provider View
 
 struct EditProviderView: View {
     @Environment(\.dismiss) private var dismiss
@@ -462,58 +443,47 @@ struct EditProviderView: View {
     @State private var kind = "openai"
     @State private var isDefaultSummary = false
     @State private var isDefaultTranslation = false
+    @State private var isDefaultExplain = false
 
     private var isNew: Bool { provider == nil }
-    private var providerID: UUID { provider?.id ?? UUID() }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Provider 模板") {
-                    Button("OpenAI") { applyTemplate(.openAITemplate) }
-                        .foregroundStyle(Color.primary)
-                    Button("Anthropic") { applyTemplate(.anthropicTemplate) }
-                        .foregroundStyle(Color.primary)
-                    Button("Gemini") { applyTemplate(.geminiTemplate) }
-                        .foregroundStyle(Color.primary)
+                    Button("OpenAI") { applyTemplate(.openAITemplate) }.foregroundStyle(Color.primary)
+                    Button("Anthropic") { applyTemplate(.anthropicTemplate) }.foregroundStyle(Color.primary)
+                    Button("Gemini") { applyTemplate(.geminiTemplate) }.foregroundStyle(Color.primary)
                 }
-
                 Section("基本信息") {
                     TextField("名称", text: $name)
                     TextField("Base URL", text: $baseURL)
-                        .keyboardType(.URL)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL).autocorrectionDisabled().textInputAutocapitalization(.never)
                     TextField("模型名", text: $model)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled().textInputAutocapitalization(.never)
                     Picker("接口类型", selection: $kind) {
                         Text("OpenAI 兼容").tag("openai")
                         Text("Gemini").tag("gemini")
                     }
                 }
-
                 Section {
                     SecureField("API Key", text: $apiKey)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled().textInputAutocapitalization(.never)
                 } header: {
                     Text("API Key")
                 } footer: {
                     Text("API Key 加密存储，不会明文保存。Gemini 在 Google AI Studio 获取免费 Key。")
                 }
-
                 Section("默认设置") {
                     Toggle("设为默认摘要引擎", isOn: $isDefaultSummary)
                     Toggle("设为默认 AI 翻译引擎", isOn: $isDefaultTranslation)
+                    Toggle("设为默认 AI 解释引擎", isOn: $isDefaultExplain)
                 }
             }
             .navigationTitle(isNew ? "添加 Provider" : "编辑 Provider")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                }
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") { save() }
                         .disabled(name.isEmpty || baseURL.isEmpty || model.isEmpty)
@@ -532,6 +502,7 @@ struct EditProviderView: View {
         apiKey = Keychain.load(key: "ai_key_\(p.id)") ?? ""
         isDefaultSummary = store.defaultSummaryProviderID == p.id
         isDefaultTranslation = store.defaultTranslationProviderID == p.id
+        isDefaultExplain = store.defaultExplainProviderID == p.id
     }
 
     private func applyTemplate(_ template: AIProvider) {
@@ -544,22 +515,17 @@ struct EditProviderView: View {
     private func save() {
         let id = provider?.id ?? UUID()
         let updated = AIProvider(
-            id: id,
-            name: name,
-            baseURL: baseURL,
-            model: model,
-            kind: kind,
-            isDefaultSummary: isDefaultSummary,
-            isDefaultTranslation: isDefaultTranslation
+            id: id, name: name, baseURL: baseURL, model: model, kind: kind,
+            isDefaultSummary: isDefaultSummary, isDefaultTranslation: isDefaultTranslation
         )
-
-        if !apiKey.isEmpty {
-            Keychain.save(key: "ai_key_\(id)", value: apiKey)
-        }
-
+        if !apiKey.isEmpty { Keychain.save(key: "ai_key_\(id)", value: apiKey) }
         if isDefaultSummary { store.defaultSummaryProviderID = id }
         if isDefaultTranslation { store.defaultTranslationProviderID = id }
-
+        if isDefaultExplain {
+            store.defaultExplainProviderID = id
+        } else if store.defaultExplainProviderID == id {
+            store.defaultExplainProviderID = nil
+        }
         if let idx = store.aiProviders.firstIndex(where: { $0.id == id }) {
             store.aiProviders[idx] = updated
         } else {

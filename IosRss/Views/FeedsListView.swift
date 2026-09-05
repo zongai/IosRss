@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct FeedsListView: View {
@@ -10,8 +11,9 @@ struct FeedsListView: View {
     @State private var opmlExportText = ""
     @State private var importMessage: String?
 
+    /// 仅允许 OPML / XML / RSS / Atom，避免文件选择器里出现无关类型
     private var importTypes: [UTType] {
-        var types: [UTType] = [.xml, .text, .plainText, .data]
+        var types: [UTType] = [.xml]
         if let opml = UTType(filenameExtension: "opml") { types.append(opml) }
         if let rss = UTType(filenameExtension: "rss") { types.append(rss) }
         if let atom = UTType(filenameExtension: "atom") { types.append(atom) }
@@ -28,6 +30,8 @@ struct FeedsListView: View {
                         NavigationLink(value: feed) {
                             FeedRow(feed: feed)
                         }
+                        // 未读数变化时强制刷新行（RSSFeed == 只比 id）
+                        .id("\(feed.id.uuidString)-\(feed.unreadCount)")
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
                                 if let idx = store.feeds.firstIndex(where: { $0.id == feed.id }) {
@@ -140,51 +144,60 @@ struct FeedsListView: View {
 struct FeedRow: View {
     @Environment(AppStore.self) private var store
     let feed: RSSFeed
+
+    /// 始终从 store 取最新数据，避免未读数在返回列表后仍显示旧快照
+    private var live: RSSFeed {
+        store.feeds.first(where: { $0.id == feed.id }) ?? feed
+    }
+
     var body: some View {
         HStack(spacing: 14) {
-            FeedIcon(feed: feed, size: 38)
-            Text(feed.title)
+            FeedIcon(feed: live, size: 38)
+            Text(live.title)
                 .font(.system(size: store.feedTitleFontSize, weight: .medium))
                 .foregroundStyle(Color.primary)
             Spacer()
-            if feed.unreadCount > 0 {
-                Text("\(feed.unreadCount)")
+            if live.unreadCount > 0 {
+                Text("\(live.unreadCount)")
                     .font(.system(size: max(11, store.feedTitleFontSize - 4), weight: .bold))
                     .foregroundStyle(Color(.systemBackground))
                     .padding(.horizontal, 8).padding(.vertical, 4)
                     .background(Color.primary, in: .capsule)
+                    .monospacedDigit()
+                    .animation(.snappy(duration: 0.2), value: live.unreadCount)
             }
         }
         .padding(.vertical, 10)
+        // 显式依赖未读数，确保 @Observable 变更后本行必刷新
+        .id("\(live.id.uuidString)-\(live.unreadCount)-\(live.faviconURL ?? "")")
     }
 }
 
 struct FeedIcon: View {
     let feed: RSSFeed
     let size: CGFloat
+
+    @State private var image: UIImage?
+    @State private var loading = false
+    @State private var didFail = false
+
     var body: some View {
         Group {
-            if let urlStr = feed.faviconURL, let url = URL(string: urlStr) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: size, height: size)
-                            .clipShape(Circle())
-                    case .failure:
-                        letterFallback
-                    case .empty:
-                        ProgressView()
-                            .frame(width: size, height: size)
-                    @unknown default:
-                        letterFallback
-                    }
-                }
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+            } else if loading {
+                ProgressView()
+                    .frame(width: size, height: size)
             } else {
                 letterFallback
             }
+        }
+        .task(id: feed.id.uuidString + (feed.faviconURL ?? "") + feed.url) {
+            await loadIcon()
         }
     }
 
@@ -197,6 +210,72 @@ struct FeedIcon: View {
                 .font(.system(size: size * 0.45, weight: .bold))
                 .foregroundStyle(Color(.systemBackground))
         }
+    }
+
+    private func loadIcon() async {
+        if image != nil { return }
+        loading = true
+        defer { loading = false }
+
+        var candidates: [String] = []
+        if let preferred = feed.faviconURL, !preferred.isEmpty {
+            candidates.append(preferred)
+        }
+        candidates.append(contentsOf: FeedParser.faviconCandidates(for: feed.url))
+        var seen = Set<String>()
+        candidates = candidates.filter { seen.insert($0).inserted }
+
+        for urlStr in candidates {
+            // 内存 → 磁盘 → 网络，三级缓存
+            if let cached = FaviconCache.shared.image(for: urlStr) {
+                image = cached
+                return
+            }
+            if let data = OfflineCache.loadImage(url: urlStr),
+               let ui = UIImage(data: data), ui.size.width > 1 {
+                FaviconCache.shared.store(ui, for: urlStr)
+                image = ui
+                return
+            }
+            guard let url = URL(string: urlStr) else { continue }
+            do {
+                var req = URLRequest(url: url)
+                req.timeoutInterval = 8
+                req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+                             forHTTPHeaderField: "User-Agent")
+                let (data, response) = try await URLSession.shared.data(for: req)
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    continue
+                }
+                guard data.count > 32, let ui = UIImage(data: data), ui.size.width > 1 else {
+                    continue
+                }
+                OfflineCache.saveImage(url: urlStr, data: data)
+                FaviconCache.shared.store(ui, for: urlStr)
+                image = ui
+                return
+            } catch {
+                continue
+            }
+        }
+        didFail = true
+    }
+}
+
+/// 源图标内存缓存（配合 OfflineCache 磁盘持久化）
+final class FaviconCache {
+    static let shared = FaviconCache()
+    private let cache = NSCache<NSString, UIImage>()
+    private init() {
+        cache.countLimit = 200
+        cache.totalCostLimit = 16 * 1024 * 1024
+    }
+    func image(for url: String) -> UIImage? {
+        cache.object(forKey: url as NSString)
+    }
+    func store(_ image: UIImage, for url: String) {
+        let cost = Int(image.size.width * image.size.height * 4)
+        cache.setObject(image, forKey: url as NSString, cost: cost)
     }
 }
 

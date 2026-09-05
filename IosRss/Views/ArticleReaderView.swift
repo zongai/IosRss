@@ -153,7 +153,6 @@ struct ArticleReaderView: View {
                 SafariView(url: url).ignoresSafeArea()
             }
         }
-        .background(Color(.systemBackground))
         .onAppear {
             aiSummary = currentArticle.aiSummary
             if let cached = currentArticle.translatedContent, !cached.isEmpty {
@@ -467,7 +466,7 @@ enum ContentBlockParser {
             }
         }
 
-        working = working.replacingOccurrences(of: "<[^>]+", with: "", options: .regularExpression)
+        working = working.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
         working = HTMLUtils.decodeEntities(working)
 
         let parts = working.components(separatedBy: "\n")

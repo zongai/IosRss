@@ -7,7 +7,7 @@ struct SelectableParagraphView: UIViewRepresentable {
     let attributed: AttributedString
     let fontSize: Double
     var onOpenURL: (URL) -> Void
-    var onExplain: (_ selected: String, _ context: String) -> Void 
+    var onExplain: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onOpenURL: onOpenURL, onExplain: onExplain)
@@ -72,12 +72,9 @@ struct SelectableParagraphView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var onOpenURL: (URL) -> Void
-        var onExplain: (_ selected: String, _ context: String) -> Void
-    
-        init(
-            onOpenURL: @escaping (URL) -> Void,
-            onExplain: @escaping (_ selected: String, _ context: String) -> Void
-        ) {
+        var onExplain: (String) -> Void
+
+        init(onOpenURL: @escaping (URL) -> Void, onExplain: @escaping (String) -> Void) {
             self.onOpenURL = onOpenURL
             self.onExplain = onExplain
         }
@@ -110,12 +107,10 @@ struct SelectableParagraphView: UIViewRepresentable {
                 guard range.location + range.length <= ns.length else { return }
                 let selected = ns.substring(with: range)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !selected.isEmpty else { return }
-    
-                let context = self.extractContext(from: ns, around: range)
-                self.onExplain(selected, context)
+                guard !selected.isEmpty else { return }    
+                self.onExplain(selected)
             }
-            return UIMenu(children: [explain] + suggestedActions)
+            return UIMenu(children: suggestedActions + [explain])
         }
     
         func textView(
@@ -126,39 +121,7 @@ struct SelectableParagraphView: UIViewRepresentable {
         ) -> Bool {
             onOpenURL(URL)
             return false
-        }
-    
-        /// 提取选中内容所在段落作为上下文，过长时截取选中位置前后一段
-        private func extractContext(from ns: NSString, around range: NSRange) -> String {
-            let paragraphRange = ns.paragraphRange(for: range)
-            var context = ns.substring(with: paragraphRange)
-    
-            let maxContextLength = 500
-            if context.count > maxContextLength {
-                let selectionInParagraph = NSRange(
-                    location: range.location - paragraphRange.location,
-                    length: range.length
-                )
-                context = truncateAroundSelection(
-                    fullText: context,
-                    selectionRange: selectionInParagraph,
-                    maxLength: maxContextLength
-                )
-            }
-            return context
-        }
-    
-        private func truncateAroundSelection(
-            fullText: String,
-            selectionRange: NSRange,
-            maxLength: Int
-        ) -> String {
-            let ns = fullText as NSString
-            let padding = max(0, (maxLength - selectionRange.length) / 2)
-            let start = max(0, selectionRange.location - padding)
-            let end = min(ns.length, selectionRange.location + selectionRange.length + padding)
-            return ns.substring(with: NSRange(location: start, length: end - start))
-        }
+        }    
     }
 }
 

@@ -44,15 +44,29 @@ jobs:
           MARKETING=$(echo "$MARKETING" | tr -cd 'A-Za-z0-9._-')
           BUILD=$(echo "$BUILD" | tr -cd 'A-Za-z0-9._-')
           RUN="${{ github.run_number }}"
-          SHORT=$(echo "${{ steps.ref.outputs.sha }}" | cut -c1-7)
-          IPA_NAME="IosRss-${MARKETING}-${BUILD}-${SHORT}-build${RUN}.ipa"
-          DISPLAY="v${MARKETING}-${BUILD}-${SHORT}-build${RUN}"
+          IPA_NAME="IosRss-${MARKETING}-${BUILD}-build${RUN}.ipa"
+          DISPLAY="v${MARKETING}-${BUILD}-build${RUN}"
           echo "version=${MARKETING}" >> "$GITHUB_OUTPUT"
           echo "build=${BUILD}" >> "$GITHUB_OUTPUT"
           echo "run=${RUN}" >> "$GITHUB_OUTPUT"
           echo "ipa_name=${IPA_NAME}" >> "$GITHUB_OUTPUT"
           echo "display=${DISPLAY}" >> "$GITHUB_OUTPUT"
           echo "Resolved version: ${DISPLAY} → ${IPA_NAME}"
+
+      - name: Inject GitHub build number into AppVersion
+        run: |
+          RUN="${{ github.run_number }}"
+          FILE="IosRss/Models/FeedModels.swift"
+          if grep -q 'static let githubBuildNumber: String = ""' "$FILE"; then
+            sed -i.bak "s/static let githubBuildNumber: String = \"\"/static let githubBuildNumber: String = \"${RUN}\"/" "$FILE"
+            rm -f "${FILE}.bak"
+          else
+            echo "WARNING: githubBuildNumber placeholder not found in $FILE"
+            grep -n 'githubBuildNumber' "$FILE" || true
+            exit 1
+          fi
+          echo "Injected githubBuildNumber=${RUN}"
+          grep -n 'githubBuildNumber' "$FILE" | head -3
 
       - name: Build app (no signing)
         run: |

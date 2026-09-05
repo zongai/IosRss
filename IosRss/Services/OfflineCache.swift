@@ -128,18 +128,24 @@ enum OfflineCache {
         return try? Data(contentsOf: file)
     }
 
-    // MARK: - Image bytes (favicon 等)
+    // MARK: - Image bytes (favicon 等，磁盘持久化)
 
     static func saveImage(url: String, data: Data) {
         guard !url.isEmpty, !data.isEmpty else { return }
-        let ext = (URL(string: url)?.pathExtension).flatMap { $0.isEmpty ? nil : $0 } ?? "img"
-        let file = imagesDir.appendingPathComponent(key(for: url) + ".\(ext)")
+        // 统一用 .bin，避免扩展名变化导致读不到
+        let file = imagesDir.appendingPathComponent(key(for: url) + ".bin")
         try? data.write(to: file, options: [.atomic])
     }
 
     static func loadImage(url: String) -> Data? {
         guard !url.isEmpty else { return nil }
         let prefix = key(for: url)
+        // 优先新格式
+        let primary = imagesDir.appendingPathComponent(prefix + ".bin")
+        if let data = try? Data(contentsOf: primary), !data.isEmpty {
+            return data
+        }
+        // 兼容旧扩展名缓存
         guard let files = try? FileManager.default.contentsOfDirectory(at: imagesDir, includingPropertiesForKeys: nil) else {
             return nil
         }

@@ -29,7 +29,7 @@
 
 ### 其它
 - **离线缓存**：订阅列表、Feed XML、文章全文 HTML、图片；网络失败回退本地
-- **分区字号**：订阅列表、文章列表、阅读器、AI 摘要可独立调节
+- **分区字号**：分组名称、订阅列表、文章列表、阅读器、AI 摘要可独立调节
 - **深色模式**：系统自适应
 - **CI**：GitHub Actions 产出 `IosRss-{版本}-{工程构建}-build{run}.ipa`，并打对应 Release tag
 
@@ -62,7 +62,7 @@ IosRss/
 
 ## 设置说明
 
-1. **字号**：订阅列表、文章列表、阅读器、AI 摘要分别调节
+1. **字号**：分组名称、订阅列表、文章列表、阅读器、AI 摘要分别调节
 2. **自动清理**：已读保留天数、全文磁盘缓存天数（0 = 不清理）
 3. **离线**：查看占用，可清除全文 / Feed / 图片缓存（不影响订阅）
 4. **翻译设置**：默认引擎与各引擎 Key
@@ -91,6 +91,7 @@ API Key 仅保存在本机 Keychain。
 |------|------|
 | 版本展示 | `AppVersion` in `FeedModels.swift` + CI sed 注入 |
 | 源分组 / 折叠 | `FeedGroup`、`collapsedGroupIDs`、`FeedsListView` |
+| 分组名字号 | `groupTitleFontSize` + Settings 步进器 |
 | OPML 导入导出 | `OPMLParser` / `exportOPML` + `UIDocumentPicker` |
 | 全文抓取 | `ArticleContentFetcher`（平衡 div + WP REST） |
 | AI 解释 Provider | `defaultExplainProviderID`、`explainText` |

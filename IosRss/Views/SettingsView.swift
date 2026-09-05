@@ -20,6 +20,7 @@ struct SettingsView: View {
                 .onChange(of: store.showReadArticles) { _, _ in store.persistSettings() }
 
                 Section {
+                    fontStepper(title: "分组名称", value: $store.groupTitleFontSize, range: 11...22)
                     fontStepper(title: "订阅列表标题", value: $store.feedTitleFontSize, range: 14...22)
                     fontStepper(title: "文章列表标题", value: $store.listTitleFontSize, range: 14...24)
                     fontStepper(title: "文章列表摘要", value: $store.listSummaryFontSize, range: 12...20)
@@ -31,6 +32,7 @@ struct SettingsView: View {
                 } footer: {
                     Text("分别调整各界面文字大小，立即生效。")
                 }
+                .onChange(of: store.groupTitleFontSize) { _, _ in store.persistSettings() }
                 .onChange(of: store.feedTitleFontSize) { _, _ in store.persistSettings() }
                 .onChange(of: store.listTitleFontSize) { _, _ in store.persistSettings() }
                 .onChange(of: store.listSummaryFontSize) { _, _ in store.persistSettings() }

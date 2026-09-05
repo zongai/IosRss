@@ -340,31 +340,35 @@ struct FeedsListView: View {
 }
 
 struct GroupSectionHeader: View {
+    @Environment(AppStore.self) private var store
     let title: String
     let feedCount: Int
     let unreadCount: Int
     let isCollapsed: Bool
     let onToggle: () -> Void
 
+    private var titleSize: Double { store.groupTitleFontSize }
+    private var metaSize: Double { max(10, titleSize - 2) }
+
     var body: some View {
         Button(action: onToggle) {
             HStack(spacing: 6) {
                 Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: max(9, titleSize - 2), weight: .semibold))
                     .foregroundStyle(Color.secondary)
-                    .frame(width: 12, alignment: .center)
+                    .frame(width: max(12, titleSize - 1), alignment: .center)
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: titleSize, weight: .semibold))
                     .foregroundStyle(Color.secondary)
                     .textCase(nil)
                 if isCollapsed {
                     Text("\(feedCount)")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: metaSize, weight: .medium))
                         .foregroundStyle(Color.secondary.opacity(0.8))
                         .monospacedDigit()
                     if unreadCount > 0 {
                         Text("\(unreadCount)")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: max(10, titleSize - 3), weight: .bold))
                             .foregroundStyle(Color(.systemBackground))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -396,6 +400,7 @@ struct GroupManagerView: View {
                         HStack {
                             Image(systemName: "folder").foregroundStyle(.secondary)
                             Text(group.name)
+                                .font(.system(size: store.groupTitleFontSize, weight: .medium))
                             Spacer()
                             Text("\(store.feeds.filter { $0.groupID == group.id }.count)")
                                 .foregroundStyle(.secondary).monospacedDigit()

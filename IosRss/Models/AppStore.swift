@@ -18,6 +18,7 @@ class AppStore {
     var readerTitleFontSize: Double = 24
     var aiSummaryFontSize: Double = 22
     var feedTitleFontSize: Double = 17
+    var groupTitleFontSize: Double = 13
 
     var titleDisplayMode: TitleDisplayMode = .original
     var defaultTranslationEngine: TranslationEngine = .google
@@ -711,6 +712,7 @@ class AppStore {
         UserDefaults.standard.set(readerTitleFontSize, forKey: "readerTitleFontSize")
         UserDefaults.standard.set(aiSummaryFontSize, forKey: "aiSummaryFontSize")
         UserDefaults.standard.set(feedTitleFontSize, forKey: "feedTitleFontSize")
+        UserDefaults.standard.set(groupTitleFontSize, forKey: "groupTitleFontSize")
         UserDefaults.standard.set(titleDisplayMode.rawValue, forKey: "titleDisplayMode")
         UserDefaults.standard.set(defaultTranslationEngine.rawValue, forKey: "defaultTranslationEngine")
         UserDefaults.standard.set(showReadArticles, forKey: "showReadArticles")
@@ -747,6 +749,7 @@ class AppStore {
         readerTitleFontSize = UserDefaults.standard.object(forKey: "readerTitleFontSize") as? Double ?? 24
         aiSummaryFontSize = UserDefaults.standard.object(forKey: "aiSummaryFontSize") as? Double ?? 22
         feedTitleFontSize = UserDefaults.standard.object(forKey: "feedTitleFontSize") as? Double ?? 17
+        groupTitleFontSize = UserDefaults.standard.object(forKey: "groupTitleFontSize") as? Double ?? 13
         if let raw = UserDefaults.standard.string(forKey: "titleDisplayMode"),
            let mode = TitleDisplayMode(rawValue: raw) { titleDisplayMode = mode }
         if let raw = UserDefaults.standard.string(forKey: "defaultTranslationEngine"),

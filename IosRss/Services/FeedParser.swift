@@ -1,4 +1,5 @@
 import Foundation
+
 enum FeedParser {
     static func parse(data: Data, feedID: UUID, feedTitle: String) -> [Article] {
         guard let raw = String(data: data, encoding: .utf8) ??
@@ -9,26 +10,24 @@ enum FeedParser {
             return parseRSS(raw, feedID: feedID, feedTitle: feedTitle)
         }
     }
+
     static func extractFeedTitle(from data: Data) -> String? {
         guard let raw = String(data: data, encoding: .utf8) ??
               String(data: data, encoding: .isoLatin1) else { return nil }
         if raw.contains("<feed") && raw.contains("xmlns") {
-            if let feedBlock = firstTopLevelBlock(raw, tag: "feed") {
-                if let t = extractTag("title", from: feedBlock) {
-                    let cleaned = stripHTML(t).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !cleaned.isEmpty { return cleaned }
-                }
+            if let feedBlock = firstTopLevelBlock(raw, tag: "feed"),
+               let t = extractTag("title", from: feedBlock) {
+                let cleaned = stripHTML(t).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !cleaned.isEmpty { return cleaned }
             }
-        } else {
-            if let channel = firstTopLevelBlock(raw, tag: "channel") {
-                if let t = extractTag("title", from: channel) {
-                    let cleaned = stripHTML(t).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !cleaned.isEmpty { return cleaned }
-                }
-            }
+        } else if let channel = firstTopLevelBlock(raw, tag: "channel"),
+                  let t = extractTag("title", from: channel) {
+            let cleaned = stripHTML(t).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleaned.isEmpty { return cleaned }
         }
         return nil
     }
+
     static func extractFeedLink(from data: Data) -> String? {
         guard let raw = String(data: data, encoding: .utf8) ??
               String(data: data, encoding: .utf16) ??
@@ -38,14 +37,14 @@ enum FeedParser {
                 let href = extractLinkHref(from: feedBlock)
                 if !href.isEmpty { return href.trimmingCharacters(in: .whitespacesAndNewlines) }
             }
-        } else if let channel = firstTopLevelBlock(raw, tag: "channel") {
-            if let link = extractTag("link", from: channel) {
-                let cleaned = stripHTML(link).trimmingCharacters(in: .whitespacesAndNewlines)
-                if !cleaned.isEmpty { return cleaned }
-            }
+        } else if let channel = firstTopLevelBlock(raw, tag: "channel"),
+                  let link = extractTag("link", from: channel) {
+            let cleaned = stripHTML(link).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleaned.isEmpty { return cleaned }
         }
         return nil
     }
+
     static func extractFeedImage(from data: Data) -> String? {
         guard let raw = String(data: data, encoding: .utf8) ??
               String(data: data, encoding: .isoLatin1) else { return nil }
@@ -57,9 +56,8 @@ enum FeedParser {
         }()
         if let href = extractAttrHref(tagName: "itunes:image", from: headScope)
             ?? extractAttrHref(tagName: "media:thumbnail", from: headScope)
-            ?? extractAttrHref(tagName: "media:content", from: headScope) {
-            if looksLikeImageURL(href) { return href }
-        }
+            ?? extractAttrHref(tagName: "media:content", from: headScope),
+           looksLikeImageURL(href) { return href }
         if raw.contains("<feed") {
             let scope = firstTopLevelBlock(raw, tag: "feed") ?? raw
             for tag in ["icon", "logo"] {
@@ -71,10 +69,11 @@ enum FeedParser {
         }
         return nil
     }
+
     private static func extractRSSImageURL(from raw: String) -> String? {
         let patterns = [
-            #"<image\\b[^>]*>[\\s\\S]*?<url[^>]*>\\s*([^<]+?)\\s*</url>"#,
-            #"<image>\\s*<url>\\s*([^<]+?)\\s*</url>"#,
+            "<image\\b[^>]*>[\\s\\S]*?<url[^>]*>\\s*([^<]+?)\\s*</url>",
+            "<image>\\s*<url>\\s*([^<]+?)\\s*</url>",
         ]
         for pattern in patterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
@@ -91,6 +90,7 @@ enum FeedParser {
         }
         return nil
     }
+
     static func resolveFaviconURL(from data: Data, feedURL: String) -> String? {
         if let fromFeed = extractFeedImage(from: data), !fromFeed.isEmpty {
             return absoluteURL(fromFeed, relativeTo: feedURL)
@@ -98,14 +98,14 @@ enum FeedParser {
         let site = extractChannelOrFeedLink(from: data).flatMap { absoluteURL($0, relativeTo: feedURL) }
         return siteFaviconURL(for: site ?? feedURL)
     }
+
     static func extractChannelOrFeedLink(from data: Data) -> String? {
         guard let raw = String(data: data, encoding: .utf8) ??
                 String(data: data, encoding: .isoLatin1) else { return nil }
-        if let channel = firstTopLevelBlock(raw, tag: "channel") {
-            if let link = extractTag("link", from: channel) {
-                let u = stripHTML(link).trimmingCharacters(in: .whitespacesAndNewlines)
-                if looksLikeImageURL(u) || u.lowercased().hasPrefix("http") { return u }
-            }
+        if let channel = firstTopLevelBlock(raw, tag: "channel"),
+           let link = extractTag("link", from: channel) {
+            let u = stripHTML(link).trimmingCharacters(in: .whitespacesAndNewlines)
+            if looksLikeImageURL(u) || u.lowercased().hasPrefix("http") { return u }
         }
         if raw.contains("<feed") {
             let scope = firstTopLevelBlock(raw, tag: "feed") ?? raw
@@ -113,11 +113,11 @@ enum FeedParser {
         }
         return nil
     }
+
     private static func extractAtomHtmlLink(from scope: String) -> String? {
         let patterns = [
-            #"<link\\b[^>]*rel\\s*=\\s*[\"']alternate[\"'][^>]*href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*/?>"#,
-            #"<link\\b[^>]*href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*rel\\s*=\\s*[\"']alternate[\"'][^>]*/?>"#,
-            #"<link\\b[^>]*rel\\s*=\\s*[\"'](?:self)?[\"'][^>]*href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*/?>"#,
+            "<link\\b[^>]*rel\\s*=\\s*[\"']alternate[\"'][^>]*href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*/?>",
+            "<link\\b[^>]*href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*rel\\s*=\\s*[\"']alternate[\"'][^>]*/?>",
         ]
         for pattern in patterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
@@ -130,7 +130,9 @@ enum FeedParser {
         }
         return nil
     }
+
     static func siteFaviconURL(for feedURL: String) -> String? { faviconCandidates(for: feedURL).first }
+
     static func faviconCandidates(for feedOrSiteURL: String) -> [String] {
         guard let host = hostOf(feedOrSiteURL) else { return [] }
         let scheme: String = {
@@ -140,37 +142,28 @@ enum FeedParser {
         let root = "\(scheme)://\(host)"
         let bareHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
         var list: [String] = [
-            "\(root)/apple-touch-icon.png", "\(root)/apple-touch-icon-precomposed.png",
-            "\(root)/favicon.png", "\(root)/favicon.ico",
+            "\(root)/apple-touch-icon.png", "\(root)/favicon.png", "\(root)/favicon.ico",
             "https://www.google.com/s2/favicons?domain=\(bareHost)&sz=128",
-            "https://www.google.com/s2/favicons?domain=\(host)&sz=128",
             "https://icons.duckduckgo.com/ip3/\(bareHost).ico",
-            "https://icons.duckduckgo.com/ip3/\(host).ico",
         ]
-        if bareHost != host {
-            list.insert(contentsOf: [
-                "\(scheme)://\(bareHost)/apple-touch-icon.png",
-                "\(scheme)://\(bareHost)/favicon.png",
-                "\(scheme)://\(bareHost)/favicon.ico",
-            ], at: 4)
-        }
         var seen = Set<String>()
         return list.filter { seen.insert($0).inserted }
     }
+
     static func hostOf(_ urlString: String) -> String? {
         if let h = URL(string: urlString)?.host, !h.isEmpty { return h }
         var s = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         if let r = s.range(of: "://") { s = String(s[r.upperBound...]) }
         if let slash = s.firstIndex(of: "/") { s = String(s[..<slash]) }
-        if let at = s.firstIndex(of: "@") { s = String(s[s.index(after: at)...]) }
         return s.isEmpty ? nil : s
     }
+
     private static func looksLikeImageURL(_ s: String) -> Bool {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: ("&" + "amp;"), with: "&").lowercased()
-        guard t.hasPrefix("http://") || t.hasPrefix("https://") || t.hasPrefix("/") else { return false }
-        return true
+        return t.hasPrefix("http://") || t.hasPrefix("https://") || t.hasPrefix("/")
     }
+
     private static func absoluteURL(_ maybeRelative: String, relativeTo base: String) -> String {
         var t = maybeRelative.trimmingCharacters(in: .whitespacesAndNewlines)
         t = t.replacingOccurrences(of: ("&" + "amp;"), with: "&")
@@ -180,6 +173,7 @@ enum FeedParser {
         }
         return t
     }
+
     private static func extractAttrHref(tagName: String, from xml: String) -> String? {
         let escaped = NSRegularExpression.escapedPattern(for: tagName)
         let pattern = "<\(escaped)\\b[^>]*(?:href|url|src)\\s*=\\s*[\"']([^\"']+)[\"'][^>]*/?>"
@@ -188,12 +182,13 @@ enum FeedParser {
               let range = Range(match.range(at: 1), in: xml) else { return nil }
         return String(xml[range]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
     private static func firstTopLevelBlock(_ xml: String, tag: String) -> String? {
         extractBlocks(from: xml, tag: tag).first
     }
+
     private static func parseRSS(_ xml: String, feedID: UUID, feedTitle: String) -> [Article] {
-        let items = extractBlocks(from: xml, tag: "item")
-        return items.compactMap { block -> Article? in
+        extractBlocks(from: xml, tag: "item").compactMap { block -> Article? in
             let title = extractTag("title", from: block) ?? ""
             guard !title.isEmpty else { return nil }
             let link = extractTag("link", from: block) ?? extractTag("guid", from: block) ?? ""
@@ -206,9 +201,9 @@ enum FeedParser {
                 content: content.isEmpty ? description : content, publishedDate: parseDate(pubDate), isRead: false)
         }
     }
+
     private static func parseAtom(_ xml: String, feedID: UUID, feedTitle: String) -> [Article] {
-        let entries = extractBlocks(from: xml, tag: "entry")
-        return entries.compactMap { block -> Article? in
+        extractBlocks(from: xml, tag: "entry").compactMap { block -> Article? in
             let title = extractTag("title", from: block) ?? ""
             guard !title.isEmpty else { return nil }
             let link = extractLinkHref(from: block)
@@ -220,6 +215,7 @@ enum FeedParser {
                 publishedDate: parseDate(published), isRead: false)
         }
     }
+
     static func extractBlocks(from xml: String, tag: String) -> [String] {
         var blocks: [String] = []
         var search = xml
@@ -231,6 +227,7 @@ enum FeedParser {
         }
         return blocks
     }
+
     static func extractTag(_ tag: String, from xml: String) -> String? {
         let openPat = "<\(tag)[^>]*>"; let closePat = "</\(tag)>"
         guard let openRange = xml.range(of: openPat, options: [.regularExpression, .caseInsensitive]),
@@ -243,14 +240,17 @@ enum FeedParser {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
+
     private static func extractLinkHref(from xml: String) -> String {
-        let pattern = #"<link[^>]+href=[\"']([^\"']+)[\"'][^>]*/>"#
+        let pattern = "<link[^>]+href=[\"']([^\"']+)[\"'][^>]*/>"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
               let match = regex.firstMatch(in: xml, range: NSRange(xml.startIndex..., in: xml)),
               let range = Range(match.range(at: 1), in: xml) else { return "" }
         return String(xml[range])
     }
+
     static func stripHTML(_ html: String) -> String { HTMLUtils.stripTags(html) }
+
     static func parseDate(_ str: String) -> Date? {
         let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -262,6 +262,7 @@ enum FeedParser {
         return nil
     }
 }
+
 enum FeedNaming {
     static func resolveTitle(parsed: String?, url: String) -> String {
         if let t = parsed?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty { return t }
@@ -273,7 +274,6 @@ enum FeedNaming {
         if let range = s.range(of: "://") { s = String(s[range.upperBound...]) }
         if let slash = s.firstIndex(of: "/") { s = String(s[..<slash]) }
         if let q = s.firstIndex(of: "?") { s = String(s[..<q]) }
-        if let hash = s.firstIndex(of: "#") { s = String(s[..<hash]) }
         s = s.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         return stripWWW(s).isEmpty ? urlString : stripWWW(s)
     }
@@ -281,6 +281,7 @@ enum FeedNaming {
         host.lowercased().hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 }
+
 struct FeedDiscovery {
     static func discoverFeeds(from url: URL) async throws -> [DiscoveredFeed] {
         var finalURL = url
@@ -296,41 +297,70 @@ struct FeedDiscovery {
         return [DiscoveredFeed(title: FeedNaming.domainName(from: finalURL.absoluteString), url: finalURL.absoluteString)]
     }
 }
+
 struct DiscoveredFeed: Identifiable { let id = UUID(); let title: String; let url: String }
-struct OPMLItem { let title: String; let url: String }
+
+struct OPMLItem {
+    let title: String
+    let url: String
+    let groupName: String?
+    init(title: String, url: String, groupName: String? = nil) {
+        self.title = title
+        self.url = url
+        self.groupName = groupName
+    }
+}
+
 struct OPMLParser {
     let data: Data
+
     func parse() -> [OPMLItem] {
         guard var xml = decodeXMLString(data) else { return [] }
         if xml.hasPrefix("\u{FEFF}") { xml = String(xml.dropFirst()) }
         xml = xml.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         xml = HTMLUtils.decodeEntities(xml)
-        var items: [OPMLItem] = []; var seen = Set<String>()
+
+        var items: [OPMLItem] = []
+        var seen = Set<String>()
+        var currentGroup: String? = nil
+
         let outlinePattern = "<outline\\b[^>]*(?:/>|>)"
         if let regex = try? NSRegularExpression(pattern: outlinePattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) {
             for match in regex.matches(in: xml, range: NSRange(xml.startIndex..., in: xml)) {
                 guard let matchRange = Range(match.range, in: xml) else { continue }
                 let tag = String(xml[matchRange])
-                guard let rawURL = firstFeedURL(in: tag) else { continue }
-                appendItem(url: rawURL, title: titleFromOutline(tag), seen: &seen, into: &items)
+                if let rawURL = firstFeedURL(in: tag) {
+                    appendItem(url: rawURL, title: titleFromOutline(tag), group: currentGroup, seen: &seen, into: &items)
+                } else if let folder = titleFromOutline(tag), !folder.isEmpty {
+                    currentGroup = folder
+                }
+            }
+        }
+
+        if items.isEmpty {
+            for (url, nearby) in scanGlobalFeedURLs(in: xml) {
+                appendItem(url: url, title: titleNearURL(in: nearby), group: nil, seen: &seen, into: &items)
             }
         }
         if items.isEmpty {
-            for (url, nearby) in scanGlobalFeedURLs(in: xml) {
-                appendItem(url: url, title: titleNearURL(in: nearby), seen: &seen, into: &items)
-            }
+            items.append(contentsOf: parseLinkAlternateFeeds(from: xml, seen: &seen))
         }
-        if items.isEmpty { items.append(contentsOf: parseLinkAlternateFeeds(from: xml, seen: &seen)) }
         return items
     }
-    private func appendItem(url raw: String, title: String?, seen: inout Set<String>, into items: inout [OPMLItem]) {
+
+    private func appendItem(url raw: String, title: String?, group: String?, seen: inout Set<String>, into items: inout [OPMLItem]) {
         let url = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !url.isEmpty, looksLikeURL(url) else { return }
         let canonical = FeedURL.canonical(url)
         guard !canonical.isEmpty, !seen.contains(canonical) else { return }
         seen.insert(canonical)
-        items.append(OPMLItem(title: FeedNaming.resolveTitle(parsed: title, url: url), url: url))
+        items.append(OPMLItem(
+            title: FeedNaming.resolveTitle(parsed: title, url: url),
+            url: url,
+            groupName: group
+        ))
     }
+
     private func titleFromOutline(_ tag: String) -> String? {
         if let t = extractAttr("text", from: tag) ?? extractAttr("title", from: tag) {
             let cleaned = t.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -338,55 +368,58 @@ struct OPMLParser {
         }
         return nil
     }
+
     private func scanGlobalFeedURLs(in xml: String) -> [(url: String, context: String)] {
         var results: [(String, String)] = []
-        for key in ["xmlUrl", "xmlurl", "xmlURL", "XMLUrl", "xml_url"] {
+        for key in ["xmlUrl", "xmlurl", "xmlURL"] {
             let pattern = "\(NSRegularExpression.escapedPattern(for: key))\\s*=\\s*[\"']([^\"']+)[\"']"
             guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
             for match in regex.matches(in: xml, range: NSRange(xml.startIndex..., in: xml)) {
                 guard match.numberOfRanges > 1, let r = Range(match.range(at: 1), in: xml) else { continue }
                 let url = String(xml[r])
-                let full = match.range
-                let start = max(0, full.location - 80)
-                let end = min(xml.utf16.count, full.location + full.length + 80)
-                let ctxRange = NSRange(location: start, length: end - start)
-                let context = Range(ctxRange, in: xml).map { String(xml[$0]) } ?? ""
-                if looksLikeURL(url) { results.append((url, context)) }
+                if looksLikeURL(url) { results.append((url, url)) }
             }
         }
         return results
     }
+
     private func titleNearURL(in context: String) -> String? {
         extractAttr("text", from: context) ?? extractAttr("title", from: context)
     }
+
     private func decodeXMLString(_ data: Data) -> String? {
         var bytes = data
-        if bytes.count >= 3, bytes[0] == 0xEF, bytes[1] == 0xBB, bytes[2] == 0xBF { bytes = bytes.dropFirst(3) }
+        if bytes.count >= 3, bytes[0] == 0xEF, bytes[1] == 0xBB, bytes[2] == 0xBF {
+            bytes = bytes.dropFirst(3)
+        }
         if let s = String(data: bytes, encoding: .utf8), !s.isEmpty { return s }
-        if let s = String(data: data, encoding: .utf16), !s.isEmpty { return s }
         if let s = String(data: data, encoding: .isoLatin1), !s.isEmpty { return s }
-        let s = String(decoding: bytes, as: UTF8.self)
-        return s.isEmpty ? nil : s
+        return String(decoding: bytes, as: UTF8.self).isEmpty ? nil : String(decoding: bytes, as: UTF8.self)
     }
+
     private func firstFeedURL(in tag: String) -> String? {
-        for key in ["xmlUrl", "xmlurl", "xmlURL", "XMLUrl", "xml_url"] {
+        for key in ["xmlUrl", "xmlurl", "xmlURL"] {
             if let v = extractAttr(key, from: tag), looksLikeURL(v) { return v }
         }
         let type = (extractAttr("type", from: tag) ?? "").lowercased()
-        let isFeedType = type.contains("rss") || type.contains("atom") || type == "feed"
-        if let v = extractAttr("url", from: tag), looksLikeURL(v), isFeedType || looksLikeFeedURL(v) { return v }
-        if let v = extractAttr("htmlUrl", from: tag), looksLikeFeedURL(v) { return v }
+        if let v = extractAttr("url", from: tag), looksLikeURL(v),
+           type.contains("rss") || type.contains("atom") || type.contains("xml") || looksLikeFeedURL(v) {
+            return v
+        }
         return nil
     }
+
     private func looksLikeURL(_ s: String) -> Bool {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return t.hasPrefix("http://") || t.hasPrefix("https://") || t.hasPrefix("feed://")
     }
+
     private func looksLikeFeedURL(_ s: String) -> Bool {
         guard looksLikeURL(s) else { return false }
         let t = s.lowercased()
         return t.contains("rss") || t.contains("atom") || t.contains("feed") || t.contains(".xml")
     }
+
     private func extractAttr(_ attr: String, from tag: String) -> String? {
         let escaped = NSRegularExpression.escapedPattern(for: attr)
         let pattern = "\(escaped)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s/>]+))"
@@ -400,19 +433,20 @@ struct OPMLParser {
         }
         return nil
     }
+
     private func parseLinkAlternateFeeds(from xml: String, seen: inout Set<String>) -> [OPMLItem] {
         var items: [OPMLItem] = []
         let pattern = "<link\\b[^>]*>"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) else { return [] }
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) else {
+            return []
+        }
         for match in regex.matches(in: xml, range: NSRange(xml.startIndex..., in: xml)) {
             guard let r = Range(match.range, in: xml) else { continue }
             let tag = String(xml[r])
             let type = (extractAttr("type", from: tag) ?? "").lowercased()
-            let rel = (extractAttr("rel", from: tag) ?? "").lowercased()
-            let isFeed = type.contains("rss") || type.contains("atom") || type.contains("xml")
-            guard isFeed || (rel == "alternate" && (type.contains("rss") || type.contains("atom"))) else { continue }
+            guard type.contains("rss") || type.contains("atom") || type.contains("xml") else { continue }
             guard let href = extractAttr("href", from: tag), looksLikeURL(href) else { continue }
-            appendItem(url: href, title: extractAttr("title", from: tag), seen: &seen, into: &items)
+            appendItem(url: href, title: extractAttr("title", from: tag), group: nil, seen: &seen, into: &items)
         }
         return items
     }

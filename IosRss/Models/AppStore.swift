@@ -109,13 +109,18 @@ class AppStore {
     }
 
     func markAsRead(_ article: Article) {
+        var didChange = false
         for i in feeds.indices {
             if let j = feeds[i].articles.firstIndex(where: { $0.id == article.id }) {
                 if !feeds[i].articles[j].isRead {
                     feeds[i].articles[j].isRead = true
-                    feeds[i].unreadCount = max(0, feeds[i].unreadCount - 1)
+                    feeds[i].unreadCount = max(0, feeds[i].articles.filter { !$0.isRead }.count)
+                    didChange = true
                 }
                 rememberReadLink(feeds[i].articles[j].link)
+                // 触发 @Observable 对数组元素的感知（重新赋值整个 feed）
+                let refreshed = feeds[i]
+                feeds[i] = refreshed
             }
         }
         saveToStorage()
@@ -129,6 +134,8 @@ class AppStore {
                     feeds[i].unreadCount = feeds[i].articles.filter { !$0.isRead }.count
                 }
                 forgetReadLink(feeds[i].articles[j].link)
+                let refreshed = feeds[i]
+                feeds[i] = refreshed
             }
         }
         saveToStorage()
@@ -144,6 +151,8 @@ class AppStore {
         }
         if changed {
             feeds[i].unreadCount = 0
+            let refreshed = feeds[i]
+            feeds[i] = refreshed
             saveToStorage()
         }
     }
@@ -167,6 +176,35 @@ class AppStore {
             }
         }
         saveToStorage()
+    }
+
+    /// 批量写入列表翻译结果（标题/摘要），只在最后 save 一次，避免逐条落盘导致前几条 UI 不刷新。
+    func applyListTranslations(_ updates: [(id: UUID, title: String?, summary: String?)]) {
+        guard !updates.isEmpty else { return }
+        var byID: [UUID: (title: String?, summary: String?)] = [:]
+        byID.reserveCapacity(updates.count)
+        for u in updates {
+            var merged = byID[u.id] ?? (nil, nil)
+            if let t = u.title { merged.title = t }
+            if let s = u.summary { merged.summary = s }
+            byID[u.id] = merged
+        }
+        var changed = false
+        for i in feeds.indices {
+            for j in feeds[i].articles.indices {
+                let id = feeds[i].articles[j].id
+                guard let patch = byID[id] else { continue }
+                if let t = patch.title {
+                    feeds[i].articles[j].translatedTitle = t
+                    changed = true
+                }
+                if let s = patch.summary {
+                    feeds[i].articles[j].translatedSummary = s
+                    changed = true
+                }
+            }
+        }
+        if changed { saveToStorage() }
     }
 
     func addFeed(_ feed: RSSFeed) {
@@ -520,6 +558,7 @@ class AppStore {
             return SubscriptionImportResult(added: added, skipped: skipped, kind: "opml")
         }
 
+        // Single RSS/Atom XML: extract channel/feed link + title
         if let link = FeedParser.extractFeedLink(from: data), !link.isEmpty {
             let url = FeedURL.canonical(link)
             if feeds.contains(where: { FeedURL.canonical($0.url) == url }) {

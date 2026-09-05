@@ -24,47 +24,61 @@ struct FeedsListView: View {
                     emptyState
                 } else {
                     ForEach(Array(store.feedsByGroup.enumerated()), id: \.offset) { _, section in
+                        let groupID = section.group?.id
+                        let collapsed = store.isGroupCollapsed(groupID)
+                        let unreadSum = section.feeds.reduce(0) { $0 + $1.unreadCount }
                         Section {
-                            ForEach(section.feeds) { feed in
-                                NavigationLink(value: feed) {
-                                    FeedRow(feed: feed)
-                                }
-                                .id("\(feed.id.uuidString)-\(feed.unreadCount)-\(feed.groupID?.uuidString ?? "")")
-                                .swipeActions(edge: .trailing) {
-                                    Button(role: .destructive) {
-                                        if let idx = store.feeds.firstIndex(where: { $0.id == feed.id }) {
-                                            store.deleteFeed(at: IndexSet([idx]))
-                                        }
-                                    } label: { Label("删除", systemImage: "trash") }
-                                    Button { Task { await store.refreshFeed(feed.id) } } label: {
-                                        Label("刷新", systemImage: "arrow.clockwise")
-                                    }.tint(.blue)
-                                }
-                                .swipeActions(edge: .leading) {
-                                    Button { moveFeedTarget = feed } label: {
-                                        Label("分组", systemImage: "folder")
-                                    }.tint(.orange)
-                                }
-                                .contextMenu {
-                                    Button { moveFeedTarget = feed } label: {
-                                        Label("移动到分组…", systemImage: "folder")
+                            if !collapsed {
+                                ForEach(section.feeds) { feed in
+                                    NavigationLink(value: feed) {
+                                        FeedRow(feed: feed)
                                     }
-                                    if feed.groupID != nil {
-                                        Button { store.moveFeed(feed.id, toGroup: nil) } label: {
-                                            Label("移出分组", systemImage: "folder.badge.minus")
-                                        }
+                                    .id("\(feed.id.uuidString)-\(feed.unreadCount)-\(feed.groupID?.uuidString ?? "")")
+                                    .swipeActions(edge: .trailing) {
+                                        Button(role: .destructive) {
+                                            if let idx = store.feeds.firstIndex(where: { $0.id == feed.id }) {
+                                                store.deleteFeed(at: IndexSet([idx]))
+                                            }
+                                        } label: { Label("删除", systemImage: "trash") }
+                                        Button { Task { await store.refreshFeed(feed.id) } } label: {
+                                            Label("刷新", systemImage: "arrow.clockwise")
+                                        }.tint(.blue)
                                     }
-                                    ForEach(store.groups.sorted(by: { $0.sortOrder < $1.sortOrder })) { group in
-                                        if feed.groupID != group.id {
-                                            Button { store.moveFeed(feed.id, toGroup: group.id) } label: {
-                                                Label(group.name, systemImage: "folder.fill")
+                                    .swipeActions(edge: .leading) {
+                                        Button { moveFeedTarget = feed } label: {
+                                            Label("分组", systemImage: "folder")
+                                        }.tint(.orange)
+                                    }
+                                    .contextMenu {
+                                        Button { moveFeedTarget = feed } label: {
+                                            Label("移动到分组…", systemImage: "folder")
+                                        }
+                                        if feed.groupID != nil {
+                                            Button { store.moveFeed(feed.id, toGroup: nil) } label: {
+                                                Label("移出分组", systemImage: "folder.badge.minus")
+                                            }
+                                        }
+                                        ForEach(store.groups.sorted(by: { $0.sortOrder < $1.sortOrder })) { group in
+                                            if feed.groupID != group.id {
+                                                Button { store.moveFeed(feed.id, toGroup: group.id) } label: {
+                                                    Label(group.name, systemImage: "folder.fill")
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         } header: {
-                            Text(section.group?.name ?? "未分组")
+                            GroupSectionHeader(
+                                title: section.group?.name ?? "未分组",
+                                feedCount: section.feeds.count,
+                                unreadCount: unreadSum,
+                                isCollapsed: collapsed
+                            ) {
+                                withAnimation(.snappy(duration: 0.22)) {
+                                    store.toggleGroupCollapsed(groupID)
+                                }
+                            }
                         }
                     }
                 }
@@ -325,6 +339,49 @@ struct FeedsListView: View {
     }
 }
 
+struct GroupSectionHeader: View {
+    let title: String
+    let feedCount: Int
+    let unreadCount: Int
+    let isCollapsed: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: 6) {
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.secondary)
+                    .frame(width: 12, alignment: .center)
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.secondary)
+                    .textCase(nil)
+                if isCollapsed {
+                    Text("\(feedCount)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.secondary.opacity(0.8))
+                        .monospacedDigit()
+                    if unreadCount > 0 {
+                        Text("\(unreadCount)")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color(.systemBackground))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.primary, in: .capsule)
+                            .monospacedDigit()
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title)，\(isCollapsed ? "已折叠" : "已展开")")
+        .accessibilityHint("点按以\(isCollapsed ? "展开" : "折叠")")
+    }
+}
+
 struct GroupManagerView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -352,7 +409,7 @@ struct GroupManagerView: View {
                         }
                     }
                 } header: { Text("已有分组") }
-                footer: { Text("点分组可重命名；删除分组后源会回到「未分组」。左滑源或长按可移动分组。") }
+                footer: { Text("点分组可重命名；删除分组后源会回到「未分组」。点组标题可折叠/展开。") }
                 Section("新建分组") {
                     HStack {
                         TextField("分组名称", text: $newName)

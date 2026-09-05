@@ -99,9 +99,13 @@ struct FeedsListView: View {
         }
     }
 
-    private func handleImport(_ result: Result<URL, Error>) {
+    private func handleImport(_ result: Result<[URL], Error>) {
         switch result {
-        case .success(let url):
+        case .success(let urls):
+            guard let url = urls.first else {
+                importMessage = "未选择文件"
+                return
+            }
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
             var data: Data?

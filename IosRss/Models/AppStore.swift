@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import UniformTypeIdentifiers
 
 @Observable
 @MainActor
@@ -509,7 +508,6 @@ class AppStore {
             .replacingOccurrences(of: ">", with: "\u{0026}gt;")
     }
 
-    /// 标准 OPML 2.0：分组为父 outline，源为 type=rss 且带 xmlUrl
     func exportOPML() -> String {
         var lines: [String] = []
         lines.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
@@ -519,7 +517,6 @@ class AppStore {
         lines.append("    <dateCreated>\(opmlDateString(Date()))</dateCreated>")
         lines.append("  </head>")
         lines.append("  <body>")
-
         let sortedGroups = groups.sorted {
             $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name)
         }
@@ -533,11 +530,9 @@ class AppStore {
             }
             lines.append("    </outline>")
         }
-
         for feed in feeds where feed.groupID == nil || !groups.contains(where: { $0.id == feed.groupID }) {
             lines.append(opmlFeedOutlineLine(feed, indent: "    "))
         }
-
         lines.append("  </body>")
         lines.append("</opml>")
         return lines.joined(separator: "\n") + "\n"
@@ -584,7 +579,6 @@ class AppStore {
         return lines.joined(separator: "\n")
     }
 
-    /// 写入临时文件；.opml 标记为 XML，文件名为 *.opml
     func writeExportFile(content: String, filename: String) -> URL? {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
         do {
@@ -593,14 +587,6 @@ class AppStore {
             }
             guard let data = content.data(using: .utf8) else { return nil }
             try data.write(to: url, options: .atomic)
-            var values = URLResourceValues()
-            let ext = url.pathExtension.lowercased()
-            if ext == "opml" || ext == "xml" {
-                values.contentType = .xml
-            } else if ext == "txt" {
-                values.contentType = .plainText
-            }
-            try? url.setResourceValues(values)
             return url
         } catch {
             return nil

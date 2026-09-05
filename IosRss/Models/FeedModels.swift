@@ -3,14 +3,26 @@ import Foundation
 // MARK: - App Version
 
 enum AppVersion {
+    /// 营销版本，如 1.2（MARKETING_VERSION）
     static var marketing: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.2"
     }
+    /// 工程构建号，如 4（CURRENT_PROJECT_VERSION）
     static var build: String {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "4"
     }
+    /// GitHub Actions run_number（CI 注入 IosRssGitHubBuild；本地构建无此键）
+    static var githubBuild: String? {
+        let v = Bundle.main.infoDictionary?["IosRssGitHubBuild"] as? String
+        guard let v, !v.isEmpty else { return nil }
+        return v
+    }
+    /// 展示：CI 为 v1.2-4-build43；本地为 v1.2-4
     static var display: String {
-        "\(marketing) (\(build))"
+        if let g = githubBuild {
+            return "v\(marketing)-\(build)-build\(g)"
+        }
+        return "v\(marketing)-\(build)"
     }
 }
 
@@ -44,7 +56,6 @@ struct Article: Identifiable, Codable, Hashable {
     var translatedSummary: String?
     var translatedContent: String?
     var aiSummary: String?
-    /// 是否已从原文页抓取过全文
     var hasFullContent: Bool = false
 
     enum CodingKeys: String, CodingKey {
@@ -105,7 +116,6 @@ struct Article: Identifiable, Codable, Hashable {
         return "\(Int(diff / 86400))天前"
     }
 
-    /// RSS 摘要是否偏短，适合触发全文抓取
     var needsFullContentFetch: Bool {
         if hasFullContent { return false }
         let plain = HTMLUtils.stripTags(content)
@@ -123,18 +133,15 @@ enum TranslationEngine: String, CaseIterable, Codable {
     case google = "Google 翻译"
     case microsoft = "Microsoft 翻译"
     case deepl = "DeepL"
-    case ai = "AI 翻译"   // Gemini / OpenAI / Anthropic 等统一走 AI Provider
+    case ai = "AI 翻译"
 }
-
-// MARK: - AI Provider
 
 struct AIProvider: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
     var baseURL: String
     var model: String
-    /// 特殊标识：gemini 走 Google Generative Language API，其余走 OpenAI 兼容接口
-    var kind: String = "openai" // "openai" | "gemini"
+    var kind: String = "openai"
     var isDefaultSummary: Bool = false
     var isDefaultTranslation: Bool = false
 
@@ -179,8 +186,6 @@ struct AIProvider: Identifiable, Codable, Hashable {
     )
 }
 
-// MARK: - Keychain Helper (UserDefaults-backed, base64-encoded)
-
 enum Keychain {
     private static let prefix = "feed_kc_"
 
@@ -200,8 +205,6 @@ enum Keychain {
     }
 }
 
-// MARK: - Collection helpers
-
 extension Array {
     func chunked(into size: Int) -> [[Element]] {
         guard size > 0, !isEmpty else { return isEmpty ? [] : [self] }
@@ -217,12 +220,10 @@ extension Array {
     }
 }
 
-// MARK: - Import result
-
 struct SubscriptionImportResult {
     var added: Int = 0
     var skipped: Int = 0
-    var kind: String = "" // "opml" | "rss" | "empty"
+    var kind: String = ""
 }
 
 enum FeedURL {

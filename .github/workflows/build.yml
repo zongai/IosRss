@@ -20,19 +20,21 @@ jobs:
       - name: Read app version
         id: ver
         run: |
-          # 精确匹配 KEY = VALUE;（避免整行贪婪 sed 吃到 name = Debug）
           MARKETING=$(grep -oE 'MARKETING_VERSION = [^;]+' IosRss.xcodeproj/project.pbxproj | head -1 | sed 's/.*= *//;s/"//g' | tr -d '[:space:]')
           BUILD=$(grep -oE 'CURRENT_PROJECT_VERSION = [^;]+' IosRss.xcodeproj/project.pbxproj | head -1 | sed 's/.*= *//;s/"//g' | tr -d '[:space:]')
           if [ -z "$MARKETING" ]; then MARKETING="0.0"; fi
           if [ -z "$BUILD" ]; then BUILD="0"; fi
-          # 只保留安全字符，防止路径注入
           MARKETING=$(echo "$MARKETING" | tr -cd 'A-Za-z0-9._-')
           BUILD=$(echo "$BUILD" | tr -cd 'A-Za-z0-9._-')
-          IPA_NAME="IosRss-${MARKETING}-${BUILD}.ipa"
+          RUN="${{ github.run_number }}"
+          IPA_NAME="IosRss-${MARKETING}-${BUILD}-build${RUN}.ipa"
+          DISPLAY="v${MARKETING}-${BUILD}-build${RUN}"
           echo "version=${MARKETING}" >> "$GITHUB_OUTPUT"
           echo "build=${BUILD}" >> "$GITHUB_OUTPUT"
+          echo "run=${RUN}" >> "$GITHUB_OUTPUT"
           echo "ipa_name=${IPA_NAME}" >> "$GITHUB_OUTPUT"
-          echo "Resolved version: ${MARKETING} (${BUILD}) → ${IPA_NAME}"
+          echo "display=${DISPLAY}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${DISPLAY} → ${IPA_NAME}"
 
       - name: Build app (no signing)
         run: |
@@ -45,6 +47,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            INFOPLIST_KEY_IosRssGitHubBuild=${{ github.run_number }} \
             clean build
 
       - name: Package IPA
@@ -57,13 +60,13 @@ jobs:
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v6
         with:
-          name: IosRss-ipa-${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.build }}
+          name: IosRss-ipa-${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.build }}-build${{ steps.ver.outputs.run }}
           path: ${{ steps.ver.outputs.ipa_name }}
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
           files: ${{ steps.ver.outputs.ipa_name }}
-          tag_name: v${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.build }}-build${{ github.run_number }}
-          name: IosRss ${{ steps.ver.outputs.version }} (${{ steps.ver.outputs.build }}) #${{ github.run_number }}
+          tag_name: ${{ steps.ver.outputs.display }}
+          name: IosRss ${{ steps.ver.outputs.display }}
           generate_release_notes: true

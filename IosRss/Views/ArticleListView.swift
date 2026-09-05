@@ -98,7 +98,7 @@ struct ArticleListView: View {
                             }
                         }
                     } else {
-                        Image(systemName: "globe")
+                        Image(systemName: "translate")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(showAllTranslations ? Color(.systemBackground) : Color.primary)
                             .frame(width: 28, height: 28)

@@ -11,12 +11,14 @@ struct FeedsListView: View {
     @State private var opmlExportText = ""
     @State private var importMessage: String?
 
-    /// 仅允许 OPML / XML / RSS / Atom，避免文件选择器里出现无关类型
+    /// OPML/XML 在不同 App 导出时 UTI 不一致（常为 public.data / public.xml），尽量放宽以便可选中
     private var importTypes: [UTType] {
-        var types: [UTType] = [.xml]
-        if let opml = UTType(filenameExtension: "opml") { types.append(opml) }
-        if let rss = UTType(filenameExtension: "rss") { types.append(rss) }
-        if let atom = UTType(filenameExtension: "atom") { types.append(atom) }
+        var types: [UTType] = [.xml, .data, .plainText, .text]
+        for ext in ["opml", "rss", "atom", "xml", "txt"] {
+            if let t = UTType(filenameExtension: ext) { types.append(t) }
+        }
+        if let t = UTType("public.xml") { types.append(t) }
+        if let t = UTType("public.data") { types.append(t) }
         return types
     }
 
@@ -30,7 +32,6 @@ struct FeedsListView: View {
                         NavigationLink(value: feed) {
                             FeedRow(feed: feed)
                         }
-                        // 未读数变化时强制刷新行（RSSFeed == 只比 id）
                         .id("\(feed.id.uuidString)-\(feed.unreadCount)")
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
@@ -77,7 +78,11 @@ struct FeedsListView: View {
             Button("导出 OPML") { opmlExportText = store.exportOPML(); showOPMLExportSheet = true }
             Button("取消", role: .cancel) {}
         }
-        .fileImporter(isPresented: $showOPMLImport, allowedContentTypes: importTypes) { result in
+        .fileImporter(
+            isPresented: $showOPMLImport,
+            allowedContentTypes: importTypes,
+            allowsMultipleSelection: false
+        ) { result in
             handleImport(result)
         }
         .sheet(isPresented: $showOPMLExportSheet) { OPMLExportView(text: opmlExportText) }
@@ -105,13 +110,22 @@ struct FeedsListView: View {
             if data == nil {
                 data = try? Data(contentsOf: url)
             }
-            guard let data else {
-                importMessage = "无法读取该文件"
+            if data == nil, let copied = try? Data(contentsOf: URL(fileURLWithPath: url.path)) {
+                data = copied
+            }
+            guard let data, !data.isEmpty else {
+                importMessage = "无法读取该文件（\(url.lastPathComponent)）"
                 return
             }
             let imported = store.importSubscriptions(data: data)
             if imported.added == 0 && imported.skipped == 0 {
-                importMessage = "未能识别为 OPML、RSS 或 Atom，请检查文件内容"
+                let head = String(data: data.prefix(200), encoding: .utf8) ?? ""
+                if head.localizedCaseInsensitiveContains("opml")
+                    || head.localizedCaseInsensitiveContains("outline") {
+                    importMessage = "已识别为 OPML，但未找到有效的 xmlUrl 订阅地址"
+                } else {
+                    importMessage = "未能识别为 OPML、RSS 或 Atom（\(url.lastPathComponent)）"
+                }
             } else {
                 let kind = imported.kind == "rss" ? "RSS/Atom" : "OPML"
                 var text = "已从 \(kind) 导入 \(imported.added) 个订阅"
@@ -145,7 +159,6 @@ struct FeedRow: View {
     @Environment(AppStore.self) private var store
     let feed: RSSFeed
 
-    /// 始终从 store 取最新数据，避免未读数在返回列表后仍显示旧快照
     private var live: RSSFeed {
         store.feeds.first(where: { $0.id == feed.id }) ?? feed
     }
@@ -168,7 +181,6 @@ struct FeedRow: View {
             }
         }
         .padding(.vertical, 10)
-        // 显式依赖未读数，确保 @Observable 变更后本行必刷新
         .id("\(live.id.uuidString)-\(live.unreadCount)-\(live.faviconURL ?? "")")
     }
 }
@@ -179,10 +191,8 @@ struct FeedIcon: View {
 
     @State private var image: UIImage?
     @State private var loading = false
-    /// 已确认无图标：固定字母头像，不再请求网络
     @State private var useLetter = false
 
-    /// 按 feed.id 缓存，与候选 URL 解耦，避免反复探测
     private var cacheKey: String { "feed-icon:\(feed.id.uuidString)" }
 
     var body: some View {
@@ -200,7 +210,6 @@ struct FeedIcon: View {
                 letterFallback
             }
         }
-        // 只跟 feed.id 绑定：成功或失败后不再因 faviconURL 变化重复拉取
         .task(id: feed.id) {
             await loadIcon()
         }
@@ -220,13 +229,11 @@ struct FeedIcon: View {
     private func loadIcon() async {
         if image != nil || useLetter { return }
 
-        // 1) 内存缓存（按 feed）
         if let cached = FaviconCache.shared.image(for: cacheKey) {
             image = cached
             return
         }
 
-        // 2) 磁盘：有图用图；空 Data 表示永久字母
         if let data = OfflineCache.loadImage(url: cacheKey) {
             if data.isEmpty {
                 useLetter = true
@@ -239,7 +246,6 @@ struct FeedIcon: View {
             }
         }
 
-        // 3) 网络：只试一次（首选 faviconURL + 至多 1 个站点候选），失败则固化字母
         loading = true
         defer { loading = false }
 
@@ -287,7 +293,6 @@ struct FeedIcon: View {
             }
         }
 
-        // 全部失败：磁盘写入空标记，之后只显示首字符
         OfflineCache.saveImage(url: cacheKey, data: Data())
         useLetter = true
     }
@@ -301,7 +306,6 @@ struct FeedIcon: View {
     }
 }
 
-/// 源图标内存缓存（配合 OfflineCache 磁盘持久化）
 final class FaviconCache {
     static let shared = FaviconCache()
     private let cache = NSCache<NSString, UIImage>()

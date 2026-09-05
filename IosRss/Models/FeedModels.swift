@@ -3,21 +3,17 @@ import Foundation
 // MARK: - App Version
 
 enum AppVersion {
-    /// 营销版本，如 1.2（MARKETING_VERSION）
     static var marketing: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.2"
     }
-    /// 工程构建号，如 4（CURRENT_PROJECT_VERSION）
     static var build: String {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "4"
     }
-    /// GitHub Actions run_number（CI 注入 IosRssGitHubBuild；本地构建无此键）
     static var githubBuild: String? {
         let v = Bundle.main.infoDictionary?["IosRssGitHubBuild"] as? String
         guard let v, !v.isEmpty else { return nil }
         return v
     }
-    /// 展示：CI 为 v1.2-4-build43；本地为 v1.2-4
     static var display: String {
         if let g = githubBuild {
             return "v\(marketing)-\(build)-build\(g)"
@@ -28,6 +24,16 @@ enum AppVersion {
 
 // MARK: - Core Models
 
+/// 订阅源分组（类似文件夹）
+struct FeedGroup: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var name: String
+    var sortOrder: Int = 0
+
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    static func == (lhs: FeedGroup, rhs: FeedGroup) -> Bool { lhs.id == rhs.id }
+}
+
 struct RSSFeed: Identifiable, Codable, Hashable {
     var id = UUID()
     var title: String
@@ -36,6 +42,37 @@ struct RSSFeed: Identifiable, Codable, Hashable {
     var unreadCount: Int = 0
     var articles: [Article] = []
     var lastFetched: Date?
+    /// 所属分组；nil = 未分组
+    var groupID: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, url, faviconURL, unreadCount, articles, lastFetched, groupID
+    }
+
+    init(id: UUID = UUID(), title: String, url: String, faviconURL: String? = nil,
+         unreadCount: Int = 0, articles: [Article] = [], lastFetched: Date? = nil,
+         groupID: UUID? = nil) {
+        self.id = id
+        self.title = title
+        self.url = url
+        self.faviconURL = faviconURL
+        self.unreadCount = unreadCount
+        self.articles = articles
+        self.lastFetched = lastFetched
+        self.groupID = groupID
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try c.decode(String.self, forKey: .title)
+        url = try c.decode(String.self, forKey: .url)
+        faviconURL = try c.decodeIfPresent(String.self, forKey: .faviconURL)
+        unreadCount = try c.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0
+        articles = try c.decodeIfPresent([Article].self, forKey: .articles) ?? []
+        lastFetched = try c.decodeIfPresent(Date.self, forKey: .lastFetched)
+        groupID = try c.decodeIfPresent(UUID.self, forKey: .groupID)
+    }
 
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
     static func == (lhs: RSSFeed, rhs: RSSFeed) -> Bool { lhs.id == rhs.id }

@@ -11,30 +11,6 @@ struct FeedsListView: View {
     @State private var opmlExportText = ""
     @State private var importMessage: String?
 
-    /// 可选类型：按扩展名声明 + xml/data。
-    /// 说明：很多 OPML 在系统里 UTI 是 public.data（不是 public.xml），若不包含 .data 会发灰无法点选。
-    /// 选中后仍按扩展名/内容严格校验，拒绝无关文件。
-    private var importTypes: [UTType] {
-        var types: [UTType] = [.xml, .data]
-        for ext in ["opml", "xml", "rss", "atom"] {
-            if let t = UTType(tag: ext, tagClass: .filenameExtension, conformingTo: .data) {
-                types.append(t)
-            }
-            if let t = UTType(tag: ext, tagClass: .filenameExtension, conformingTo: .xml) {
-                types.append(t)
-            }
-            if let t = UTType(filenameExtension: ext) {
-                types.append(t)
-            }
-        }
-        if let t = UTType(mimeType: "application/xml") { types.append(t) }
-        if let t = UTType(mimeType: "text/xml") { types.append(t) }
-        if let t = UTType(mimeType: "application/rss+xml") { types.append(t) }
-        if let t = UTType(mimeType: "application/atom+xml") { types.append(t) }
-        var seen = Set<String>()
-        return types.filter { seen.insert($0.identifier).inserted }
-    }
-
     private static let allowedImportExtensions: Set<String> = ["opml", "xml", "rss", "atom"]
 
     var body: some View {
@@ -93,12 +69,15 @@ struct FeedsListView: View {
             Button("导出 OPML") { opmlExportText = store.exportOPML(); showOPMLExportSheet = true }
             Button("取消", role: .cancel) {}
         }
-        .fileImporter(
-            isPresented: $showOPMLImport,
-            allowedContentTypes: importTypes,
-            allowsMultipleSelection: false
-        ) { result in
-            handleImport(result)
+        // 使用 UIDocumentPicker（asCopy + public.item），避免 SwiftUI fileImporter 发灰无法点选
+        .sheet(isPresented: $showOPMLImport) {
+            OPMLDocumentPicker { url in
+                showOPMLImport = false
+                if let url {
+                    importFile(from: url)
+                }
+            }
+            .ignoresSafeArea()
         }
         .sheet(isPresented: $showOPMLExportSheet) { OPMLExportView(text: opmlExportText) }
         .alert("导入结果", isPresented: Binding(
@@ -111,62 +90,62 @@ struct FeedsListView: View {
         }
     }
 
-    private func handleImport(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            guard let url = urls.first else {
-                importMessage = "未选择文件"
+    private func importFile(from url: URL) {
+        let ext = url.pathExtension.lowercased()
+        if !ext.isEmpty, !Self.allowedImportExtensions.contains(ext) {
+            importMessage = "仅支持 .opml / .xml / .rss / .atom 文件（当前：.\(ext)）"
+            return
+        }
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        var data: Data?
+        let coordinator = NSFileCoordinator()
+        var coordError: NSError?
+        coordinator.coordinate(readingItemAt: url, error: &coordError) { coordinated in
+            data = try? Data(contentsOf: coordinated)
+        }
+        if data == nil {
+            data = try? Data(contentsOf: url)
+        }
+        if data == nil, let copied = try? Data(contentsOf: URL(fileURLWithPath: url.path)) {
+            data = copied
+        }
+        guard let data, !data.isEmpty else {
+            importMessage = "无法读取该文件（\(url.lastPathComponent)）"
+            return
+        }
+        if ext.isEmpty {
+            let head = String(data: data.prefix(200), encoding: .utf8)?.lowercased() ?? ""
+            let looksOK = head.contains("opml") || head.contains("outline")
+                || head.contains("<rss") || head.contains("<feed")
+            if !looksOK {
+                importMessage = "仅支持 OPML / XML / RSS / Atom 订阅文件"
                 return
             }
-            let ext = url.pathExtension.lowercased()
-            if !Self.allowedImportExtensions.contains(ext) {
-                importMessage = "仅支持 .opml / .xml / .rss / .atom 文件（当前：.\(ext.isEmpty ? "无扩展名" : ext)）"
-                return
-            }
-            let accessed = url.startAccessingSecurityScopedResource()
-            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            var data: Data?
-            let coordinator = NSFileCoordinator()
-            var coordError: NSError?
-            coordinator.coordinate(readingItemAt: url, error: &coordError) { coordinated in
-                data = try? Data(contentsOf: coordinated)
-            }
-            if data == nil {
-                data = try? Data(contentsOf: url)
-            }
-            if data == nil, let copied = try? Data(contentsOf: URL(fileURLWithPath: url.path)) {
-                data = copied
-            }
-            guard let data, !data.isEmpty else {
-                importMessage = "无法读取该文件（\(url.lastPathComponent)）"
-                return
-            }
-            let imported = store.importSubscriptions(data: data)
-            if imported.added == 0 && imported.skipped == 0 {
-                let head = String(data: data.prefix(400), encoding: .utf8) ?? ""
-                if head.localizedCaseInsensitiveContains("opml")
-                    || head.localizedCaseInsensitiveContains("outline")
-                    || head.localizedCaseInsensitiveContains("xmlUrl") {
-                    importMessage = "已识别为 OPML，但未找到有效的 xmlUrl 订阅地址"
-                } else if head.localizedCaseInsensitiveContains("<rss")
-                            || head.localizedCaseInsensitiveContains("<feed") {
-                    importMessage = "已识别为 RSS/Atom，但未找到可用的源地址"
-                } else {
-                    importMessage = "未能识别为 OPML、RSS 或 Atom（\(url.lastPathComponent)）"
-                }
+        }
+        let imported = store.importSubscriptions(data: data)
+        if imported.added == 0 && imported.skipped == 0 {
+            let head = String(data: data.prefix(400), encoding: .utf8) ?? ""
+            if head.localizedCaseInsensitiveContains("opml")
+                || head.localizedCaseInsensitiveContains("outline")
+                || head.localizedCaseInsensitiveContains("xmlUrl") {
+                importMessage = "已识别为 OPML，但未找到有效的 xmlUrl 订阅地址"
+            } else if head.localizedCaseInsensitiveContains("<rss")
+                        || head.localizedCaseInsensitiveContains("<feed") {
+                importMessage = "已识别为 RSS/Atom，但未找到可用的源地址"
             } else {
-                let kind = imported.kind == "rss" ? "RSS/Atom" : "OPML"
-                var text = "已从 \(kind) 导入 \(imported.added) 个订阅"
-                if imported.skipped > 0 {
-                    text += "，跳过 \(imported.skipped) 个已存在的源"
-                }
-                importMessage = text
-                if imported.added > 0 {
-                    Task { await store.refreshAll() }
-                }
+                importMessage = "未能识别为 OPML、RSS 或 Atom（\(url.lastPathComponent)）"
             }
-        case .failure(let error):
-            importMessage = error.localizedDescription
+        } else {
+            let kind = imported.kind == "rss" ? "RSS/Atom" : "OPML"
+            var text = "已从 \(kind) 导入 \(imported.added) 个订阅"
+            if imported.skipped > 0 {
+                text += "，跳过 \(imported.skipped) 个已存在的源"
+            }
+            importMessage = text
+            if imported.added > 0 {
+                Task { await store.refreshAll() }
+            }
         }
     }
 
@@ -347,6 +326,42 @@ final class FaviconCache {
     func store(_ image: UIImage, for key: String) {
         let cost = Int(image.size.width * image.size.height * 4)
         cache.setObject(image, forKey: key as NSString, cost: cost)
+    }
+}
+
+/// UIKit 文档选择器：asCopy + public.item，保证任意位置的 .opml/.xml 都可点选
+struct OPMLDocumentPicker: UIViewControllerRepresentable {
+    var onPick: (URL?) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick)
+    }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        // public.item 覆盖几乎所有文件，避免因 UTI 不匹配发灰
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [.item],
+            asCopy: true
+        )
+        picker.delegate = context.coordinator
+        picker.allowsMultipleSelection = false
+        picker.shouldShowFileExtensions = true
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL?) -> Void
+        init(onPick: @escaping (URL?) -> Void) { self.onPick = onPick }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onPick(urls.first)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onPick(nil)
+        }
     }
 }
 

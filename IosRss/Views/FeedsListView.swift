@@ -88,8 +88,8 @@ struct FeedsListView: View {
         .sheet(isPresented: $showGroupManager) { GroupManagerView() }
         .confirmationDialog("导入/导出", isPresented: $showOPMLMenu) {
             Button("导入 OPML / XML / TXT") { showOPMLImport = true }
-            Button("导出 OPML（选保存位置）") { prepareExport(kind: .opml) }
-            Button("导出 TXT（选保存位置）") { prepareExport(kind: .txt) }
+            Button("导出为 OPML") { prepareExport(kind: .opml) }
+            Button("导出为 TXT") { prepareExport(kind: .txt) }
             Button("取消", role: .cancel) {}
         }
         .sheet(isPresented: $showOPMLImport) {
@@ -150,8 +150,7 @@ struct FeedsListView: View {
         }
         .alert("导入结果", isPresented: Binding(
             get: { importMessage != nil },
-            set: { if !$0 { importMessage = nil }
-            }
+            set: { if !$0 { importMessage = nil } }
         )) {
             Button("好", role: .cancel) { importMessage = nil }
         } message: {
@@ -172,8 +171,13 @@ struct FeedsListView: View {
             content = store.exportTXT()
             filename = "IosRss-subscriptions.txt"
         }
-        guard let url = store.writeExportFile(content: content, filename: filename) else {
+        guard !content.isEmpty,
+              let url = store.writeExportFile(content: content, filename: filename) else {
             importMessage = "无法创建导出文件"
+            return
+        }
+        if kind == .opml, url.pathExtension.lowercased() != "opml" {
+            importMessage = "导出文件扩展名异常，请重试"
             return
         }
         exportFileURL = url
@@ -202,12 +206,10 @@ struct FeedsListView: View {
             importMessage = "无法读取该文件（\(url.lastPathComponent)）"
             return
         }
-
         if ext == "txt" {
             importMessage = importTXT(data: data)
             return
         }
-
         if ext.isEmpty {
             let head = String(data: data.prefix(200), encoding: .utf8)?.lowercased() ?? ""
             let looksOK = head.contains("opml") || head.contains("outline")
@@ -234,13 +236,9 @@ struct FeedsListView: View {
         } else {
             let kind = imported.kind == "rss" ? "RSS/Atom" : "OPML"
             var text = "已从 \(kind) 导入 \(imported.added) 个订阅"
-            if imported.skipped > 0 {
-                text += "，跳过 \(imported.skipped) 个已存在的源"
-            }
+            if imported.skipped > 0 { text += "，跳过 \(imported.skipped) 个已存在的源" }
             importMessage = text
-            if imported.added > 0 {
-                Task { await store.refreshAll() }
-            }
+            if imported.added > 0 { Task { await store.refreshAll() } }
         }
     }
 
@@ -280,8 +278,7 @@ struct FeedsListView: View {
                 }
                 let title = FeedNaming.resolveTitle(parsed: pendingTitle, url: url)
                 store.addFeed(RSSFeed(
-                    title: title,
-                    url: url,
+                    title: title, url: url,
                     faviconURL: FeedParser.siteFaviconURL(for: url),
                     groupID: groupID
                 ))
@@ -291,14 +288,10 @@ struct FeedsListView: View {
                 pendingTitle = line
             }
         }
-        if added == 0 && skipped == 0 {
-            return "TXT 中未找到有效的订阅地址"
-        }
+        if added == 0 && skipped == 0 { return "TXT 中未找到有效的订阅地址" }
         var msg = "已从 TXT 导入 \(added) 个订阅"
         if skipped > 0 { msg += "，跳过 \(skipped) 个已存在的源" }
-        if added > 0 {
-            Task { await store.refreshAll() }
-        }
+        if added > 0 { Task { await store.refreshAll() } }
         return msg
     }
 
@@ -321,67 +314,45 @@ struct GroupManagerView: View {
     @State private var newName = ""
     @State private var renameTarget: FeedGroup?
     @State private var renameText = ""
-
     var body: some View {
         NavigationStack {
             List {
                 Section {
                     ForEach(store.groups.sorted(by: { $0.sortOrder < $1.sortOrder })) { group in
                         HStack {
-                            Image(systemName: "folder")
-                                .foregroundStyle(.secondary)
+                            Image(systemName: "folder").foregroundStyle(.secondary)
                             Text(group.name)
                             Spacer()
                             Text("\(store.feeds.filter { $0.groupID == group.id }.count)")
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
+                                .foregroundStyle(.secondary).monospacedDigit()
                         }
                         .contentShape(Rectangle())
-                        .onTapGesture {
-                            renameTarget = group
-                            renameText = group.name
-                        }
+                        .onTapGesture { renameTarget = group; renameText = group.name }
                         .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) {
-                                store.deleteGroup(group.id)
-                            } label: {
+                            Button(role: .destructive) { store.deleteGroup(group.id) } label: {
                                 Label("删除", systemImage: "trash")
                             }
                         }
                     }
-                } header: {
-                    Text("已有分组")
-                } footer: {
-                    Text("点分组可重命名；删除分组后源会回到「未分组」。左滑源可移动分组。")
-                }
-
+                } header: { Text("已有分组") }
+                footer: { Text("点分组可重命名；删除分组后源会回到「未分组」。左滑源可移动分组。") }
                 Section("新建分组") {
                     HStack {
                         TextField("分组名称", text: $newName)
-                        Button("添加") {
-                            store.addGroup(name: newName)
-                            newName = ""
-                        }
-                        .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button("添加") { store.addGroup(name: newName); newName = "" }
+                            .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
             }
-            .navigationTitle("管理分组")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") { dismiss() }
-                }
-            }
+            .navigationTitle("管理分组").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } } }
             .alert("重命名分组", isPresented: Binding(
                 get: { renameTarget != nil },
                 set: { if !$0 { renameTarget = nil } }
             )) {
                 TextField("名称", text: $renameText)
                 Button("保存") {
-                    if let g = renameTarget {
-                        store.renameGroup(g.id, to: renameText)
-                    }
+                    if let g = renameTarget { store.renameGroup(g.id, to: renameText) }
                     renameTarget = nil
                 }
                 Button("取消", role: .cancel) { renameTarget = nil }
@@ -393,23 +364,18 @@ struct GroupManagerView: View {
 struct FeedRow: View {
     @Environment(AppStore.self) private var store
     let feed: RSSFeed
-    private var live: RSSFeed {
-        store.feeds.first(where: { $0.id == feed.id }) ?? feed
-    }
+    private var live: RSSFeed { store.feeds.first(where: { $0.id == feed.id }) ?? feed }
     var body: some View {
         HStack(spacing: 14) {
             FeedIcon(feed: live, size: 38)
-            Text(live.title)
-                .font(.system(size: store.feedTitleFontSize, weight: .medium))
-                .foregroundStyle(Color.primary)
+            Text(live.title).font(.system(size: store.feedTitleFontSize, weight: .medium)).foregroundStyle(Color.primary)
             Spacer()
             if live.unreadCount > 0 {
                 Text("\(live.unreadCount)")
                     .font(.system(size: max(11, store.feedTitleFontSize - 4), weight: .bold))
                     .foregroundStyle(Color(.systemBackground))
                     .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Color.primary, in: .capsule)
-                    .monospacedDigit()
+                    .background(Color.primary, in: .capsule).monospacedDigit()
                     .animation(.snappy(duration: 0.2), value: live.unreadCount)
             }
         }
@@ -431,9 +397,7 @@ struct FeedIcon: View {
                 Image(uiImage: image).resizable().scaledToFill().frame(width: size, height: size).clipShape(Circle())
             } else if loading {
                 ProgressView().frame(width: size, height: size)
-            } else {
-                letterFallback
-            }
+            } else { letterFallback }
         }
         .task(id: feed.id) { await loadIcon() }
     }
@@ -462,28 +426,27 @@ struct FeedIcon: View {
         var seen = Set<String>()
         candidates = candidates.filter { seen.insert($0).inserted }
         for urlStr in candidates {
-            if let cached = FaviconCache.shared.image(for: urlStr) { commitSuccess(cached, sourceURL: urlStr); return }
+            if let cached = FaviconCache.shared.image(for: urlStr) { commitSuccess(cached); return }
             if let data = OfflineCache.loadImage(url: urlStr), let ui = UIImage(data: data), ui.size.width > 1 {
-                FaviconCache.shared.store(ui, for: urlStr); commitSuccess(ui, sourceURL: urlStr); return
+                FaviconCache.shared.store(ui, for: urlStr); commitSuccess(ui); return
             }
             guard let url = URL(string: urlStr) else { continue }
             do {
-                var req = URLRequest(url: url)
-                req.timeoutInterval = 6
-                req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+                var req = URLRequest(url: url); req.timeoutInterval = 6
+                req.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
                 let (data, response) = try await URLSession.shared.data(for: req)
                 if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) { continue }
                 guard data.count > 32, let ui = UIImage(data: data), ui.size.width > 1 else { continue }
                 OfflineCache.saveImage(url: urlStr, data: data)
                 FaviconCache.shared.store(ui, for: urlStr)
-                commitSuccess(ui, sourceURL: urlStr)
+                commitSuccess(ui)
                 return
             } catch { continue }
         }
         OfflineCache.saveImage(url: cacheKey, data: Data())
         useLetter = true
     }
-    private func commitSuccess(_ ui: UIImage, sourceURL: String) {
+    private func commitSuccess(_ ui: UIImage) {
         if let data = ui.pngData() ?? ui.jpegData(compressionQuality: 0.9) {
             OfflineCache.saveImage(url: cacheKey, data: data)
         }
@@ -495,10 +458,7 @@ struct FeedIcon: View {
 final class FaviconCache {
     static let shared = FaviconCache()
     private let cache = NSCache<NSString, UIImage>()
-    private init() {
-        cache.countLimit = 200
-        cache.totalCostLimit = 16 * 1024 * 1024
-    }
+    private init() { cache.countLimit = 200; cache.totalCostLimit = 16 * 1024 * 1024 }
     func image(for key: String) -> UIImage? { cache.object(forKey: key as NSString) }
     func store(_ image: UIImage, for key: String) {
         cache.setObject(image, forKey: key as NSString, cost: Int(image.size.width * image.size.height * 4))

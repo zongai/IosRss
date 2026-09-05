@@ -33,7 +33,6 @@ struct ArticleReaderView: View {
     var body: some View {
         ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Header
                     VStack(alignment: .leading, spacing: 8) {
                         Text(displayTitle)
                             .font(.system(size: store.readerTitleFontSize, weight: .bold, design: .serif))
@@ -71,7 +70,6 @@ struct ArticleReaderView: View {
 
                     Divider()
 
-                    // AI Summary card
                     if let summary = aiSummary ?? currentArticle.aiSummary {
                         AISummaryCard(
                             summary: summary,
@@ -105,7 +103,6 @@ struct ArticleReaderView: View {
                             .padding(.horizontal, 20).padding(.top, 8)
                     }
 
-                    // 摘要过短时的提示条
                     if currentArticle.needsFullContentFetch && !isFetchingFull {
                         Button {
                             Task { await fetchFullContent() }
@@ -129,7 +126,6 @@ struct ArticleReaderView: View {
                         .padding(.top, 12)
                     }
 
-                    // Content
                     let displayContent = showTranslated
                         ? (translatedContent ?? currentArticle.translatedContent ?? currentArticle.content)
                         : currentArticle.content
@@ -151,7 +147,6 @@ struct ArticleReaderView: View {
                         )
                     }
 
-                    // 获取全文
                     Button {
                         Task { await fetchFullContent() }
                     } label: {
@@ -171,7 +166,6 @@ struct ArticleReaderView: View {
                     } label: {
                         if isTranslating { ProgressView().scaleEffect(0.75) }
                         else {
-                            // globe = 翻译；text.alignleft = 切回原文（避免对话气泡样式）
                             Label(showTranslated ? "原文" : "翻译",
                                   systemImage: showTranslated ? "translate" : "translate")
                         }
@@ -204,14 +198,12 @@ struct ArticleReaderView: View {
         .background(Color(.systemBackground))
         .onAppear {
             aiSummary = currentArticle.aiSummary
-            // 已有缓存译文时直接显示，无需再点翻译
             if let cached = currentArticle.translatedContent, !cached.isEmpty {
                 translatedContent = cached
                 showTranslated = true
             } else if let t = currentArticle.translatedTitle, !t.isEmpty {
                 showTranslated = true
             }
-            // 摘要很短时自动尝试抓取全文（仅一次）
             if currentArticle.needsFullContentFetch {
                 Task { await fetchFullContent(silent: true) }
             }
@@ -230,11 +222,9 @@ struct ArticleReaderView: View {
         }
         do {
             let updated = try await store.fetchFullContent(for: currentArticle)
-            // 若正在看译文，切换回新正文
             showTranslated = false
             translatedContent = nil
             fullContentHint = silent ? nil : "已获取全文（约 \(HTMLUtils.stripTags(updated.content).count) 字）"
-            // 自动提示几秒后消失
             if !silent {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 if fullContentHint?.contains("已获取全文") == true {
@@ -257,11 +247,9 @@ struct ArticleReaderView: View {
             translationProgress = nil
             return
         }
-        // 正文与标题都已缓存时直接展示
         if let cached = currentArticle.translatedContent {
             translatedContent = cached
             showTranslated = true
-            // 若标题尚未翻译，后台补译
             if currentArticle.translatedTitle == nil {
                 Task { await translateTitleIfNeeded() }
             }
@@ -271,7 +259,6 @@ struct ArticleReaderView: View {
         isTranslating = true
         translationProgress = "正在翻译…"
         do {
-            // 1) 标题
             let titleTask = Task { () -> String? in
                 if let existing = currentArticle.translatedTitle, !existing.isEmpty {
                     return existing
@@ -281,7 +268,6 @@ struct ArticleReaderView: View {
                 return try? await store.translateText(t)
             }
 
-            // 2) 正文：保留图片位置，只翻译文字块
             let (plainWithPlaceholders, images) = HTMLUtils.extractImagesForTranslation(currentArticle.content)
             let result = try await store.translateLongText(plainWithPlaceholders, maxChunkChars: 1800)
             let restored = HTMLUtils.restoreImagesAfterTranslation(result, images: images)
@@ -290,7 +276,6 @@ struct ArticleReaderView: View {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
                 .map { part -> String in
-                    // 图片占位已还原为 <img ...>，其余包成段落
                     if part.localizedCaseInsensitiveContains("<img") {
                         return part
                     }
@@ -356,7 +341,8 @@ struct SafariView: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> SFSafariViewController {
         let config = SFSafariViewController.Configuration()
-        config.entersReaderIfAvailable = true
+        // 默认关闭阅读器视图，显示完整网页
+        config.entersReaderIfAvailable = false
         let vc = SFSafariViewController(url: url, configuration: config)
         vc.preferredControlTintColor = .label
         return vc
@@ -444,58 +430,43 @@ struct ArticleContentView: View {
                 switch block {
                 case .paragraph(let attributed):
                     Text(attributed)
-                        .font(.system(size: fontSize, design: .serif))
-                        .foregroundStyle(Color.primary)
-                        .lineSpacing(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .font(.system(size: fontSize))
+                        .lineSpacing(6)
                         .environment(\.openURL, OpenURLAction { url in
                             browserURL = url
                             return .handled
                         })
-                case .image(let urlString):
-                    if let url = URL(string: urlString) {
-                        AsyncImage(url: url) { phase in
-                            switch phase {
-                            case .empty:
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color(.secondarySystemBackground))
-                                    .frame(height: 180)
-                                    .overlay(ProgressView())
-                            case .success(let image):
-                                image
-                                    .resizable()
-                                    .scaledToFit()
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                            case .failure:
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color(.secondarySystemBackground))
-                                    .frame(height: 80)
-                                    .overlay(
-                                        Image(systemName: "photo")
-                                            .foregroundStyle(Color.secondary)
-                                    )
-                            @unknown default:
-                                EmptyView()
-                            }
+                case .image(let src):
+                    AsyncImage(url: URL(string: src)) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFit()
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        case .failure:
+                            EmptyView()
+                        case .empty:
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 20)
+                        @unknown default:
+                            EmptyView()
                         }
-                        .frame(maxWidth: .infinity)
                     }
                 }
             }
         }
-        .sheet(isPresented: Binding(
-            get: { browserURL != nil },
-            set: { if !$0 { browserURL = nil } }
-        )) {
-            if let url = browserURL {
-                SafariView(url: url)
-                    .ignoresSafeArea()
-            }
+        .sheet(item: $browserURL) { url in
+            SafariView(url: url)
+                .ignoresSafeArea()
         }
     }
 }
 
-// MARK: - Content Block Parser
+extension URL: @retroactive Identifiable {
+    public var id: String { absoluteString }
+}
 
 enum ContentBlock {
     case paragraph(AttributedString)
@@ -503,133 +474,124 @@ enum ContentBlock {
 }
 
 enum ContentBlockParser {
-    /// 中文排版常用首行缩进（两个全角空格）
-    private static let firstLineIndent = "\u{3000}\u{3000}"
-
     static func parse(_ html: String) -> [ContentBlock] {
+        let decoded = HTMLUtils.decodeEntities(html)
         var blocks: [ContentBlock] = []
-        var working = html
-
-        working = working.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
-        working = working.replacingOccurrences(of: #"</p>|</div>|</li>|</h[1-6]>"#, with: "\n\n", options: .regularExpression)
-
-        // 图片占位
-        let imgPattern = #"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*/?>"#
-        var imageURLs: [String] = []
-        if let regex = try? NSRegularExpression(pattern: imgPattern, options: .caseInsensitive) {
-            let ns = working as NSString
-            let matches = regex.matches(in: working, range: NSRange(location: 0, length: ns.length))
-            for match in matches {
-                if match.numberOfRanges >= 2,
-                   let urlRange = Range(match.range(at: 1), in: working) {
-                    imageURLs.append(String(working[urlRange]))
-                }
-            }
-            for (i, match) in matches.enumerated().reversed() {
-                if let fullRange = Range(match.range, in: working) {
-                    working.replaceSubrange(fullRange, with: "\n\n__IMG_\(i)__\n\n")
-                }
-            }
-        }
-
-        // 链接：先替换为占位，保留 href 与可见文本
-        var linkHrefs: [String] = []
-        var linkTexts: [String] = []
-        let linkPattern = #"<a\s+[^>]*href=[\"']([^\"']+)[\"'][^>]*>([\s\S]*?)</a>"#
-        if let regex = try? NSRegularExpression(pattern: linkPattern, options: .caseInsensitive) {
-            let ns = working as NSString
-            let matches = regex.matches(in: working, range: NSRange(location: 0, length: ns.length))
-            for match in matches {
-                if match.numberOfRanges >= 3,
-                   let hrefRange = Range(match.range(at: 1), in: working),
-                   let textRange = Range(match.range(at: 2), in: working) {
-                    linkHrefs.append(String(working[hrefRange]))
-                    var inner = String(working[textRange])
-                    inner = inner.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                    linkTexts.append(inner)
-                }
-            }
-            for (i, match) in matches.enumerated().reversed() {
-                if let fullRange = Range(match.range, in: working) {
-                    working.replaceSubrange(fullRange, with: "__LINK_\(i)__")
-                }
-            }
-        }
-
-        // 去掉其余标签
-        working = working.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-        working = HTMLUtils.decodeEntities(working)
-
-        let parts = working.components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-        for part in parts {
-            if part.hasPrefix("__IMG_"), part.hasSuffix("__") {
-                let idxStr = String(part.dropFirst(6).dropLast(2))
-                if let idx = Int(idxStr), idx >= 0, idx < imageURLs.count {
-                    blocks.append(.image(imageURLs[idx]))
-                }
+        let pattern = "(?i)(<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>)|([^<]+|<[^>]+>)"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            if let attr = try? AttributedString(markdown: decoded) {
+                blocks.append(.paragraph(attr))
             } else {
-                blocks.append(.paragraph(makeAttributedParagraph(part, linkHrefs: linkHrefs, linkTexts: linkTexts)))
+                blocks.append(.paragraph(AttributedString(HTMLUtils.stripTags(decoded))))
+            }
+            return blocks
+        }
+        let ns = decoded as NSString
+        let matches = regex.matches(in: decoded, range: NSRange(location: 0, length: ns.length))
+        var textBuf = ""
+        func flushText() {
+            let trimmed = textBuf.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { textBuf = ""; return }
+            let plain = HTMLUtils.stripTags(trimmed)
+            if plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                textBuf = ""; return
+            }
+            if let attr = makeAttributed(from: trimmed) {
+                blocks.append(.paragraph(attr))
+            } else {
+                blocks.append(.paragraph(AttributedString(plain)))
+            }
+            textBuf = ""
+        }
+        for m in matches {
+            if m.range(at: 2).location != NSNotFound {
+                flushText()
+                let src = ns.substring(with: m.range(at: 2))
+                if !src.isEmpty { blocks.append(.image(src)) }
+            } else if m.range(at: 3).location != NSNotFound {
+                textBuf += ns.substring(with: m.range(at: 3))
             }
         }
-
-        if blocks.isEmpty {
-            let plain = HTMLUtils.stripTags(html)
-            if !plain.isEmpty {
-                blocks.append(.paragraph(makeAttributedParagraph(plain, linkHrefs: [], linkTexts: [])))
-            }
-        }
+        flushText()
         return blocks
     }
 
-    private static func makeAttributedParagraph(
-        _ raw: String,
-        linkHrefs: [String],
-        linkTexts: [String]
-    ) -> AttributedString {
-        // 还原链接占位为可见文本，并记录区间
-        var text = raw
-        var ranges: [(range: Range<String.Index>, url: URL)] = []
+    private static func makeAttributed(from htmlFragment: String) -> AttributedString? {
+        let wrapped = "<div>\(htmlFragment)</div>"
+        guard let data = wrapped.data(using: .utf8) else { return nil }
+        let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
+            .documentType: NSAttributedString.DocumentType.html,
+            .characterEncoding: String.Encoding.utf8.rawValue
+        ]
+        guard let ns = try? NSAttributedString(data: data, options: options, documentAttributes: nil) else {
+            return nil
+        }
+        var attr = AttributedString(ns)
+        // first-line indent for paragraphs
+        for run in attr.runs {
+            if attr[run.range].presentationIntent == nil {
+                // keep links
+            }
+        }
+        return attr
+    }
+}
 
-        let placeholderPattern = #"__LINK_(\d+)__"#
-        if let regex = try? NSRegularExpression(pattern: placeholderPattern) {
-            while let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) {
-                guard let fullRange = Range(match.range, in: text),
-                      match.numberOfRanges >= 2,
-                      let idxRange = Range(match.range(at: 1), in: text),
-                      let idx = Int(text[idxRange]),
-                      idx >= 0, idx < linkHrefs.count, idx < linkTexts.count else {
-                    break
-                }
-                let label = HTMLUtils.decodeEntities(linkTexts[idx])
-                let href = linkHrefs[idx].trimmingCharacters(in: .whitespacesAndNewlines)
-                let start = fullRange.lowerBound
-                text.replaceSubrange(fullRange, with: label)
-                let end = text.index(start, offsetBy: label.count, limitedBy: text.endIndex) ?? text.endIndex
-                if let url = URL(string: href), !label.isEmpty {
-                    ranges.append((start..<end, url))
+enum HTMLUtils {
+    static func decodeEntities(_ s: String) -> String {
+        var result = s
+        let entities: [(String, String)] = [
+            ("&", "&"), ("<", "<"), (">", ">"), (""", "\""), ("'", "'"),
+            ("&#39;", "'"), ("&#x27;", "'"), ("&#8216;", "\u{2018}"), ("&#8217;", "\u{2019}"),
+            ("&#8220;", "\u{201C}"), ("&#8221;", "\u{201D}"), ("&nbsp;", " "),
+            ("&#160;", " "), ("&#8211;", "\u{2013}"), ("&#8212;", "\u{2014}")
+        ]
+        for (e, c) in entities {
+            result = result.replacingOccurrences(of: e, with: c)
+        }
+        if let regex = try? NSRegularExpression(pattern: "&#(\\d+);") {
+            let ns = result as NSString
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()
+            for m in matches {
+                if m.numberOfRanges > 1 {
+                    let numStr = ns.substring(with: m.range(at: 1))
+                    if let code = UInt32(numStr), let scalar = UnicodeScalar(code) {
+                        result = (result as NSString).replacingCharacters(in: m.range, with: String(Character(scalar)))
+                    }
                 }
             }
         }
+        return result
+    }
 
-        // 首行缩进
-        let indented = firstLineIndent + text
-        var attributed = AttributedString(indented)
+    static func stripTags(_ html: String) -> String {
+        let decoded = decodeEntities(html)
+        guard let regex = try? NSRegularExpression(pattern: "<[^>]+>") else { return decoded }
+        return regex.stringByReplacingMatches(in: decoded, range: NSRange(location: 0, length: (decoded as NSString).length), withTemplate: "")
+    }
 
-        // 链接样式（缩进偏移 2 个全角字符）
-        let indentOffset = firstLineIndent.count
-        for item in ranges {
-            let lower = text.distance(from: text.startIndex, to: item.range.lowerBound) + indentOffset
-            let upper = text.distance(from: text.startIndex, to: item.range.upperBound) + indentOffset
-            guard lower >= 0, upper <= attributed.characters.count, lower < upper else { continue }
-            let start = attributed.index(attributed.startIndex, offsetByCharacters: lower)
-            let end = attributed.index(attributed.startIndex, offsetByCharacters: upper)
-            attributed[start..<end].link = item.url
-            attributed[start..<end].foregroundColor = .accentColor
-            attributed[start..<end].underlineStyle = .single
+    static func extractImagesForTranslation(_ html: String) -> (String, [String]) {
+        var images: [String] = []
+        var result = html
+        guard let regex = try? NSRegularExpression(pattern: "(?i)<img[^>]*>") else {
+            return (stripTags(html), [])
         }
-        return attributed
+        let ns = result as NSString
+        let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()
+        for (i, m) in matches.enumerated() {
+            let tag = ns.substring(with: m.range)
+            images.insert(tag, at: 0)
+            let placeholder = "[[IMG\(images.count - 1 - i)]]"
+            result = (result as NSString).replacingCharacters(in: m.range, with: "\n\n\(placeholder)\n\n")
+        }
+        return (stripTags(result), images.reversed())
+    }
+
+    static func restoreImagesAfterTranslation(_ text: String, images: [String]) -> String {
+        var result = text
+        for (i, img) in images.enumerated() {
+            result = result.replacingOccurrences(of: "[[IMG\(i)]]", with: img)
+        }
+        return result
     }
 }

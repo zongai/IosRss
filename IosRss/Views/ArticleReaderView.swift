@@ -160,7 +160,7 @@ struct ArticleReaderView: View {
                         } else {
                             Label(
                                 currentArticle.hasFullContent ? "已获取全文" : "全文",
-                                systemImage: currentArticle.hasFullContent ? "doc.richtext" : "arrow.down.doc"
+                                systemImage: currentArticle.hasFullContent ? "text.book.closed" : "text.book.closed.fill"
                             )
                         }
                     }
@@ -173,7 +173,7 @@ struct ArticleReaderView: View {
                         else {
                             // globe = 翻译；text.alignleft = 切回原文（避免对话气泡样式）
                             Label(showTranslated ? "原文" : "翻译",
-                                  systemImage: showTranslated ? "text.alignleft" : "globe")
+                                  systemImage: showTranslated ? "translate" : "translate")
                         }
                     }
                     .disabled(isTranslating)
@@ -190,7 +190,7 @@ struct ArticleReaderView: View {
                         Button {
                             showInAppBrowser = true
                         } label: {
-                            Label("浏览器", systemImage: "arrow.up.right.square")
+                            Label("浏览器", systemImage: "safari")
                         }
                     }
                 }

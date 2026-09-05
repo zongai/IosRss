@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 class AppStore {
     var feeds: [RSSFeed] = []
+    var groups: [FeedGroup] = []
     var selectedFeedID: UUID?
     var isLoading = false
     var errorMessage: String?
@@ -109,16 +110,13 @@ class AppStore {
     }
 
     func markAsRead(_ article: Article) {
-        var didChange = false
         for i in feeds.indices {
             if let j = feeds[i].articles.firstIndex(where: { $0.id == article.id }) {
                 if !feeds[i].articles[j].isRead {
                     feeds[i].articles[j].isRead = true
                     feeds[i].unreadCount = max(0, feeds[i].articles.filter { !$0.isRead }.count)
-                    didChange = true
                 }
                 rememberReadLink(feeds[i].articles[j].link)
-                // 触发 @Observable 对数组元素的感知（重新赋值整个 feed）
                 let refreshed = feeds[i]
                 feeds[i] = refreshed
             }
@@ -178,11 +176,9 @@ class AppStore {
         saveToStorage()
     }
 
-    /// 批量写入列表翻译结果（标题/摘要），只在最后 save 一次，避免逐条落盘导致前几条 UI 不刷新。
     func applyListTranslations(_ updates: [(id: UUID, title: String?, summary: String?)]) {
         guard !updates.isEmpty else { return }
         var byID: [UUID: (title: String?, summary: String?)] = [:]
-        byID.reserveCapacity(updates.count)
         for u in updates {
             var merged = byID[u.id] ?? (nil, nil)
             if let t = u.title { merged.title = t }
@@ -192,16 +188,9 @@ class AppStore {
         var changed = false
         for i in feeds.indices {
             for j in feeds[i].articles.indices {
-                let id = feeds[i].articles[j].id
-                guard let patch = byID[id] else { continue }
-                if let t = patch.title {
-                    feeds[i].articles[j].translatedTitle = t
-                    changed = true
-                }
-                if let s = patch.summary {
-                    feeds[i].articles[j].translatedSummary = s
-                    changed = true
-                }
+                guard let patch = byID[feeds[i].articles[j].id] else { continue }
+                if let t = patch.title { feeds[i].articles[j].translatedTitle = t; changed = true }
+                if let s = patch.summary { feeds[i].articles[j].translatedSummary = s; changed = true }
             }
         }
         if changed { saveToStorage() }
@@ -215,6 +204,58 @@ class AppStore {
     func deleteFeed(at offsets: IndexSet) {
         feeds.remove(atOffsets: offsets)
         saveToStorage()
+    }
+
+    var feedsByGroup: [(group: FeedGroup?, feeds: [RSSFeed])] {
+        let sortedGroups = groups.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name) }
+        var sections: [(FeedGroup?, [RSSFeed])] = []
+        for g in sortedGroups {
+            let items = feeds.filter { $0.groupID == g.id }
+            if !items.isEmpty { sections.append((g, items)) }
+        }
+        let ungrouped = feeds.filter { feed in
+            guard let gid = feed.groupID else { return true }
+            return !groups.contains(where: { $0.id == gid })
+        }
+        if !ungrouped.isEmpty || sections.isEmpty {
+            sections.append((nil, ungrouped))
+        }
+        return sections
+    }
+
+    func addGroup(name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if groups.contains(where: { $0.name == trimmed }) { return }
+        let order = (groups.map(\.sortOrder).max() ?? -1) + 1
+        groups.append(FeedGroup(name: trimmed, sortOrder: order))
+        saveToStorage()
+    }
+
+    func renameGroup(_ id: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let idx = groups.firstIndex(where: { $0.id == id }) else { return }
+        groups[idx].name = trimmed
+        saveToStorage()
+    }
+
+    func deleteGroup(_ id: UUID) {
+        for i in feeds.indices where feeds[i].groupID == id {
+            feeds[i].groupID = nil
+        }
+        groups.removeAll { $0.id == id }
+        saveToStorage()
+    }
+
+    func moveFeed(_ feedID: UUID, toGroup groupID: UUID?) {
+        guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
+        feeds[idx].groupID = groupID
+        saveToStorage()
+    }
+
+    func group(for feed: RSSFeed) -> FeedGroup? {
+        guard let gid = feed.groupID else { return nil }
+        return groups.first { $0.id == gid }
     }
 
     func purgeOldReadArticles() {
@@ -416,19 +457,18 @@ class AppStore {
         if trimmed.count <= maxChars { return [trimmed] }
         var chunks: [String] = []
         var current = ""
-        let paragraphs = trimmed.components(separatedBy: CharacterSet.newlines)
-        for para in paragraphs {
+        for para in trimmed.components(separatedBy: CharacterSet.newlines) {
             let p = para.trimmingCharacters(in: .whitespaces)
             if p.isEmpty { continue }
             if current.isEmpty {
-                if p.count > maxChars { chunks.append(contentsOf: splitBySentence(p, maxChars: maxChars)) }
+                if p.count > maxChars { chunks.append(contentsOf: hardSplit(p, maxChars: maxChars)) }
                 else { current = p }
             } else if current.count + p.count + 1 <= maxChars {
                 current += "\n" + p
             } else {
                 chunks.append(current)
                 if p.count > maxChars {
-                    chunks.append(contentsOf: splitBySentence(p, maxChars: maxChars))
+                    chunks.append(contentsOf: hardSplit(p, maxChars: maxChars))
                     current = ""
                 } else { current = p }
             }
@@ -437,41 +477,13 @@ class AppStore {
         return chunks
     }
 
-    private static func splitBySentence(_ text: String, maxChars: Int) -> [String] {
-        var result: [String] = []
-        var current = ""
-        let separators = CharacterSet(charactersIn: ".!?。！？\n")
-        var buffer = ""
-        for ch in text {
-            buffer.append(ch)
-            if String(ch).rangeOfCharacter(from: separators) != nil {
-                if current.count + buffer.count <= maxChars { current += buffer }
-                else {
-                    if !current.isEmpty { result.append(current) }
-                    current = buffer
-                }
-                buffer = ""
-            }
-        }
-        if !buffer.isEmpty {
-            if current.count + buffer.count <= maxChars { current += buffer }
-            else {
-                if !current.isEmpty { result.append(current) }
-                current = buffer
-            }
-        }
-        if !current.isEmpty { result.append(current) }
+    private static func hardSplit(_ text: String, maxChars: Int) -> [String] {
         var final: [String] = []
-        for piece in result {
-            if piece.count <= maxChars { final.append(piece) }
-            else {
-                var start = piece.startIndex
-                while start < piece.endIndex {
-                    let end = piece.index(start, offsetBy: maxChars, limitedBy: piece.endIndex) ?? piece.endIndex
-                    final.append(String(piece[start..<end]))
-                    start = end
-                }
-            }
+        var start = text.startIndex
+        while start < text.endIndex {
+            let end = text.index(start, offsetBy: maxChars, limitedBy: text.endIndex) ?? text.endIndex
+            final.append(String(text[start..<end]))
+            start = end
         }
         return final
     }
@@ -515,8 +527,7 @@ class AppStore {
     }
 
     private static func xmlEscape(_ s: String) -> String {
-        s
-            .replacingOccurrences(of: "&", with: "\u{0026}amp;")
+        s.replacingOccurrences(of: "&", with: "\u{0026}amp;")
             .replacingOccurrences(of: "\"", with: "\u{0026}quot;")
             .replacingOccurrences(of: "<", with: "\u{0026}lt;")
             .replacingOccurrences(of: ">", with: "\u{0026}gt;")
@@ -524,41 +535,93 @@ class AppStore {
 
     func exportOPML() -> String {
         var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<opml version=\"2.0\">\n  <head><title>Feed Subscriptions</title></head>\n  <body>\n"
-        for feed in feeds {
-            let t = Self.xmlEscape(feed.title)
-            let u = Self.xmlEscape(feed.url)
-            xml += "    <outline type=\"rss\" text=\"\(t)\" xmlUrl=\"\(u)\"/>\n"
+        let sortedGroups = groups.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name) }
+        for g in sortedGroups {
+            let gFeeds = feeds.filter { $0.groupID == g.id }
+            guard !gFeeds.isEmpty else { continue }
+            xml += "    <outline text=\"\(Self.xmlEscape(g.name))\">\n"
+            for feed in gFeeds {
+                xml += "      <outline type=\"rss\" text=\"\(Self.xmlEscape(feed.title))\" xmlUrl=\"\(Self.xmlEscape(feed.url))\"/>\n"
+            }
+            xml += "    </outline>\n"
+        }
+        for feed in feeds where feed.groupID == nil || !groups.contains(where: { $0.id == feed.groupID }) {
+            xml += "    <outline type=\"rss\" text=\"\(Self.xmlEscape(feed.title))\" xmlUrl=\"\(Self.xmlEscape(feed.url))\"/>\n"
         }
         xml += "  </body>\n</opml>"
         return xml
     }
 
-    func importOPML(data: Data) {
-        _ = importSubscriptions(data: data)
+    func exportTXT() -> String {
+        var lines: [String] = ["IosRss Subscriptions", "Exported: \(ISO8601DateFormatter().string(from: Date()))", ""]
+        let sortedGroups = groups.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name) }
+        for g in sortedGroups {
+            let gFeeds = feeds.filter { $0.groupID == g.id }
+            guard !gFeeds.isEmpty else { continue }
+            lines.append("# \(g.name)")
+            for feed in gFeeds {
+                lines.append(feed.title)
+                lines.append(feed.url)
+                lines.append("")
+            }
+        }
+        let ungrouped = feeds.filter { feed in
+            guard let gid = feed.groupID else { return true }
+            return !groups.contains(where: { $0.id == gid })
+        }
+        if !ungrouped.isEmpty {
+            lines.append("# 未分组")
+            for feed in ungrouped {
+                lines.append(feed.title)
+                lines.append(feed.url)
+                lines.append("")
+            }
+        }
+        return lines.joined(separator: "\n")
     }
+
+    func writeExportFile(content: String, filename: String) -> URL? {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+            try content.data(using: .utf8)?.write(to: url)
+            return url
+        } catch { return nil }
+    }
+
+    func importOPML(data: Data) { _ = importSubscriptions(data: data) }
 
     @discardableResult
     func importSubscriptions(data: Data) -> SubscriptionImportResult {
         let opmlItems = OPMLParser(data: data).parse()
         if !opmlItems.isEmpty {
-            var added = 0
-            var skipped = 0
+            var added = 0, skipped = 0
             for item in opmlItems {
                 let url = FeedURL.canonical(item.url)
                 guard !url.isEmpty else { continue }
                 if feeds.contains(where: { FeedURL.canonical($0.url) == url }) {
-                    skipped += 1
-                    continue
+                    skipped += 1; continue
                 }
                 let title = FeedNaming.resolveTitle(parsed: item.title, url: url)
-                feeds.append(RSSFeed(title: title, url: url, faviconURL: FeedParser.siteFaviconURL(for: url)))
+                var groupID: UUID?
+                if let gName = item.groupName?.trimmingCharacters(in: .whitespacesAndNewlines), !gName.isEmpty {
+                    if let existing = groups.first(where: { $0.name == gName }) {
+                        groupID = existing.id
+                    } else {
+                        let order = (groups.map(\.sortOrder).max() ?? -1) + 1
+                        let g = FeedGroup(name: gName, sortOrder: order)
+                        groups.append(g)
+                        groupID = g.id
+                    }
+                }
+                feeds.append(RSSFeed(title: title, url: url, faviconURL: FeedParser.siteFaviconURL(for: url), groupID: groupID))
                 added += 1
             }
             if added > 0 { saveToStorage() }
             return SubscriptionImportResult(added: added, skipped: skipped, kind: "opml")
         }
-
-        // Single RSS/Atom XML: extract channel/feed link + title
         if let link = FeedParser.extractFeedLink(from: data), !link.isEmpty {
             let url = FeedURL.canonical(link)
             if feeds.contains(where: { FeedURL.canonical($0.url) == url }) {
@@ -570,12 +633,14 @@ class AppStore {
             saveToStorage()
             return SubscriptionImportResult(added: 1, skipped: 0, kind: "rss")
         }
-
         return SubscriptionImportResult(added: 0, skipped: 0, kind: "empty")
     }
 
     func saveToStorage() {
         OfflineCache.saveFeeds(feeds)
+        if let data = try? JSONEncoder().encode(groups) {
+            UserDefaults.standard.set(data, forKey: "feedGroups")
+        }
         persistReadLinks()
         UserDefaults.standard.set(fontSize, forKey: "fontSize")
         UserDefaults.standard.set(listTitleFontSize, forKey: "listTitleFontSize")
@@ -602,8 +667,10 @@ class AppStore {
     }
 
     func loadFromStorage() {
-        if let loaded = OfflineCache.loadFeeds() {
-            feeds = loaded
+        if let loaded = OfflineCache.loadFeeds() { feeds = loaded }
+        if let data = UserDefaults.standard.data(forKey: "feedGroups"),
+           let decoded = try? JSONDecoder().decode([FeedGroup].self, from: data) {
+            groups = decoded
         }
         loadReadLinks()
         fontSize = UserDefaults.standard.object(forKey: "fontSize") as? Double ?? 17
@@ -613,30 +680,20 @@ class AppStore {
         aiSummaryFontSize = UserDefaults.standard.object(forKey: "aiSummaryFontSize") as? Double ?? 22
         feedTitleFontSize = UserDefaults.standard.object(forKey: "feedTitleFontSize") as? Double ?? 17
         if let raw = UserDefaults.standard.string(forKey: "titleDisplayMode"),
-           let mode = TitleDisplayMode(rawValue: raw) {
-            titleDisplayMode = mode
-        }
+           let mode = TitleDisplayMode(rawValue: raw) { titleDisplayMode = mode }
         if let raw = UserDefaults.standard.string(forKey: "defaultTranslationEngine"),
-           let engine = TranslationEngine(rawValue: raw) {
-            defaultTranslationEngine = engine
-        }
+           let engine = TranslationEngine(rawValue: raw) { defaultTranslationEngine = engine }
         showReadArticles = UserDefaults.standard.object(forKey: "showReadArticles") as? Bool ?? false
         if let p = UserDefaults.standard.string(forKey: "translationPrompt") { translationPrompt = p }
         if let p = UserDefaults.standard.string(forKey: "summaryPrompt") { summaryPrompt = p }
         readRetentionDays = UserDefaults.standard.object(forKey: "readRetentionDays") as? Int ?? 7
         fullContentCacheDays = UserDefaults.standard.object(forKey: "fullContentCacheDays") as? Int ?? 30
         if let data = UserDefaults.standard.data(forKey: "aiProviders"),
-           let decoded = try? JSONDecoder().decode([AIProvider].self, from: data) {
-            aiProviders = decoded
-        }
+           let decoded = try? JSONDecoder().decode([AIProvider].self, from: data) { aiProviders = decoded }
         if let s = UserDefaults.standard.string(forKey: "defaultSummaryProviderID"),
-           let id = UUID(uuidString: s) {
-            defaultSummaryProviderID = id
-        }
+           let id = UUID(uuidString: s) { defaultSummaryProviderID = id }
         if let s = UserDefaults.standard.string(forKey: "defaultTranslationProviderID"),
-           let id = UUID(uuidString: s) {
-            defaultTranslationProviderID = id
-        }
+           let id = UUID(uuidString: s) { defaultTranslationProviderID = id }
     }
 
     private func seedSampleData() {}

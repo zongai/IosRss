@@ -66,20 +66,19 @@ enum FeedParser {
               String(data: data, encoding: .isoLatin1) else { return nil }
 
         // 1) 标准 RSS：任意位置的 <image>…<url>…</url>…</image>（不依赖 channel 截取成功）
-        //    示例：
-        //    <image>
-        //      <url>https://spacenews.com/.../star-32x32.png</url>
-        //      <title>SpaceNews</title>
-        //      <link>https://spacenews.com/</link>
-        //    </image>
         if let url = extractRSSImageURL(from: raw) {
             return url
         }
 
-        // 2) itunes / media 属性式图片
-        if let href = extractAttrHref(tagName: "itunes:image", from: raw)
-            ?? extractAttrHref(tagName: "media:thumbnail", from: raw)
-            ?? extractAttrHref(tagName: "media:content", from: raw) {
+        // 2) itunes / media 属性式图片（限制在 channel 或文首，避免命中条目大图）
+        let headScope: String = {
+            if let channel = firstTopLevelBlock(raw, tag: "channel") { return channel }
+            if let feed = firstTopLevelBlock(raw, tag: "feed") { return feed }
+            return String(raw.prefix(12_000))
+        }()
+        if let href = extractAttrHref(tagName: "itunes:image", from: headScope)
+            ?? extractAttrHref(tagName: "media:thumbnail", from: headScope)
+            ?? extractAttrHref(tagName: "media:content", from: headScope) {
             if looksLikeImageURL(href) { return href }
         }
 
@@ -98,8 +97,6 @@ enum FeedParser {
 
     /// 在整份 XML 中找第一处 channel 级 <image><url>
     private static func extractRSSImageURL(from raw: String) -> String? {
-        // 优先：完整 <image>…</image> 块内的 <url>
-        // 用正则直接抓，避免 extractBlocks 在超大 feed / 异常嵌套时漏掉
         let patterns = [
             #"<image\\b[^>]*>[\\s\\S]*?<url[^>]*>\\s*([^<]+?)\\s*</url>"#,
             #"<image>\\s*<url>\\s*([^<]+?)\\s*</url>"#,
@@ -109,11 +106,9 @@ enum FeedParser {
                let match = regex.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
                let range = Range(match.range(at: 1), in: raw) {
                 let u = stripHTML(String(raw[range])).trimmingCharacters(in: .whitespacesAndNewlines)
-                // 跳过条目里偶发的非图标大图：channel 图标通常较小路径或明确是站点图
                 if looksLikeImageURL(u) { return u }
             }
         }
-        // 退路：extractBlocks
         if let imageBlock = extractBlocks(from: raw, tag: "image").first,
            let url = extractTag("url", from: imageBlock) {
             let u = stripHTML(url).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -122,26 +117,92 @@ enum FeedParser {
         return nil
     }
 
-    /// 解析出图标 URL：优先 XML 内 image，否则用站点 favicon 服务
+    /// 解析出图标 URL：优先 XML 内 image，否则用站点候选中的首选
     static func resolveFaviconURL(from data: Data, feedURL: String) -> String? {
         if let fromFeed = extractFeedImage(from: data), !fromFeed.isEmpty {
             return absoluteURL(fromFeed, relativeTo: feedURL)
         }
-        return siteFaviconURL(for: feedURL)
+        let site = extractChannelOrFeedLink(from: data).flatMap { absoluteURL($0, relativeTo: feedURL) }
+        return siteFaviconURL(for: site ?? feedURL)
     }
 
-    /// 站点 favicon：优先 DuckDuckGo（国内相对可访问），再试站点根路径 /favicon.ico
+    /// channel / feed 主页链接（用于推导站点域名）
+    static func extractChannelOrFeedLink(from data: Data) -> String? {
+        guard let raw = String(data: data, encoding: .utf8) ??
+                String(data: data, encoding: .isoLatin1) else { return nil }
+        if let channel = firstTopLevelBlock(raw, tag: "channel") {
+            if let link = extractTag("link", from: channel) {
+                let u = stripHTML(link).trimmingCharacters(in: .whitespacesAndNewlines)
+                if looksLikeImageURL(u) || u.lowercased().hasPrefix("http") { return u }
+            }
+        }
+        if raw.contains("<feed") {
+            let scope = firstTopLevelBlock(raw, tag: "feed") ?? raw
+            if let href = extractAtomHtmlLink(from: scope) { return href }
+        }
+        return nil
+    }
+
+    private static func extractAtomHtmlLink(from scope: String) -> String? {
+        let patterns = [
+            #"<link\\b[^>]*rel\\s*=\\s*[\"']alternate[\"'][^>]*href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*/?>"#,
+            #"<link\\b[^>]*href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*rel\\s*=\\s*[\"']alternate[\"'][^>]*/?>"#,
+            #"<link\\b[^>]*rel\\s*=\\s*[\"'](?:self)?[\"'][^>]*href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*/?>"#,
+        ]
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: scope, range: NSRange(scope.startIndex..., in: scope)),
+               match.numberOfRanges > 1,
+               let range = Range(match.range(at: 1), in: scope) {
+                let u = String(scope[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !u.isEmpty { return u }
+            }
+        }
+        return nil
+    }
+
+    /// 站点 favicon 首选 URL（用于持久化到 feed.faviconURL）
     static func siteFaviconURL(for feedURL: String) -> String? {
-        let host: String? = {
-            if let h = URL(string: feedURL)?.host, !h.isEmpty { return h }
-            var s = feedURL
-            if let r = s.range(of: "://") { s = String(s[r.upperBound...]) }
-            if let slash = s.firstIndex(of: "/") { s = String(s[..<slash]) }
-            return s.isEmpty ? nil : s
+        faviconCandidates(for: feedURL).first
+    }
+
+    /// 多候选：站点 PNG/ICO → Google PNG → DuckDuckGo（按可解码性排序）
+    static func faviconCandidates(for feedOrSiteURL: String) -> [String] {
+        guard let host = hostOf(feedOrSiteURL) else { return [] }
+        let scheme: String = {
+            if let s = URL(string: feedOrSiteURL)?.scheme, s == "http" || s == "https" { return s }
+            return "https"
         }()
-        guard let host, !host.isEmpty else { return nil }
-        // DuckDuckGo icons 服务，不依赖 Google
-        return "https://icons.duckduckgo.com/ip3/\(host).ico"
+        let root = "\(scheme)://\(host)"
+        let bareHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        var list: [String] = [
+            "\(root)/apple-touch-icon.png",
+            "\(root)/apple-touch-icon-precomposed.png",
+            "\(root)/favicon.png",
+            "\(root)/favicon.ico",
+            "https://www.google.com/s2/favicons?domain=\(bareHost)&sz=128",
+            "https://www.google.com/s2/favicons?domain=\(host)&sz=128",
+            "https://icons.duckduckgo.com/ip3/\(bareHost).ico",
+            "https://icons.duckduckgo.com/ip3/\(host).ico",
+        ]
+        if bareHost != host {
+            list.insert(contentsOf: [
+                "\(scheme)://\(bareHost)/apple-touch-icon.png",
+                "\(scheme)://\(bareHost)/favicon.png",
+                "\(scheme)://\(bareHost)/favicon.ico",
+            ], at: 4)
+        }
+        var seen = Set<String>()
+        return list.filter { seen.insert($0).inserted }
+    }
+
+    static func hostOf(_ urlString: String) -> String? {
+        if let h = URL(string: urlString)?.host, !h.isEmpty { return h }
+        var s = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let r = s.range(of: "://") { s = String(s[r.upperBound...]) }
+        if let slash = s.firstIndex(of: "/") { s = String(s[..<slash]) }
+        if let at = s.firstIndex(of: "@") { s = String(s[s.index(after: at)...]) }
+        return s.isEmpty ? nil : s
     }
 
     private static func looksLikeImageURL(_ s: String) -> Bool {
@@ -164,9 +225,7 @@ enum FeedParser {
         return t
     }
 
-    /// 提取形如 <tagName href="..."/> 或 url="..." 的属性
     private static func extractAttrHref(tagName: String, from xml: String) -> String? {
-        // 允许属性顺序任意：href / url / src
         let escaped = NSRegularExpression.escapedPattern(for: tagName)
         let pattern = "<\(escaped)\\b[^>]*(?:href|url|src)\\s*=\\s*[\"']([^\"']+)[\"'][^>]*/?>"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
@@ -175,7 +234,6 @@ enum FeedParser {
         return String(xml[range]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// 取第一个顶层标签块（简单实现：第一个匹配的开闭标签）
     private static func firstTopLevelBlock(_ xml: String, tag: String) -> String? {
         extractBlocks(from: xml, tag: tag).first
     }
@@ -216,7 +274,6 @@ enum FeedParser {
         return entries.compactMap { block -> Article? in
             let title = extractTag("title", from: block) ?? ""
             guard !title.isEmpty else { return nil }
-            // Atom link is an attribute: <link href="..."/>
             let link = extractLinkHref(from: block)
             let summary = extractTag("summary", from: block) ?? ""
             let content = extractTag("content", from: block) ?? summary
@@ -253,14 +310,12 @@ enum FeedParser {
     }
 
     static func extractTag(_ tag: String, from xml: String) -> String? {
-        // Handles <tag>content</tag> and <tag><![CDATA[content]]></tag>
         let openPat = "<\(tag)[^>]*>"
         let closePat = "</\(tag)>"
         guard let openRange = xml.range(of: openPat, options: [.regularExpression, .caseInsensitive]),
               let closeRange = xml.range(of: closePat, options: [.regularExpression, .caseInsensitive],
                                          range: openRange.upperBound..<xml.endIndex) else { return nil }
         var content = String(xml[openRange.upperBound..<closeRange.lowerBound])
-        // Unwrap CDATA
         if content.hasPrefix("<![CDATA[") && content.hasSuffix("]]>") {
             content = String(content.dropFirst(9).dropLast(3))
         }
@@ -269,7 +324,6 @@ enum FeedParser {
     }
 
     private static func extractLinkHref(from xml: String) -> String {
-        // <link href="..." rel="alternate" .../>  or  <link href="..."/>
         let pattern = #"<link[^>]+href=[\"']([^\"']+)[\"'][^>]*/>"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
               let match = regex.firstMatch(in: xml, range: NSRange(xml.startIndex..., in: xml)),
@@ -306,7 +360,6 @@ enum FeedParser {
 // MARK: - Feed Naming
 
 enum FeedNaming {
-    /// 有名称用名称；否则用清理后的域名（去掉协议、路径、www.）
     static func resolveTitle(parsed: String?, url: String) -> String {
         if let t = parsed?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
             return t
@@ -314,13 +367,11 @@ enum FeedNaming {
         return domainName(from: url)
     }
 
-    /// 只保留域名：去掉 https://、路径、查询参数、www.
     static func domainName(from urlString: String) -> String {
         var s = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: s), let host = url.host, !host.isEmpty {
             return stripWWW(host)
         }
-        // 手写解析兜底
         if let range = s.range(of: "://") {
             s = String(s[range.upperBound...])
         }
@@ -358,7 +409,6 @@ struct FeedDiscovery {
         let (data, response) = try await URLSession.shared.data(from: finalURL)
         let contentType = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? ""
 
-        // Direct feed
         if contentType.contains("xml") || contentType.contains("rss") || contentType.contains("atom") {
             let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
             if !articles.isEmpty {
@@ -370,7 +420,6 @@ struct FeedDiscovery {
             }
         }
 
-        // Try parsing as feed anyway
         let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
         if !articles.isEmpty {
             let title = FeedNaming.resolveTitle(
@@ -380,7 +429,6 @@ struct FeedDiscovery {
             return [DiscoveredFeed(title: title, url: finalURL.absoluteString)]
         }
 
-        // Parse HTML for <link rel="alternate" ...>
         let html = String(data: data, encoding: .utf8) ?? ""
         var found = parseAlternateFeedLinks(from: html, baseURL: finalURL)
         if found.isEmpty {
@@ -445,7 +493,6 @@ struct OPMLParser {
 
     func parse() -> [OPMLItem] {
         guard var xml = decodeXMLString(data) else { return [] }
-        // 去掉 BOM / 声明噪声，统一换行，便于跨行匹配
         if xml.hasPrefix("\u{FEFF}") { xml = String(xml.dropFirst()) }
         xml = xml.replacingOccurrences(of: "\r\n", with: "\n")
         xml = xml.replacingOccurrences(of: "\r", with: "\n")
@@ -453,7 +500,6 @@ struct OPMLParser {
         var items: [OPMLItem] = []
         var seen = Set<String>()
 
-        // 匹配 <outline ...> / <outline .../>，属性可跨行
         let pattern = #"<outline\\b[\\s\\S]*?>"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
             return []
@@ -463,7 +509,6 @@ struct OPMLParser {
         for match in matches {
             guard let matchRange = Range(match.range, in: xml) else { continue }
             let tag = String(xml[matchRange])
-            // 文件夹节点通常只有 text 没有 feed URL，跳过
             guard let rawURL = firstFeedURL(in: tag) else { continue }
             let url = HTMLUtils.decodeEntities(rawURL).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !url.isEmpty else { continue }
@@ -480,7 +525,6 @@ struct OPMLParser {
             items.append(OPMLItem(title: title, url: url))
         }
 
-        // 若没有 outline，尝试把整文件当 RSS/Atom 时由上层处理；这里再尝试 <link type="application/rss+xml"> 类订阅列表
         if items.isEmpty {
             items.append(contentsOf: parseLinkAlternateFeeds(from: xml, seen: &seen))
         }
@@ -488,7 +532,6 @@ struct OPMLParser {
     }
 
     private func decodeXMLString(_ data: Data) -> String? {
-        // 跳过 UTF-8 BOM
         var bytes = data
         if bytes.count >= 3, bytes[0] == 0xEF, bytes[1] == 0xBB, bytes[2] == 0xBF {
             bytes = bytes.dropFirst(3)
@@ -502,7 +545,6 @@ struct OPMLParser {
         return nil
     }
 
-    /// 优先 xmlUrl；type=rss/atom 时接受 url；其次像 feed 的 url；最后谨慎使用 htmlUrl 仅当路径像 feed
     private func firstFeedURL(in tag: String) -> String? {
         let xmlKeys = ["xmlUrl", "xmlurl", "xmlURL", "XMLUrl", "xml_url", "xmluri", "xmlUri"]
         for key in xmlKeys {
@@ -515,7 +557,6 @@ struct OPMLParser {
         if let v = extractAttr("url", from: tag), looksLikeURL(v) {
             if isFeedType || looksLikeFeedURL(v) { return v }
         }
-        // 部分导出器用 htmlUrl 误放 feed 地址
         if let v = extractAttr("htmlUrl", from: tag) ?? extractAttr("htmlurl", from: tag),
            looksLikeFeedURL(v) {
             return v
@@ -536,7 +577,6 @@ struct OPMLParser {
     }
 
     private func extractAttr(_ attr: String, from tag: String) -> String? {
-        // 支持双引号、单引号、无引号
         let pattern = "\(attr)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+)"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
               let match = regex.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)) else { return nil }
@@ -550,7 +590,6 @@ struct OPMLParser {
         return nil
     }
 
-    /// 从 HTML/XML 中的 <link rel="alternate" type="application/rss+xml" href="..."> 提取
     private func parseLinkAlternateFeeds(from xml: String, seen: inout Set<String>) -> [OPMLItem] {
         var items: [OPMLItem] = []
         let pattern = #"<link\\b[^>]*>"#

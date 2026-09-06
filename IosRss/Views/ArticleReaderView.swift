@@ -304,10 +304,10 @@ struct ArticleReaderView: View {
         isGeneratingSummary = true
         do {
             let result = try await store.generateSummary(for: currentArticle)
-            aiSummary = result
+            aiSummary = result.text
             summaryExpanded = true
             var updated = currentArticle
-            updated.aiSummary = result
+            updated.aiSummary = result.text
             store.updateArticle(updated)
         } catch {
             summaryError = error.localizedDescription

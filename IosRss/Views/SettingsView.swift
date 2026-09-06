@@ -114,7 +114,6 @@ struct SettingsView: View {
             .onDisappear { store.persistSettings() }
         }
     }
-
 }
 
 struct FontSettingsView: View {

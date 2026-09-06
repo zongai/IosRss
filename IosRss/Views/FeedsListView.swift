@@ -35,7 +35,7 @@ struct FeedsListView: View {
                                     NavigationLink(value: feed) {
                                         FeedRow(feed: feed)
                                     }
-                                    .id("\(feed.id.uuidString)-\(feed.unreadCount)-\(feed.groupID?.uuidString ?? "")")
+                                    .id("\(feed.id.uuidString)-\(feed.title)-\(feed.unreadCount)-\(feed.groupID?.uuidString ?? "")")
                                     .swipeActions(edge: .trailing) {
                                         Button(role: .destructive) {
                                             if let idx = store.feeds.firstIndex(where: { $0.id == feed.id }) {

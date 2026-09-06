@@ -73,22 +73,29 @@ extension AppStore {
     func renameFeed(_ feedID: UUID, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
-        feeds[idx].title = trimmed
-        for j in feeds[idx].articles.indices {
-            feeds[idx].articles[j].feedTitle = trimmed
+        // 整元素重写，确保 @Observable 能追踪到 feeds 变化并刷新列表
+        var feed = feeds[idx]
+        feed.title = trimmed
+        for j in feed.articles.indices {
+            feed.articles[j].feedTitle = trimmed
         }
+        feeds[idx] = feed
         saveToStorage()
     }
 
     func setFeedFetchFullContent(_ feedID: UUID, enabled: Bool) {
         guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
-        feeds[idx].fetchFullContentEnabled = enabled
+        var feed = feeds[idx]
+        feed.fetchFullContentEnabled = enabled
+        feeds[idx] = feed
         saveToStorage()
     }
 
     func setFeedFetchComments(_ feedID: UUID, enabled: Bool) {
         guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
-        feeds[idx].fetchCommentsEnabled = enabled
+        var feed = feeds[idx]
+        feed.fetchCommentsEnabled = enabled
+        feeds[idx] = feed
         saveToStorage()
     }
 

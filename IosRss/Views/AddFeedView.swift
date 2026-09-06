@@ -25,6 +25,7 @@ struct AddFeedView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                // URL Input Area
                 VStack(alignment: .leading, spacing: 8) {
                     Text("粘贴网站或 Feed 地址")
                         .font(.system(size: 13))
@@ -47,6 +48,7 @@ struct AddFeedView: View {
                     .background(.secondary.opacity(0.1), in: .rect(cornerRadius: 10))
                     .padding(.horizontal, 20)
 
+                    // 指定分组
                     HStack(spacing: 10) {
                         Image(systemName: "folder")
                             .foregroundStyle(.secondary)
@@ -208,6 +210,7 @@ struct AddFeedView: View {
                 phase = .select
             }
         } catch {
+            // Try parsing directly as feed
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
                 let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
@@ -239,6 +242,7 @@ struct AddFeedView: View {
             let (data, _) = try await URLSession.shared.data(from: url)
             OfflineCache.saveFeedXML(url: discovered.url, data: data)
             let feedID = UUID()
+            // 优先用 Feed 内 channel/title；没有再用 link 上的 title；仍没有则用域名
             let fromXML = FeedParser.extractFeedTitle(from: data)
             let fallbackName = (discovered.title != discovered.url
                                 && discovered.title != FeedNaming.domainName(from: discovered.url))
@@ -249,6 +253,7 @@ struct AddFeedView: View {
             )
             let articles = FeedParser.parse(data: data, feedID: feedID, feedTitle: resolvedTitle)
             let favicon = FeedParser.resolveFaviconURL(from: data, feedURL: discovered.url)
+            // 若所选分组已被删除则回退为未分组
             let groupID: UUID? = {
                 guard let gid = selectedGroupID else { return nil }
                 return store.groups.contains(where: { $0.id == gid }) ? gid : nil

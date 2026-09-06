@@ -33,10 +33,9 @@ enum ArticleContentFetcher {
             throw FetchError.invalidURL
         }
 
-        // 过短缓存视为失败提取，允许重新抓取（避免相关推荐卡片被当成全文）
         if let cached = OfflineCache.loadArticleHTML(link: urlString), !cached.isEmpty {
             let len = HTMLUtils.stripTags(cached).count
-            if len >= 400 {
+            if len >= 80 {
                 return Result(title: nil, contentHTML: cached, textLength: len)
             }
         }
@@ -75,6 +74,7 @@ enum ArticleContentFetcher {
         var extracted = extractArticle(from: html, baseURL: url)
         var plainLen = HTMLUtils.stripTags(extracted.content).count
 
+        // HTML 启发式过短时，尝试 WordPress REST API（量子位等 WP 站点）
         if plainLen < 400, let wp = await fetchWordPressContent(pageURL: url, pageHTML: html) {
             let wpLen = HTMLUtils.stripTags(wp.content).count
             if wpLen > plainLen {
@@ -90,6 +90,8 @@ enum ArticleContentFetcher {
         return Result(title: extracted.title, contentHTML: extracted.content, textLength: plainLen)
     }
 
+    // MARK: - WordPress REST fallback
+
     private static func fetchWordPressContent(pageURL: URL, pageHTML: String) async -> Extracted? {
         var apiURL: URL?
         if let link = matchFirst(#"<link[^>]+type=[\"']application/json[\"'][^>]+href=[\"']([^\"']+)[\"']"#, in: pageHTML)
@@ -99,7 +101,8 @@ enum ArticleContentFetcher {
         if apiURL == nil, let id = matchFirst(#"/wp-json/wp/v2/posts/(\d+)"#, in: pageHTML) {
             if var comps = URLComponents(url: pageURL, resolvingAgainstBaseURL: false) {
                 comps.path = "/wp-json/wp/v2/posts/\(id)"
-                comps.query = nil; comps.fragment = nil
+                comps.query = nil
+                comps.fragment = nil
                 apiURL = comps.url
             }
         }
@@ -108,31 +111,44 @@ enum ArticleContentFetcher {
                 ?? matchFirst(#"/\d{4}/\d{2}/(\d+)\.html"#, in: pageURL.absoluteString)
             if let postID, var comps = URLComponents(url: pageURL, resolvingAgainstBaseURL: false) {
                 comps.path = "/wp-json/wp/v2/posts/\(postID)"
-                comps.query = nil; comps.fragment = nil
+                comps.query = nil
+                comps.fragment = nil
                 apiURL = comps.url
             }
         }
         guard let apiURL else { return nil }
+
         var request = URLRequest(url: apiURL, timeoutInterval: 15)
         request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) { return nil }
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                return nil
+            }
             guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-            guard let content = obj["content"] as? [String: Any],
-                  let contentHTML = content["rendered"] as? String, !contentHTML.isEmpty else { return nil }
+            let contentHTML: String? = {
+                if let content = obj["content"] as? [String: Any],
+                   let rendered = content["rendered"] as? String { return rendered }
+                return nil
+            }()
             let title: String? = {
                 if let t = obj["title"] as? [String: Any], let rendered = t["rendered"] as? String {
                     return HTMLUtils.stripTags(rendered).trimmingCharacters(in: .whitespacesAndNewlines)
                 }
                 return nil
             }()
+            guard let contentHTML, !contentHTML.isEmpty else { return nil }
             let cleaned = cleanContentHTML(contentHTML, baseURL: pageURL)
-            guard HTMLUtils.stripTags(cleaned).count >= 120 else { return nil }
+            let len = HTMLUtils.stripTags(cleaned).count
+            guard len >= 120 else { return nil }
             return Extracted(title: title, content: cleaned)
-        } catch { return nil }
+        } catch {
+            return nil
+        }
     }
+
+    // MARK: - Encoding
 
     private static func decodeHTML(data: Data) -> String? {
         if let s = String(data: data, encoding: .utf8) { return s }
@@ -155,28 +171,34 @@ enum ArticleContentFetcher {
 
     private static func extractArticle(from html: String, baseURL: URL) -> Extracted {
         var work = html
-        for tag in ["script", "style", "noscript", "svg", "iframe", "object", "embed", "form", "nav", "footer", "header", "aside"] {
+        let noiseTags = ["script", "style", "noscript", "svg", "iframe", "object", "embed", "form", "nav", "footer", "header", "aside"]
+        for tag in noiseTags {
             work = removeTagBlocks(work, tag: tag)
         }
         work = work.replacingOccurrences(of: #"<!--[\s\S]*?-->"#, with: "", options: .regularExpression)
+
         let title = extractTitle(from: html)
+
         if let semantic = extractBySemanticTags(work) {
             let cleaned = cleanContentHTML(semantic, baseURL: baseURL)
             if HTMLUtils.stripTags(cleaned).count >= 120 {
                 return Extracted(title: title, content: cleaned)
             }
         }
+
         if let candidate = extractByHeuristics(work) {
             let cleaned = cleanContentHTML(candidate, baseURL: baseURL)
             if HTMLUtils.stripTags(cleaned).count >= 80 {
                 return Extracted(title: title, content: cleaned)
             }
         }
+
         let paragraphs = collectParagraphs(work)
         if !paragraphs.isEmpty {
             let joined = paragraphs.map { "<p>\($0)</p>" }.joined(separator: "\n")
             return Extracted(title: title, content: cleanContentHTML(joined, baseURL: baseURL))
         }
+
         let plain = HTMLUtils.stripTags(work)
         return Extracted(title: title, content: "<p>\(plain.prefix(8000))</p>")
     }
@@ -198,23 +220,26 @@ enum ArticleContentFetcher {
     private static func extractBySemanticTags(_ html: String) -> String? {
         for tag in ["article", "main"] {
             if let block = extractBalancedTagContent(html, tag: tag) {
-                if HTMLUtils.stripTags(block).count >= 120 { return block }
+                let textLen = HTMLUtils.stripTags(block).count
+                if textLen >= 120 { return block }
             }
         }
         if let open = firstMatchRange(#"<([a-zA-Z0-9]+)[^>]*role=[\"']main[\"'][^>]*>"#, in: html),
            let tagName = matchFirst(#"<([a-zA-Z0-9]+)[^>]*role=[\"']main[\"']"#, in: html),
-           let block = extractBalancedFromOpen(html, openEnd: open.upperBound, tag: tagName),
-           HTMLUtils.stripTags(block).count >= 120 {
-            return block
+           let block = extractBalancedFromOpen(html, openEnd: open.upperBound, tag: tagName) {
+            let textLen = HTMLUtils.stripTags(block).count
+            if textLen >= 120 { return block }
         }
         return nil
     }
 
     private static func extractByHeuristics(_ html: String) -> String? {
+        // 平衡标签匹配，避免嵌套 div 被非贪婪正则截断（量子位等站点）
         let openPattern = #"<(div|section|td|article)([^>]*(?:class|id)=[\"'][^\"']*(?:article|post|content|entry|story|body|main|text|rich|detail)[^\"']*[\"'][^>]*)>"#
         guard let regex = try? NSRegularExpression(pattern: openPattern, options: .caseInsensitive) else { return nil }
         let ns = html as NSString
         let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
+
         var best: (score: Double, html: String)?
         for match in matches {
             guard match.numberOfRanges >= 3,
@@ -223,15 +248,21 @@ enum ArticleContentFetcher {
             let tag = String(html[tagRange])
             let openAttrs = Range(match.range(at: 2), in: html).map { String(html[$0]) } ?? ""
             let openLower = openAttrs.lowercased()
+
             let skipTokens = ["text_box", "picture_text", "sidebar", "related", "recommend",
                               "comment", "share_box", "share_pc", "nav_", "menu", "footer",
                               "breadcrumb", "pagination", "hot-list", "hot_list"]
             if skipTokens.contains(where: { openLower.contains($0) }) { continue }
+
             guard let block = extractBalancedFromOpen(html, openEnd: fullOpen.upperBound, tag: tag) else { continue }
             let score = scoreBlock(block, openAttrs: openAttrs)
-            if score > (best?.score ?? 0) { best = (score, block) }
+            if score > (best?.score ?? 0) {
+                best = (score, block)
+            }
         }
-        if let best, HTMLUtils.stripTags(best.html).count >= 200 { return best.html }
+        if let best, HTMLUtils.stripTags(best.html).count >= 200 {
+            return best.html
+        }
         return best.map { HTMLUtils.stripTags($0.html).count >= 120 ? $0.html : nil } ?? nil
     }
 
@@ -239,13 +270,18 @@ enum ArticleContentFetcher {
         let text = HTMLUtils.stripTags(html)
         let len = Double(text.count)
         guard len > 50 else { return 0 }
+
         let pCount = countMatches(#"<p[\s>]"#, in: html)
         let commaCount = text.filter { $0 == "," || $0 == "，" }.count
         let linkTextLen = extractLinkTextLength(html)
         let linkDensity = len > 0 ? Double(linkTextLen) / len : 1
-        var score = len * 0.01 + Double(pCount) * 4 + Double(commaCount) * 0.5
+
+        var score = len * 0.01
+        score += Double(pCount) * 4
+        score += Double(commaCount) * 0.5
         if linkDensity > 0.35 { score *= 0.25 }
         else if linkDensity > 0.2 { score *= 0.55 }
+
         let lower = (html + " " + openAttrs).lowercased()
         for bad in ["comment", "share", "related", "recommend", "sidebar", "footer", "nav", "advert", "promo", "text_box", "picture_text"] {
             if lower.contains(bad) { score *= 0.4 }
@@ -254,7 +290,9 @@ enum ArticleContentFetcher {
                      "post_content", "single-content", "rich-content", "article-body", "post-body"] {
             if openAttrs.lowercased().contains(good) { score *= 2.5; break }
         }
-        if openAttrs.lowercased().contains("class=\"article\"") || openAttrs.lowercased().contains("class='article'") {
+        if openAttrs.lowercased().contains("class=\"article\"")
+            || openAttrs.lowercased().contains("class='article'")
+            || openAttrs.lowercased().contains(" article ") {
             score *= 1.8
         }
         if len < 400 { score *= 0.5 }
@@ -265,8 +303,9 @@ enum ArticleContentFetcher {
     private static func extractLinkTextLength(_ html: String) -> Int {
         guard let regex = try? NSRegularExpression(pattern: #"<a[^>]*>([\s\S]*?)</a>"#, options: .caseInsensitive) else { return 0 }
         let ns = html as NSString
+        let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
         var total = 0
-        for m in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+        for m in matches {
             if m.numberOfRanges >= 2, let r = Range(m.range(at: 1), in: html) {
                 total += HTMLUtils.stripTags(String(html[r])).count
             }
@@ -277,11 +316,14 @@ enum ArticleContentFetcher {
     private static func collectParagraphs(_ html: String) -> [String] {
         guard let regex = try? NSRegularExpression(pattern: #"<p[^>]*>([\s\S]*?)</p>"#, options: .caseInsensitive) else { return [] }
         let ns = html as NSString
+        let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
         var result: [String] = []
-        for m in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+        for m in matches {
             if m.numberOfRanges >= 2, let r = Range(m.range(at: 1), in: html) {
                 let text = HTMLUtils.stripTags(String(html[r])).trimmingCharacters(in: .whitespacesAndNewlines)
-                if text.count >= 40 { result.append(HTMLUtils.decodeEntities(text)) }
+                if text.count >= 40 {
+                    result.append(HTMLUtils.decodeEntities(text))
+                }
             }
         }
         return result
@@ -289,8 +331,10 @@ enum ArticleContentFetcher {
 
     private static func removeTagBlocks(_ html: String, tag: String) -> String {
         var result = html
-        result = result.replacingOccurrences(of: "<\(tag)\\b[^>]*>[\\s\\S]*?</\(tag)>", with: "", options: [.regularExpression, .caseInsensitive])
-        result = result.replacingOccurrences(of: "<\(tag)\\b[^>]*/?>", with: "", options: [.regularExpression, .caseInsensitive])
+        let pair = "<\(tag)\\b[^>]*>[\\s\\S]*?</\(tag)>"
+        result = result.replacingOccurrences(of: pair, with: "", options: [.regularExpression, .caseInsensitive])
+        let selfClosing = "<\(tag)\\b[^>]*/?>"
+        result = result.replacingOccurrences(of: selfClosing, with: "", options: [.regularExpression, .caseInsensitive])
         return result
     }
 
@@ -298,12 +342,17 @@ enum ArticleContentFetcher {
         let openPattern = "<\(tag)\\b[^>]*>"
         guard let regex = try? NSRegularExpression(pattern: openPattern, options: .caseInsensitive) else { return nil }
         let ns = html as NSString
-        var best: String?; var bestLen = 0
-        for open in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+        let opens = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
+        var best: String?
+        var bestLen = 0
+        for open in opens {
             guard let openRange = Range(open.range, in: html) else { continue }
             if let block = extractBalancedFromOpen(html, openEnd: openRange.upperBound, tag: tag) {
                 let len = HTMLUtils.stripTags(block).count
-                if len > bestLen { bestLen = len; best = block }
+                if len > bestLen {
+                    bestLen = len
+                    best = block
+                }
             }
         }
         return best
@@ -315,18 +364,22 @@ enum ArticleContentFetcher {
         let pattern = "<(/?)\(tag)\\b[^>]*>"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }
         let ns = search as NSString
-        for m in regex.matches(in: search, range: NSRange(location: 0, length: ns.length)) {
+        let matches = regex.matches(in: search, range: NSRange(location: 0, length: ns.length))
+        for m in matches {
             guard let full = Range(m.range, in: search),
                   let slashRange = Range(m.range(at: 1), in: search) else { continue }
             let isClose = !search[slashRange].isEmpty
-            if String(search[full]).hasSuffix("/>") { continue }
+            let token = String(search[full])
+            if token.hasSuffix("/>") { continue }
             if isClose {
                 depth -= 1
                 if depth == 0 {
                     let innerEnd = search.index(search.startIndex, offsetBy: m.range.location)
                     return String(search[search.startIndex..<innerEnd])
                 }
-            } else { depth += 1 }
+            } else {
+                depth += 1
+            }
         }
         return nil
     }
@@ -345,8 +398,16 @@ enum ArticleContentFetcher {
         }
         work = absolutizeAttributes(work, attr: "src", baseURL: baseURL)
         work = absolutizeAttributes(work, attr: "href", baseURL: baseURL)
-        work = work.replacingOccurrences(of: #"<(img[^>]+)data-src=[\"']([^\"']+)[\"']"#, with: #"<$1src=\"$2\""#, options: .regularExpression)
-        work = work.replacingOccurrences(of: #"<(img[^>]+)data-original=[\"']([^\"']+)[\"']"#, with: #"<$1src=\"$2\""#, options: .regularExpression)
+        work = work.replacingOccurrences(
+            of: #"<(img[^>]+)data-src=[\"']([^\"']+)[\"']"#,
+            with: #"<$1src=\"$2\""#,
+            options: .regularExpression
+        )
+        work = work.replacingOccurrences(
+            of: #"<(img[^>]+)data-original=[\"']([^\"']+)[\"']"#,
+            with: #"<$1src=\"$2\""#,
+            options: .regularExpression
+        )
         work = HTMLUtils.decodeEntities(work)
         work = work.replacingOccurrences(of: #"\n{3,}"# , with: "\n\n", options: .regularExpression)
         return work.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -356,13 +417,16 @@ enum ArticleContentFetcher {
         let realPat = "(" + attr + "=[\"'])([^\"']+)([\"'])"
         guard let regex = try? NSRegularExpression(pattern: realPat, options: .caseInsensitive) else { return html }
         let ns = html as NSString
+        let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length)).reversed()
         var result = html
-        for m in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)).reversed() {
+        for m in matches {
             guard m.numberOfRanges >= 4,
                   let valRange = Range(m.range(at: 2), in: result),
                   let fullRange = Range(m.range, in: result) else { continue }
             let value = String(result[valRange])
-            if value.hasPrefix("http://") || value.hasPrefix("https://") || value.hasPrefix("data:") || value.hasPrefix("#") { continue }
+            if value.hasPrefix("http://") || value.hasPrefix("https://") || value.hasPrefix("data:") || value.hasPrefix("#") {
+                continue
+            }
             if let absolute = URL(string: value, relativeTo: baseURL)?.absoluteString {
                 let prefix = String(result[Range(m.range(at: 1), in: result)!])
                 let suffix = String(result[Range(m.range(at: 3), in: result)!])

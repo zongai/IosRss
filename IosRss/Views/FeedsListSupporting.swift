@@ -44,8 +44,6 @@ struct GroupSectionHeader: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title)，\(isCollapsed ? "已折叠" : "已展开")")
-        .accessibilityHint("点按以\(isCollapsed ? "展开" : "折叠")")
     }
 }
 

@@ -388,6 +388,74 @@ class AppStore {
         return fallback
     }
 
+    /// AI 调用顺序：优先 preferred（含黑名单切换），再其余 Provider；跳过无 Key 的
+    func orderedAIProviders(preferredID: UUID?, forText text: String) -> [AIProvider] {
+        var ordered: [AIProvider] = []
+        var seen = Set<UUID>()
+        if let first = resolveAIProvider(preferredID: preferredID, forText: text) {
+            ordered.append(first)
+            seen.insert(first.id)
+        }
+        for p in aiProviders where !seen.contains(p.id) {
+            ordered.append(p)
+            seen.insert(p.id)
+        }
+        return ordered
+    }
+
+    /// 判断 AI 返回是否像错误信息（部分网关用 200 + 正文报错）
+    static func looksLikeAIErrorResponse(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return true }
+        if t.count > 400 { return false }
+        let lower = t.lowercased()
+        let needles = [
+            "error", "invalid api key", "incorrect api key", "authentication",
+            "unauthorized", "forbidden", "rate limit", "quota", "overloaded",
+            "model not found", "does not exist", "permission denied",
+            "请求失败", "无效的", "未配置", "余额不足", "频率限制", "鉴权失败",
+            "api key", "access denied", "service unavailable"
+        ]
+        return needles.contains { lower.contains($0) }
+    }
+
+    /// 依次尝试可用 AI Provider，全部失败再抛错
+    func callAIWithFailover(
+        preferredID: UUID?,
+        probeText: String,
+        maxTokens: Int = 500,
+        buildPrompt: () -> String
+    ) async throws -> (text: String, provider: AIProvider) {
+        let providers = orderedAIProviders(preferredID: preferredID, forText: probeText)
+        guard !providers.isEmpty else { throw TranslationError.noProvider }
+        let prompt = buildPrompt()
+        var lastError: Error = TranslationError.noProvider
+        var triedAnyKey = false
+        for provider in providers {
+            let key = Keychain.load(key: "ai_key_\(provider.id)") ?? ""
+            guard !key.isEmpty else { continue }
+            triedAnyKey = true
+            do {
+                let raw = try await callAI(
+                    prompt: prompt,
+                    provider: provider,
+                    apiKey: key,
+                    maxTokens: maxTokens
+                )
+                let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if text.isEmpty || Self.looksLikeAIErrorResponse(text) {
+                    throw TranslationError.apiError(text.isEmpty ? "空响应" : text)
+                }
+                return (text, provider)
+            } catch {
+                lastError = error
+                continue
+            }
+        }
+        if !triedAnyKey { throw TranslationError.apiError("未配置任何可用的 API Key") }
+        throw lastError
+    }
+
     func translateText(_ text: String) async throws -> String {
         switch defaultTranslationEngine {
         case .google: return try await GoogleTranslate.translate(text: text)
@@ -398,12 +466,18 @@ class AppStore {
             let key = Keychain.load(key: "deepl_translate_key") ?? ""
             return try await DeepLTranslate.translate(text: text, apiKey: key)
         case .ai:
-            guard let provider = resolveAIProvider(
-                preferredID: defaultTranslationProviderID ?? defaultSummaryProviderID,
-                forText: text
-            ) else { throw TranslationError.noProvider }
-            let key = Keychain.load(key: "ai_key_\(provider.id)") ?? ""
-            return try await AITranslate.translate(text: text, provider: provider, apiKey: key, promptTemplate: translationPrompt)
+            let preferred = defaultTranslationProviderID ?? defaultSummaryProviderID
+            let template = translationPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? AppStore.defaultTranslationPrompt : translationPrompt
+            var prompt = template.replacingOccurrences(of: "{{text}}", with: text)
+            if !template.contains("{{text}}") { prompt += "\n\n" + text }
+            let (result, _) = try await callAIWithFailover(
+                preferredID: preferred,
+                probeText: text,
+                maxTokens: 2048,
+                buildPrompt: { prompt }
+            )
+            return result
         }
     }
 
@@ -559,11 +633,21 @@ class AppStore {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
-        guard let provider = resolveAIProvider(preferredID: defaultSummaryProviderID, forText: probe) else {
-            throw TranslationError.noProvider
+        let content = String(HTMLUtils.stripTags(article.content).prefix(2500))
+        let template = summaryPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? AppStore.defaultSummaryPrompt : summaryPrompt
+        var prompt = template
+            .replacingOccurrences(of: "{{title}}", with: article.title)
+            .replacingOccurrences(of: "{{content}}", with: content)
+        if !template.contains("{{title}}") && !template.contains("{{content}}") {
+            prompt += "\n\n标题：\(article.title)\n\n内容：\(content)"
         }
-        let key = Keychain.load(key: "ai_key_\(provider.id)") ?? ""
-        let raw = try await AISummary.summarize(article: article, provider: provider, apiKey: key, promptTemplate: summaryPrompt)
+        let (raw, provider) = try await callAIWithFailover(
+            preferredID: defaultSummaryProviderID,
+            probeText: probe,
+            maxTokens: 600,
+            buildPrompt: { prompt }
+        )
         return (Self.cleanSummaryText(raw), provider.name)
     }
 
@@ -583,19 +667,55 @@ class AppStore {
         let preferred = defaultExplainProviderID
             ?? defaultSummaryProviderID
             ?? defaultTranslationProviderID
-        guard let provider = resolveAIProvider(preferredID: preferred, forText: text) else {
-            throw TranslationError.noProvider
-        }
-        let key = Keychain.load(key: "ai_key_\(provider.id)") ?? ""
-        return try await AIExplain.explain(
-            text: text,
-            provider: provider,
-            apiKey: key,
-            promptTemplate: explainPrompt
+        let clipped = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(800))
+        guard !clipped.isEmpty else { throw TranslationError.apiError("未选中有效文字") }
+        let template = explainPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? AppStore.defaultExplainPrompt : explainPrompt
+        var prompt = template.replacingOccurrences(of: "{{text}}", with: clipped)
+        if !template.contains("{{text}}") { prompt += "\n\n\(clipped)" }
+        let (result, _) = try await callAIWithFailover(
+            preferredID: preferred,
+            probeText: clipped,
+            maxTokens: 500,
+            buildPrompt: { prompt }
         )
+        return result
+    }
+
+    func renameFeed(_ feedID: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
+        feeds[idx].title = trimmed
+        for j in feeds[idx].articles.indices {
+            feeds[idx].articles[j].feedTitle = trimmed
+        }
+        saveToStorage()
+    }
+
+    func setFeedFetchFullContent(_ feedID: UUID, enabled: Bool) {
+        guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
+        feeds[idx].fetchFullContentEnabled = enabled
+        saveToStorage()
+    }
+
+    func setFeedFetchComments(_ feedID: UUID, enabled: Bool) {
+        guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
+        feeds[idx].fetchCommentsEnabled = enabled
+        saveToStorage()
+    }
+
+    func isFullContentEnabled(for article: Article) -> Bool {
+        feeds.first(where: { $0.id == article.feedID })?.fetchFullContentEnabled ?? true
+    }
+
+    func isCommentsEnabled(for article: Article) -> Bool {
+        feeds.first(where: { $0.id == article.feedID })?.fetchCommentsEnabled ?? false
     }
 
     func fetchFullContent(for article: Article) async throws -> Article {
+        guard isFullContentEnabled(for: article) else {
+            throw TranslationError.apiError("该订阅源已关闭全文获取")
+        }
         if article.hasFullContent, !article.content.isEmpty,
            HTMLUtils.stripTags(article.content).count >= 400 {
             OfflineCache.saveArticleHTML(link: article.link, html: article.content)
@@ -675,6 +795,7 @@ class AppStore {
                 guard !key.isEmpty else { continue }
                 if existing.contains(key) { skipped += 1; continue }
                 var feed = RSSFeed(title: item.title.isEmpty ? key : item.title, url: item.url)
+                feed.fetchCommentsEnabled = CommentFetcher.shouldAutoEnableComments(feedURL: item.url)
                 if let gname = item.groupName, !gname.isEmpty {
                     if let g = groups.first(where: { $0.name == gname }) { feed.groupID = g.id }
                     else {
@@ -694,7 +815,9 @@ class AppStore {
                 return SubscriptionImportResult(added: 0, skipped: 1, kind: "rss")
             }
             let title = FeedParser.extractFeedTitle(from: data) ?? url
-            feeds.append(RSSFeed(title: title, url: link))
+            var feed = RSSFeed(title: title, url: link)
+            feed.fetchCommentsEnabled = CommentFetcher.shouldAutoEnableComments(feedURL: link)
+            feeds.append(feed)
             saveToStorage()
             return SubscriptionImportResult(added: 1, skipped: 0, kind: "rss")
         }

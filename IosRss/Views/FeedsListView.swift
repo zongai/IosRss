@@ -12,10 +12,10 @@ struct FeedsListView: View {
     @State private var showExportPicker = false
     @State private var importMessage: String?
     @State private var moveFeedTarget: RSSFeed?
-    @State private var renameFeedTarget: RSSFeed?
-    @State private var renameFeedText = ""
     @State private var newGroupName = ""
     @State private var showNewGroupAlert = false
+    @State private var renameFeedTarget: RSSFeed?
+    @State private var renameFeedText = ""
 
     private static let allowedImportExtensions: Set<String> = ["opml", "xml", "rss", "atom", "txt"]
 
@@ -214,7 +214,7 @@ struct FeedsListView: View {
             }
             Button("取消", role: .cancel) { renameFeedTarget = nil }
         } message: {
-            Text("修改后将同步更新该源下文章的来源名称")
+            Text("修改后将显示在订阅列表与文章中")
         }
         .alert("导入结果", isPresented: Binding(
             get: { importMessage != nil },
@@ -244,6 +244,10 @@ struct FeedsListView: View {
             importMessage = "无法创建导出文件"
             return
         }
+        if kind == .opml, url.pathExtension.lowercased() != "opml" {
+            importMessage = "导出文件扩展名异常，请重试"
+            return
+        }
         exportFileURL = url
         showExportPicker = true
     }
@@ -263,6 +267,9 @@ struct FeedsListView: View {
             data = try? Data(contentsOf: coordinated)
         }
         if data == nil { data = try? Data(contentsOf: url) }
+        if data == nil, let copied = try? Data(contentsOf: URL(fileURLWithPath: url.path)) {
+            data = copied
+        }
         guard let data, !data.isEmpty else {
             importMessage = "无法读取该文件（\(url.lastPathComponent)）"
             return
@@ -271,11 +278,32 @@ struct FeedsListView: View {
             importMessage = importTXT(data: data)
             return
         }
+        if ext.isEmpty {
+            let head = String(data: data.prefix(200), encoding: .utf8)?.lowercased() ?? ""
+            let looksOK = head.contains("opml") || head.contains("outline")
+                || head.contains("<rss") || head.contains("<feed")
+                || head.contains("http://") || head.contains("https://")
+            if !looksOK {
+                importMessage = "仅支持 OPML / XML / RSS / Atom / TXT 订阅文件"
+                return
+            }
+        }
         let imported = store.importSubscriptions(data: data)
         if imported.added == 0 && imported.skipped == 0 {
-            importMessage = "未能识别有效订阅"
+            let head = String(data: data.prefix(400), encoding: .utf8) ?? ""
+            if head.localizedCaseInsensitiveContains("opml")
+                || head.localizedCaseInsensitiveContains("outline")
+                || head.localizedCaseInsensitiveContains("xmlUrl") {
+                importMessage = "已识别为 OPML，但未找到有效的 xmlUrl 订阅地址"
+            } else if head.localizedCaseInsensitiveContains("<rss")
+                        || head.localizedCaseInsensitiveContains("<feed") {
+                importMessage = "已识别为 RSS/Atom，但未找到可用的源地址"
+            } else {
+                importMessage = "未能识别为 OPML、RSS 或 Atom（\(url.lastPathComponent)）"
+            }
         } else {
-            var text = "已导入 \(imported.added) 个订阅"
+            let kind = imported.kind == "rss" ? "RSS/Atom" : "OPML"
+            var text = "已从 \(kind) 导入 \(imported.added) 个订阅"
             if imported.skipped > 0 { text += "，跳过 \(imported.skipped) 个已存在的源" }
             importMessage = text
             if imported.added > 0 { Task { await store.refreshAll() } }
@@ -345,5 +373,243 @@ struct FeedsListView: View {
         }
         .listRowSeparator(.hidden)
         .listRowInsets(.init(top: 60, leading: 0, bottom: 0, trailing: 0))
+    }
+}
+
+struct GroupSectionHeader: View {
+    @Environment(AppStore.self) private var store
+    let title: String
+    let feedCount: Int
+    let unreadCount: Int
+    let isCollapsed: Bool
+    let onToggle: () -> Void
+
+    private var titleSize: Double { store.groupTitleFontSize }
+    private var metaSize: Double { max(10, titleSize - 2) }
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: 6) {
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: max(9, titleSize - 2), weight: .semibold))
+                    .foregroundStyle(Color.secondary)
+                    .frame(width: max(12, titleSize - 1), alignment: .center)
+                Text(title)
+                    .font(.system(size: titleSize, weight: .semibold))
+                    .foregroundStyle(Color.secondary)
+                    .textCase(nil)
+                if isCollapsed {
+                    Text("\(feedCount)")
+                        .font(.system(size: metaSize, weight: .medium))
+                        .foregroundStyle(Color.secondary.opacity(0.8))
+                        .monospacedDigit()
+                    if unreadCount > 0 {
+                        Text("\(unreadCount)")
+                            .font(.system(size: max(10, titleSize - 3), weight: .bold))
+                            .foregroundStyle(Color(.systemBackground))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.primary, in: .capsule)
+                            .monospacedDigit()
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title)，\(isCollapsed ? "已折叠" : "已展开")")
+        .accessibilityHint("点按以\(isCollapsed ? "展开" : "折叠")")
+    }
+}
+
+struct GroupManagerView: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var newName = ""
+    @State private var renameTarget: FeedGroup?
+    @State private var renameText = ""
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(store.groups.sorted(by: { $0.sortOrder < $1.sortOrder })) { group in
+                        HStack {
+                            Image(systemName: "folder").foregroundStyle(.secondary)
+                            Text(group.name)
+                                .font(.system(size: store.groupTitleFontSize, weight: .medium))
+                            Spacer()
+                            Text("\(store.feeds.filter { $0.groupID == group.id }.count)")
+                                .foregroundStyle(.secondary).monospacedDigit()
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture { renameTarget = group; renameText = group.name }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) { store.deleteGroup(group.id) } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        }
+                    }
+                } header: { Text("已有分组") }
+                footer: { Text("点分组可重命名；删除分组后源会回到「未分组」。点组标题可折叠/展开。") }
+                Section("新建分组") {
+                    HStack {
+                        TextField("分组名称", text: $newName)
+                        Button("添加") { store.addGroup(name: newName); newName = "" }
+                            .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }
+            .navigationTitle("管理分组").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } } }
+            .alert("重命名分组", isPresented: Binding(
+                get: { renameTarget != nil },
+                set: { if !$0 { renameTarget = nil } }
+            )) {
+                TextField("名称", text: $renameText)
+                Button("保存") {
+                    if let g = renameTarget { store.renameGroup(g.id, to: renameText) }
+                    renameTarget = nil
+                }
+                Button("取消", role: .cancel) { renameTarget = nil }
+            }
+        }
+    }
+}
+
+struct FeedRow: View {
+    @Environment(AppStore.self) private var store
+    let feed: RSSFeed
+    private var live: RSSFeed { store.feeds.first(where: { $0.id == feed.id }) ?? feed }
+    var body: some View {
+        HStack(spacing: 14) {
+            FeedIcon(feed: live, size: 38)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(live.title)
+                    .font(.system(size: store.feedTitleFontSize, weight: .medium))
+                    .foregroundStyle(Color.primary)
+                if !live.fetchFullContentEnabled {
+                    Text("全文获取已关")
+                        .font(.system(size: max(10, store.feedTitleFontSize - 5)))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if live.unreadCount > 0 {
+                Text("\(live.unreadCount)")
+                    .font(.system(size: max(11, store.feedTitleFontSize - 4), weight: .bold))
+                    .foregroundStyle(Color(.systemBackground))
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Color.primary, in: .capsule).monospacedDigit()
+                    .animation(.snappy(duration: 0.2), value: live.unreadCount)
+            }
+        }
+        .padding(.vertical, 6)
+        .id("\(live.id.uuidString)-\(live.unreadCount)-\(live.faviconURL ?? "")-\(live.fetchFullContentEnabled)")
+    }
+}
+
+struct FeedIcon: View {
+    let feed: RSSFeed
+    let size: CGFloat
+    @State private var image: UIImage?
+    @State private var loading = false
+    @State private var useLetter = false
+    private var cacheKey: String { "feed-icon:\(feed.id.uuidString)" }
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill().frame(width: size, height: size).clipShape(Circle())
+            } else if loading {
+                ProgressView().frame(width: size, height: size)
+            } else { letterFallback }
+        }
+        .task(id: feed.id) { await loadIcon() }
+    }
+    private var letterFallback: some View {
+        ZStack {
+            Circle().fill(Color.primary).frame(width: size, height: size)
+            Text(String(feed.title.prefix(1)).uppercased())
+                .font(.system(size: size * 0.45, weight: .bold))
+                .foregroundStyle(Color(.systemBackground))
+        }
+    }
+    private func loadIcon() async {
+        if image != nil || useLetter { return }
+        if let cached = FaviconCache.shared.image(for: cacheKey) { image = cached; return }
+        if let data = OfflineCache.loadImage(url: cacheKey) {
+            if data.isEmpty { useLetter = true; return }
+            if let ui = UIImage(data: data), ui.size.width > 1 {
+                FaviconCache.shared.store(ui, for: cacheKey); image = ui; return
+            }
+        }
+        loading = true
+        defer { loading = false }
+        var candidates: [String] = []
+        if let preferred = feed.faviconURL, !preferred.isEmpty { candidates.append(preferred) }
+        else if let first = FeedParser.faviconCandidates(for: feed.url).first { candidates.append(first) }
+        var seen = Set<String>()
+        for raw in candidates {
+            guard !raw.isEmpty, seen.insert(raw).inserted, let url = URL(string: raw) else { continue }
+            do {
+                let (data, response) = try await URLSession.shared.data(from: url)
+                if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { continue }
+                guard let ui = UIImage(data: data), ui.size.width > 1 else { continue }
+                FaviconCache.shared.store(ui, for: cacheKey)
+                OfflineCache.saveImage(url: cacheKey, data: data)
+                image = ui
+                return
+            } catch { continue }
+        }
+        useLetter = true
+        OfflineCache.saveImage(url: cacheKey, data: Data())
+    }
+}
+
+enum FaviconCache {
+    static let shared = Cache()
+    final class Cache {
+        private let cache = NSCache<NSString, UIImage>()
+        func image(for key: String) -> UIImage? { cache.object(forKey: key as NSString) }
+        func store(_ image: UIImage, for key: String) { cache.setObject(image, forKey: key as NSString) }
+    }
+}
+
+struct OPMLDocumentPicker: UIViewControllerRepresentable {
+    var onPick: (URL?) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let types: [UTType] = [.item]
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL?) -> Void
+        init(onPick: @escaping (URL?) -> Void) { self.onPick = onPick }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onPick(urls.first)
+        }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onPick(nil) }
+    }
+}
+
+struct DocumentExportPicker: UIViewControllerRepresentable {
+    let fileURL: URL
+    var onFinish: () -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(onFinish: onFinish) }
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forExporting: [fileURL], asCopy: true)
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onFinish: () -> Void
+        init(onFinish: @escaping () -> Void) { self.onFinish = onFinish }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { onFinish() }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onFinish() }
     }
 }

@@ -47,6 +47,7 @@ extension AppStore {
             seen.insert(p.id)
             ordered.append(p)
         }
+        // blacklist may swap preferred
         append(resolveAIProvider(preferredID: preferredID, forText: text))
         if let preferredID {
             append(aiProviders.first(where: { $0.id == preferredID }))

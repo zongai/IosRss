@@ -1,37 +1,41 @@
 # IosRss
 
-原生 SwiftUI 实现的 iOS / iPadOS RSS 阅读器。支持 RSS 与 Atom，内置全文抓取、多引擎翻译、AI 摘要 / 解释、源分组与离线缓存。
+原生 SwiftUI 实现的 iOS / iPadOS RSS 阅读器。支持 RSS 与 Atom，内置全文抓取、多引擎翻译、AI 摘要 / 解释、源分组、评论（Substack 等）与离线缓存。
 
 **版本展示**：CI 构建为 `v1.2-4-build{N}`（N 为 GitHub Actions `run_number`）；本地调试为 `v1.2-4`。
 
 ## 功能
 
 ### 订阅与分组
-- **订阅管理**：添加 RSS / Atom；自动发现常见 feed 路径
+- **订阅管理**：添加 RSS / Atom；自动发现常见 feed 路径；源名称可重命名（立即刷新列表）
 - **源分组**：添加时可指定分组；列表左滑 / 长按移动到分组；分组管理（增删改）；**分组可折叠**（状态持久化，折叠时显示未读合计）
-- **OPML 导入 / 导出**：标准 OPML 2.0（含分组嵌套）；系统文件选择器；导出可选保存位置；文件名 `IosRss-subscriptions.opml`
+- **无未读隐藏**：默认源列表只显示有未读的源；工具栏眼睛或设置「显示已读文章」可查看全部
+- **OPML 导入 / 导出**：标准 OPML 2.0（含分组嵌套与 `groupName`）；系统文件选择器；导出可选保存位置；文件名 `IosRss-subscriptions.opml`；亦支持 TXT
 - **智能命名**：添加时优先解析 `channel` / `feed` 的 title；否则仅用清理后的域名
 - **Feed 图标**：RSS/Atom `<image>` / itunes / media / Atom icon；DuckDuckGo favicon 回退；失败后缓存标记，不再反复请求
+- **源级开关**：全文获取、评论获取可按源开启 / 关闭（长按菜单）
 
 ### 阅读
-- **全文抓取**：摘要过短时自动或手动从原文页抓取（**平衡标签匹配** + 启发式打分；WordPress 站点可走 REST API 回退）
-- **阅读体验**：段落首行缩进、HTML 实体解码、`AsyncImage` 配图、正文链接可点、应用内 Safari（默认关闭 Reader）
-- **框选 AI 解释**：选中文字菜单「AI解释」；可单独指定解释用 AI Provider
+- **全文抓取**：摘要过短时自动或手动从原文页抓取（平衡标签匹配 + 启发式打分；WordPress 可走 REST 回退）；源关闭全文时隐藏工具栏按钮
+- **阅读体验**：中/西文分排版（首行缩进、行距）；HTML 实体解码、`AsyncImage` 配图、正文链接可点、应用内 Safari（默认关闭 Reader）
+- **框选 AI 解释**：选中文字菜单将「AI解释」置于最前；可单独指定解释 Provider 与自定义 Prompt（`{{text}}`）
+- **评论**：源开启后阅读页显示评论入口；Substack（含自定义域）公开评论 API；评论页支持翻译；添加 / 导入时自动识别 Substack 类平台并开启评论
 - **已读**：打开即标已读并实时隐藏（可配置显示已读）；左滑标已读 / 全部已读；已读链接持久化
 - **收藏**：列表 / 阅读页收藏，独立收藏 Tab；清理时跳过收藏
 
 ### 翻译与 AI
 - **翻译引擎**：Google / Microsoft / DeepL / AI（OpenAI 兼容 + Gemini）
-- **列表翻译**：标题 + 预览分批翻译
+- **列表自动翻译**：进入列表后自动翻译「未译且非中文」的标题与摘要预览；已是中文则跳过
 - **长文翻译**：约 1800 字分块并发，保留 `<img>`
-- **AI 摘要**：多 Provider；去除 `1. 2. 3.` 序号；展示所用 Provider 名称
-- **AI 黑名单**：原文命中关键词时自动切换到指定 fallback Provider
+- **AI 摘要**：多 Provider；去除序号；卡片展示 Provider 名称（无编号列表）
+- **AI 黑名单**：原文命中关键词时切换到指定 fallback Provider
+- **失败自动切换**：翻译 / 摘要 / 解释失败时按顺序尝试其他已配置 Key 的 Provider
 
 ### 其它
 - **离线缓存**：订阅列表、Feed XML、文章全文 HTML、图片；网络失败回退本地
-- **分区字号**：订阅列表、文章列表、阅读器、AI 摘要可独立调节
+- **分区字号**：分组名、订阅列表、文章列表、阅读器、AI 摘要（字号设置在二级页）
 - **深色模式**：系统自适应
-- **CI**：GitHub Actions 产出 `IosRss-{版本}-{工程构建}-build{run}.ipa`，并打对应 Release tag
+- **CI**：推送 `v*` 标签或手动 `workflow_dispatch` 产出 unsigned IPA，并打对应 Release
 
 ## 结构
 
@@ -39,18 +43,21 @@
 IosRss/
 ├── App.swift / ContentView.swift / Cloud.swift
 ├── Models/
-│   ├── AppStore.swift      # 状态、分组折叠、黑名单路由、全文与翻译
-│   └── FeedModels.swift    # 模型 + AppVersion
+│   ├── AppStore.swift      # 状态、分组、failover、导入导出、全文/评论开关
+│   └── FeedModels.swift    # RSSFeed / Article / FeedGroup / AppVersion
 ├── Services/
-│   ├── FeedParser.swift           # RSS/Atom、OPML、命名与图标
-│   ├── ArticleContentFetcher.swift # 全文提取（平衡匹配 + WP REST）
+│   ├── FeedParser.swift              # RSS/Atom、OPML（含分组）、命名与图标
+│   ├── ArticleContentFetcher.swift   # 全文提取
+│   ├── CommentFetcher.swift          # Substack 等评论 + 自动开启判断
 │   ├── OfflineCache.swift
-│   └── TranslationServices.swift  # 翻译 / AI 摘要 / AI 解释
+│   └── TranslationServices.swift     # 翻译 / AI
 └── Views/
-    ├── FeedsListView / AddFeedView / GroupManager
+    ├── FeedsListView / AddFeedView
     ├── ArticleListView / ArticleReaderView
-    ├── SelectableTextViews          # 框选 + AI 解释面板
-    ├── FavoritesListView / SettingsView
+    ├── ArticleContentViews / ArticleReaderExtras / SelectableTextViews
+    ├── ArticleCommentsView
+    ├── FavoritesListView
+    └── SettingsView / SettingsExtraViews / SettingsAIViews
 ```
 
 ## 要求
@@ -62,13 +69,13 @@ IosRss/
 
 ## 设置说明
 
-1. **字号**：订阅列表、文章列表、阅读器、AI 摘要分别调节
+1. **字号设置**（二级页）：分组名、订阅列表、文章列表、阅读器、AI 摘要
 2. **自动清理**：已读保留天数、全文磁盘缓存天数（0 = 不清理）
 3. **离线**：查看占用，可清除全文 / Feed / 图片缓存（不影响订阅）
 4. **翻译设置**：默认引擎与各引擎 Key
 5. **AI 设置**
    - Provider 列表（摘要 / 翻译 / **解释** 标签）
-   - **默认解释引擎**（可跟随摘要或单独指定）
+   - 默认解释引擎与 **解释 Prompt**（`{{text}}`）
    - 黑名单关键词与命中后 fallback Provider
    - 翻译 / 摘要 Prompt
 
@@ -89,13 +96,15 @@ API Key 仅保存在本机 Keychain。
 
 | 能力 | 位置 |
 |------|------|
-| 版本展示 | `AppVersion` in `FeedModels.swift` + CI sed 注入 |
-| 源分组 / 折叠 | `FeedGroup`、`collapsedGroupIDs`、`FeedsListView` |
-| OPML 导入导出 | `OPMLParser` / `exportOPML` + `UIDocumentPicker` |
-| 全文抓取 | `ArticleContentFetcher`（平衡 div + WP REST） |
-| AI 解释 Provider | `defaultExplainProviderID`、`explainText` |
-| AI 黑名单 | `resolveAIProvider(preferredID:forText:)` |
-| 摘要去序号 | `cleanSummaryText` |
+| 版本展示 | `AppVersion` + CI sed 注入 |
+| 源分组 / 折叠 / 无未读隐藏 | `FeedGroup`、`collapsedGroupIDs`、`visibleFeedSections` |
+| OPML 分组导入 | `OPMLItem.groupName`、`OPMLParser` |
+| 全文抓取 / 源开关 | `ArticleContentFetcher`、`fetchFullContentEnabled` |
+| 评论 / Substack | `CommentFetcher`、`ArticleCommentsView` |
+| 列表自动翻译 | `ArticleListView.autoTranslatePending` |
+| AI failover | `callAIWithFailover` |
+| AI 解释 / 摘要 Provider | `defaultExplainProviderID`、`aiSummaryProvider` |
+| 中西文排版 | `ReaderTypography`、`SelectableParagraphView` |
 | 已读实时更新 | `markAsRead` + 列表依赖文章状态 |
 | 图标缓存 | `OfflineCache` favicon 成功 / 失败标记 |
 

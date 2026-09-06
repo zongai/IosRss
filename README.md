@@ -10,10 +10,11 @@
 - **订阅管理**：添加 RSS / Atom；自动发现常见 feed 路径；源名称可重命名（立即刷新列表）
 - **源分组**：添加时可指定分组；列表左滑 / 长按移动到分组；分组管理（增删改）；**分组可折叠**（状态持久化，折叠时显示未读合计）
 - **无未读隐藏**：默认源列表只显示有未读的源；工具栏眼睛或设置「显示已读文章」可查看全部
-- **OPML 导入 / 导出**：标准 OPML 2.0（含分组嵌套与 `groupName`）；系统文件选择器；导出可选保存位置；文件名 `IosRss-subscriptions.opml`；亦支持 TXT
+- **OPML 导入 / 导出**：标准 OPML 2.0（含分组嵌套与 `groupName`）；系统文件选择器；导出可选保存位置；文件名 `IosRss-subscriptions.opml`
 - **智能命名**：添加时优先解析 `channel` / `feed` 的 title；否则仅用清理后的域名
 - **Feed 图标**：RSS/Atom `<image>` / itunes / media / Atom icon；DuckDuckGo favicon 回退；失败后缓存标记，不再反复请求
-- **源级开关**：全文获取、评论获取可按源开启 / 关闭（长按菜单）
+- **源级开关**：全文获取、评论获取、**自动翻译**可按源开启 / 关闭（长按菜单）
+- **删除全部订阅**：导入/导出菜单中可一键清空所有源
 
 ### 阅读
 - **全文抓取**：摘要过短时自动或手动从原文页抓取（平衡标签匹配 + 启发式打分；WordPress 可走 REST 回退）；源关闭全文时隐藏工具栏按钮
@@ -106,7 +107,7 @@ API Key 仅保存在本机 Keychain。
 | AI 解释 / 摘要 Provider | `defaultExplainProviderID`、`aiSummaryProvider` |
 | 中西文排版 | `ReaderTypography`、`SelectableParagraphView` |
 | 已读实时更新 | `markAsRead` + 列表依赖文章状态 |
-| 图标缓存 | `OfflineCache` favicon 成功 / 失败标记 |
+| 图标缓存 | `faviconFetchDone` 只获取一次；`OfflineCache` 磁盘缓存 |
 
 ## License
 

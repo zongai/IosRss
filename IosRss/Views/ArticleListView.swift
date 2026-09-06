@@ -189,6 +189,8 @@ struct ArticleListView: View {
     /// 自动翻译：仅处理「未译且非目标中文」的标题 / 摘要
     private func autoTranslatePending(force: Bool) async {
         guard !isTranslatingAll else { return }
+        let feedEnabled = store.feeds.first(where: { $0.id == feed.id })?.autoTranslateEnabled ?? true
+        guard feedEnabled else { return }
         let snapshot = articles
         var jobs: [ListTranslationJob] = []
         jobs.reserveCapacity(snapshot.count * 2)

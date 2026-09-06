@@ -58,16 +58,22 @@ struct RSSFeed: Identifiable, Codable, Hashable {
     var fetchFullContentEnabled: Bool = true
     /// 是否在阅读页提供「评论」入口（如 Substack）；默认关闭
     var fetchCommentsEnabled: Bool = false
+    /// 是否已对该源执行过图标获取（成功或失败后均为 true，后台用）
+    var faviconFetchDone: Bool = false
+    /// 列表进入时是否自动翻译非目标语言且未译条目
+    var autoTranslateEnabled: Bool = true
 
     enum CodingKeys: String, CodingKey {
         case id, title, url, faviconURL, unreadCount, articles, lastFetched, groupID
-        case fetchFullContentEnabled, fetchCommentsEnabled
+        case fetchFullContentEnabled, fetchCommentsEnabled, faviconFetchDone, autoTranslateEnabled
     }
 
     init(id: UUID = UUID(), title: String, url: String, faviconURL: String? = nil,
          unreadCount: Int = 0, articles: [Article] = [], lastFetched: Date? = nil,
          groupID: UUID? = nil, fetchFullContentEnabled: Bool = true,
-         fetchCommentsEnabled: Bool = false) {
+         fetchCommentsEnabled: Bool = false,
+         faviconFetchDone: Bool = false,
+         autoTranslateEnabled: Bool = true) {
         self.id = id
         self.title = title
         self.url = url
@@ -78,6 +84,8 @@ struct RSSFeed: Identifiable, Codable, Hashable {
         self.groupID = groupID
         self.fetchFullContentEnabled = fetchFullContentEnabled
         self.fetchCommentsEnabled = fetchCommentsEnabled
+        self.faviconFetchDone = faviconFetchDone
+        self.autoTranslateEnabled = autoTranslateEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -92,6 +100,8 @@ struct RSSFeed: Identifiable, Codable, Hashable {
         groupID = try c.decodeIfPresent(UUID.self, forKey: .groupID)
         fetchFullContentEnabled = try c.decodeIfPresent(Bool.self, forKey: .fetchFullContentEnabled) ?? true
         fetchCommentsEnabled = try c.decodeIfPresent(Bool.self, forKey: .fetchCommentsEnabled) ?? false
+        faviconFetchDone = try c.decodeIfPresent(Bool.self, forKey: .faviconFetchDone) ?? false
+        autoTranslateEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoTranslateEnabled) ?? true
     }
 
     func hash(into hasher: inout Hasher) { hasher.combine(id) }

@@ -268,6 +268,7 @@ struct AddFeedView: View {
                 title: resolvedTitle,
                 url: discovered.url,
                 faviconURL: favicon,
+                faviconFetchDone: favicon != nil,
                 unreadCount: articles.count,
                 articles: articles,
                 lastFetched: Date(),

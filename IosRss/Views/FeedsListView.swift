@@ -14,6 +14,7 @@ struct FeedsListView: View {
     @State private var moveFeedTarget: RSSFeed?
     @State private var newGroupName = ""
     @State private var showNewGroupAlert = false
+    @State private var confirmDeleteAll = false
     @State private var renameFeedTarget: RSSFeed?
     @State private var renameFeedText = ""
 
@@ -75,6 +76,13 @@ struct FeedsListView: View {
                                         } label: {
                                             Label(commentsOn ? "关闭评论获取" : "开启评论获取",
                                                   systemImage: commentsOn ? "bubble.left.and.bubble.right.fill" : "bubble.left.and.bubble.right")
+                                        }
+                                        let autoOn = store.feeds.first(where: { $0.id == feed.id })?.autoTranslateEnabled ?? true
+                                        Button {
+                                            store.setFeedAutoTranslate(feed.id, enabled: !autoOn)
+                                        } label: {
+                                            Label(autoOn ? "关闭自动翻译" : "开启自动翻译",
+                                                  systemImage: autoOn ? "translate" : "character.textbox")
                                         }
                                         Button { moveFeedTarget = feed } label: {
                                             Label("移动到分组…", systemImage: "folder")
@@ -156,7 +164,11 @@ struct FeedsListView: View {
         .confirmationDialog("导入/导出", isPresented: $showOPMLMenu) {
             Button("导入 OPML / XML / TXT") { showOPMLImport = true }
             Button("导出为 OPML") { prepareExport(kind: .opml) }
-            Button("导出为 TXT") { prepareExport(kind: .txt) }
+            Button("删除全部订阅", role: .destructive) { confirmDeleteAll = true }
+            Button("取消", role: .cancel) {}
+        }
+        .confirmationDialog("确定删除全部订阅源？此操作不可恢复。", isPresented: $confirmDeleteAll, titleVisibility: .visible) {
+            Button("删除全部", role: .destructive) { store.deleteAllFeeds() }
             Button("取消", role: .cancel) {}
         }
         .sheet(isPresented: $showOPMLImport) {
@@ -240,7 +252,7 @@ struct FeedsListView: View {
         }
     }
 
-    private enum ExportKind { case opml, txt }
+    private enum ExportKind { case opml }
 
     private func prepareExport(kind: ExportKind) {
         let content: String
@@ -249,9 +261,6 @@ struct FeedsListView: View {
         case .opml:
             content = store.exportOPML()
             filename = "IosRss-subscriptions.opml"
-        case .txt:
-            content = store.exportTXT()
-            filename = "IosRss-subscriptions.txt"
         }
         guard !content.isEmpty,
               let url = store.writeExportFile(content: content, filename: filename) else {
@@ -546,12 +555,14 @@ struct FeedRow: View {
 }
 
 struct FeedIcon: View {
+    @Environment(AppStore.self) private var store
     let feed: RSSFeed
     let size: CGFloat
     @State private var image: UIImage?
     @State private var loading = false
     @State private var useLetter = false
     private var cacheKey: String { "feed-icon:\(feed.id.uuidString)" }
+    private var live: RSSFeed { store.feeds.first(where: { $0.id == feed.id }) ?? feed }
     var body: some View {
         Group {
             if let image {
@@ -579,12 +590,18 @@ struct FeedIcon: View {
                 FaviconCache.shared.store(ui, for: cacheKey); image = ui; return
             }
         }
+        // 已执行过：不再发起任何网络请求
+        if live.faviconFetchDone {
+            useLetter = true
+            return
+        }
         loading = true
         defer { loading = false }
         var candidates: [String] = []
-        if let preferred = feed.faviconURL, !preferred.isEmpty { candidates.append(preferred) }
-        else if let first = FeedParser.faviconCandidates(for: feed.url).first { candidates.append(first) }
+        if let preferred = live.faviconURL, !preferred.isEmpty { candidates.append(preferred) }
+        candidates.append(contentsOf: FeedParser.faviconCandidates(for: live.url))
         var seen = Set<String>()
+        var found: UIImage?
         for raw in candidates {
             guard !raw.isEmpty, seen.insert(raw).inserted, let url = URL(string: raw) else { continue }
             do {
@@ -593,12 +610,17 @@ struct FeedIcon: View {
                 guard let ui = UIImage(data: data), ui.size.width > 1 else { continue }
                 FaviconCache.shared.store(ui, for: cacheKey)
                 OfflineCache.saveImage(url: cacheKey, data: data)
-                image = ui
-                return
+                found = ui
+                break
             } catch { continue }
         }
-        useLetter = true
-        OfflineCache.saveImage(url: cacheKey, data: Data())
+        if let found {
+            image = found
+        } else {
+            useLetter = true
+            OfflineCache.saveImage(url: cacheKey, data: Data())
+        }
+        store.markFaviconFetchDone(live.id)
     }
 }
 

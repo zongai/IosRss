@@ -214,6 +214,11 @@ class AppStore {
     func addFeed(_ feed: RSSFeed) { feeds.append(feed); saveToStorage() }
     func deleteFeed(at offsets: IndexSet) { feeds.remove(atOffsets: offsets); saveToStorage() }
 
+    func deleteAllFeeds() {
+        feeds = []
+        saveToStorage()
+    }
+
     var feedsByGroup: [(group: FeedGroup?, feeds: [RSSFeed])] {
         let sortedGroups = groups.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name) }
         var sections: [(FeedGroup?, [RSSFeed])] = []
@@ -353,11 +358,17 @@ class AppStore {
         feeds[idx].articles.insert(contentsOf: newArticles, at: 0)
         feeds[idx].unreadCount = feeds[idx].articles.filter { !$0.isRead }.count
         feeds[idx].lastFetched = Date()
-        if let resolved = FeedParser.resolveFaviconURL(from: data, feedURL: urlStr) {
-            let current = feeds[idx].faviconURL ?? ""
-            let isFallbackOnly = current.isEmpty || current.contains("duckduckgo.com/ip3/") || current.contains("google.com/s2/favicons")
-            let fromFeed = FeedParser.extractFeedImage(from: data) != nil
-            if isFallbackOnly || fromFeed { feeds[idx].faviconURL = resolved }
+        // 图标获取只执行一次：无论成功与否都标记完成
+        if !feeds[idx].faviconFetchDone {
+            var feed = feeds[idx]
+            if let resolved = FeedParser.resolveFaviconURL(from: data, feedURL: urlStr) {
+                let current = feed.faviconURL ?? ""
+                let isFallbackOnly = current.isEmpty || current.contains("duckduckgo.com/ip3/") || current.contains("google.com/s2/favicons")
+                let fromFeed = FeedParser.extractFeedImage(from: data) != nil
+                if isFallbackOnly || fromFeed { feed.faviconURL = resolved }
+            }
+            feed.faviconFetchDone = true
+            feeds[idx] = feed
         }
         purgeOldReadArticles()
         pruneFullContentCache()
@@ -711,6 +722,23 @@ class AppStore {
         saveToStorage()
     }
 
+    func setFeedAutoTranslate(_ feedID: UUID, enabled: Bool) {
+        guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
+        var feed = feeds[idx]
+        feed.autoTranslateEnabled = enabled
+        feeds[idx] = feed
+        saveToStorage()
+    }
+
+    func markFaviconFetchDone(_ feedID: UUID) {
+        guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
+        guard !feeds[idx].faviconFetchDone else { return }
+        var feed = feeds[idx]
+        feed.faviconFetchDone = true
+        feeds[idx] = feed
+        saveToStorage()
+    }
+
     func isFullContentEnabled(for article: Article) -> Bool {
         feeds.first(where: { $0.id == article.feedID })?.fetchFullContentEnabled ?? true
     }
@@ -771,15 +799,6 @@ class AppStore {
         return lines.joined(separator: "\n")
     }
 
-    func exportTXT() -> String {
-        var lines: [String] = []
-        for section in feedsByGroup {
-            if let g = section.group { lines.append("# \(g.name)") }
-            for f in section.feeds { lines.append("\(f.title)\n\(f.url)") }
-            lines.append("")
-        }
-        return lines.joined(separator: "\n")
-    }
 
     func writeExportFile(content: String, filename: String) -> URL? {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)

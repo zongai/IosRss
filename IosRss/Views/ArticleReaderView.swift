@@ -119,12 +119,14 @@ struct ArticleReaderView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { store.toggleFavorite(currentArticle) } label: {
                     Label(currentArticle.isFavorite ? "已收藏" : "收藏",
                           systemImage: currentArticle.isFavorite ? "star.fill" : "star")
                 }
-                if fullContentAllowed {
+            }
+            if fullContentAllowed {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { Task { await fetchFullContent() } } label: {
                         if isFetchingFull { ProgressView().scaleEffect(0.75) }
                         else {
@@ -134,22 +136,30 @@ struct ArticleReaderView: View {
                     }
                     .disabled(isFetchingFull)
                 }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { Task { await toggleTranslation() } } label: {
                     if isTranslating { ProgressView().scaleEffect(0.75) }
                     else { Label(showTranslated ? "原文" : "翻译", systemImage: "translate") }
                 }
                 .disabled(isTranslating)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { Task { await generateSummary() } } label: {
                     if isGeneratingSummary { ProgressView().scaleEffect(0.75) }
                     else { Label("AI总结", systemImage: "wand.and.stars") }
                 }
                 .disabled(isGeneratingSummary)
-                if commentsAllowed {
+            }
+            if commentsAllowed {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { showComments = true } label: {
                         Label("评论", systemImage: "bubble.left.and.bubble.right")
                     }
                 }
-                if URL(string: article.link) != nil {
+            }
+            if URL(string: article.link) != nil {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { showInAppBrowser = true } label: {
                         Label("浏览器", systemImage: "safari")
                     }

@@ -49,6 +49,23 @@ enum CommentFetcher {
         throw CommentFetchError.unsupportedSite
     }
 
+    /// 添加/导入订阅时判断是否自动开启评论获取（Substack 及同类出版平台）
+    static func shouldAutoEnableComments(feedURL: String, sampleArticleLinks: [String] = []) -> Bool {
+        let candidates = [feedURL] + sampleArticleLinks
+        for raw in candidates {
+            guard let url = URL(string: raw), let host = url.host?.lowercased() else { continue }
+            if host == "substack.com" || host.hasSuffix(".substack.com") {
+                return true
+            }
+            // 文章路径含 /p/{slug}（Substack 自定义域名常见形态）
+            let parts = url.path.lowercased().split(separator: "/").map(String.init)
+            if let idx = parts.firstIndex(of: "p"), idx + 1 < parts.count, !parts[idx + 1].isEmpty {
+                return true
+            }
+        }
+        return false
+    }
+
     // MARK: - Substack
 
     private static func fetchSubstackComments(pageURL: URL) async throws -> [WebComment]? {

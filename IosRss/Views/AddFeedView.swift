@@ -253,6 +253,11 @@ struct AddFeedView: View {
                 guard let gid = selectedGroupID else { return nil }
                 return store.groups.contains(where: { $0.id == gid }) ? gid : nil
             }()
+            let sampleLinks = articles.prefix(8).map(\.link)
+            let enableComments = CommentFetcher.shouldAutoEnableComments(
+                feedURL: discovered.url,
+                sampleArticleLinks: Array(sampleLinks)
+            )
             let feed = RSSFeed(
                 id: feedID,
                 title: resolvedTitle,
@@ -261,7 +266,8 @@ struct AddFeedView: View {
                 unreadCount: articles.count,
                 articles: articles,
                 lastFetched: Date(),
-                groupID: groupID
+                groupID: groupID,
+                fetchCommentsEnabled: enableComments
             )
             store.addFeed(feed)
             dismiss()

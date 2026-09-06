@@ -17,6 +17,7 @@ struct AISummaryCard: View {
     let summary: String
     @Binding var expanded: Bool
     var fontSize: Double = 22
+    var providerName: String? = nil
     private var points: [String] {
         summary.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
     }
@@ -26,6 +27,14 @@ struct AISummaryCard: View {
                 HStack(spacing: 8) {
                     Image(systemName: "wand.and.stars").font(.system(size: 14, weight: .semibold))
                     Text("AI 摘要").font(.system(size: 15, weight: .semibold))
+                    if let providerName, !providerName.isEmpty {
+                        Text(providerName)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Color(.systemBackground))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary, in: .capsule)
+                    }
                     Spacer()
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
                         .font(.system(size: 12)).foregroundStyle(Color.secondary)

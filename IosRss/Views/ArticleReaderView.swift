@@ -11,6 +11,7 @@ struct ArticleReaderView: View {
     @State private var translatedContent: String?
     @State private var showTranslated = false
     @State private var aiSummary: String?
+    @State private var aiSummaryProvider: String?
     @State private var summaryExpanded = true
     @State private var translationError: String?
     @State private var summaryError: String?
@@ -68,7 +69,7 @@ struct ArticleReaderView: View {
                 Divider()
 
                 if let summary = aiSummary ?? currentArticle.aiSummary {
-                    AISummaryCard(summary: summary, expanded: $summaryExpanded, fontSize: store.aiSummaryFontSize)
+                    AISummaryCard(summary: summary, expanded: $summaryExpanded, fontSize: store.aiSummaryFontSize, providerName: aiSummaryProvider ?? currentArticle.aiSummaryProvider)
                         .padding(.horizontal, 20).padding(.top, 16)
                 }
                 if let err = summaryError {
@@ -179,6 +180,7 @@ struct ArticleReaderView: View {
         }
         .onAppear {
             aiSummary = currentArticle.aiSummary
+            aiSummaryProvider = currentArticle.aiSummaryProvider
             if let cached = currentArticle.translatedContent, !cached.isEmpty {
                 translatedContent = cached
                 showTranslated = true
@@ -297,6 +299,7 @@ struct ArticleReaderView: View {
     private func generateSummary() async {
         if let existing = currentArticle.aiSummary {
             aiSummary = existing
+            aiSummaryProvider = currentArticle.aiSummaryProvider
             summaryExpanded = true
             return
         }
@@ -305,9 +308,11 @@ struct ArticleReaderView: View {
         do {
             let result = try await store.generateSummary(for: currentArticle)
             aiSummary = result.text
+            aiSummaryProvider = result.providerName
             summaryExpanded = true
             var updated = currentArticle
             updated.aiSummary = result.text
+            updated.aiSummaryProvider = result.providerName
             store.updateArticle(updated)
         } catch {
             summaryError = error.localizedDescription

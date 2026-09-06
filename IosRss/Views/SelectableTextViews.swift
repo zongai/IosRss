@@ -122,7 +122,7 @@ struct SelectableParagraphView: UIViewRepresentable {
                 guard !selected.isEmpty else { return }    
                 self.onExplain(selected)
             }
-            return UIMenu(children: suggestedActions + [explain])
+            return UIMenu(children: [explain] + suggestedActions)
         }
     
         func textView(

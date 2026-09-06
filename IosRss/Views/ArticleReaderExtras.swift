@@ -46,13 +46,11 @@ struct AISummaryCard: View {
             if expanded {
                 Divider()
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(points.enumerated()), id: \.offset) { i, point in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text("\(i + 1).").font(.system(size: fontSize, weight: .semibold))
-                                .foregroundStyle(Color.secondary).frame(width: 24, alignment: .leading)
-                            Text(point).font(.system(size: fontSize)).foregroundStyle(Color.primary)
-                                .lineSpacing(5).fixedSize(horizontal: false, vertical: true)
-                        }
+                    ForEach(Array(points.enumerated()), id: \.offset) { _, point in
+                        Text(point).font(.system(size: fontSize)).foregroundStyle(Color.primary)
+                            .lineSpacing(5)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 14)

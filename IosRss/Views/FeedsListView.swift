@@ -25,7 +25,11 @@ struct FeedsListView: View {
                 if store.feeds.isEmpty {
                     emptyState
                 } else {
-                    ForEach(Array(store.feedsByGroup.enumerated()), id: \.offset) { _, section in
+                    let sections = visibleFeedSections
+                    if sections.isEmpty {
+                        noUnreadState
+                    } else {
+                    ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
                         let groupID = section.group?.id
                         let collapsed = store.isGroupCollapsed(groupID)
                         let unreadSum = section.feeds.reduce(0) { $0 + $1.unreadCount }
@@ -103,6 +107,7 @@ struct FeedsListView: View {
                             }
                         }
                     }
+                    } // sections not empty
                 }
             }
             .listStyle(.insetGrouped)
@@ -114,6 +119,15 @@ struct FeedsListView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 18) {
+                        Button {
+                            store.showReadArticles.toggle()
+                            store.persistSettings()
+                        } label: {
+                            Image(systemName: store.showReadArticles ? "eye" : "eye.slash")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(.primary)
+                        }
+                        .accessibilityLabel(store.showReadArticles ? "隐藏无未读源" : "显示全部源")
                         Button { showGroupManager = true } label: {
                             Image(systemName: "folder.badge.gearshape")
                                 .font(.system(size: 16, weight: .medium))
@@ -363,7 +377,29 @@ struct FeedsListView: View {
         return msg
     }
 
-    var emptyState: some View {
+    
+    /// 源列表展示用：默认只显示有未读的源；开启「显示已读文章」时显示全部
+    private var visibleFeedSections: [(group: FeedGroup?, feeds: [RSSFeed])] {
+        store.feedsByGroup.compactMap { section in
+            let feeds = store.showReadArticles
+                ? section.feeds
+                : section.feeds.filter { $0.unreadCount > 0 }
+            guard !feeds.isEmpty else { return nil }
+            return (section.group, feeds)
+        }
+    }
+
+    var noUnreadState: some View {
+        ContentUnavailableView {
+            Label("暂无未读", systemImage: "checkmark.circle")
+        } description: {
+            Text("所有订阅源都没有未读文章。可在设置中开启「显示已读文章」以查看全部源。")
+        }
+        .listRowSeparator(.hidden)
+        .listRowInsets(.init(top: 60, leading: 0, bottom: 0, trailing: 0))
+    }
+
+var emptyState: some View {
         ContentUnavailableView {
             Label("暂无订阅", systemImage: "newspaper")
         } description: {

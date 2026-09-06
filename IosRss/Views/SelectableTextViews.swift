@@ -6,6 +6,7 @@ import UIKit
 struct SelectableParagraphView: UIViewRepresentable {
     let attributed: AttributedString
     let fontSize: Double
+    var typography: ReaderTypography = .latin
     var onOpenURL: (URL) -> Void
     var onExplain: (String) -> Void
 
@@ -51,22 +52,33 @@ struct SelectableParagraphView: UIViewRepresentable {
         let mutable = NSMutableAttributedString(attributedString: ns)
         let full = NSRange(location: 0, length: mutable.length)
         let font = UIFont.systemFont(ofSize: fontSize, weight: .regular)
+        let para = NSMutableParagraphStyle()
+        para.alignment = .natural
+        switch typography {
+        case .chinese:
+            para.firstLineHeadIndent = fontSize * 2.0
+            para.lineSpacing = max(4, fontSize * 0.45)
+            para.paragraphSpacing = max(6, fontSize * 0.35)
+            para.lineBreakMode = .byWordWrapping
+        case .latin:
+            para.firstLineHeadIndent = 0
+            para.lineSpacing = max(3, fontSize * 0.28)
+            para.paragraphSpacing = max(8, fontSize * 0.4)
+            para.lineBreakMode = .byWordWrapping
+        }
         mutable.enumerateAttributes(in: full, options: []) { attrs, range, _ in
             var next = attrs
             next[.font] = font
             if attrs[.link] == nil {
                 next[.foregroundColor] = UIColor.label
             }
-            let para = NSMutableParagraphStyle()
-            para.lineSpacing = 8
-            para.alignment = .natural
             next[.paragraphStyle] = para
             mutable.setAttributes(next, range: range)
         }
-        if tv.attributedText?.string != mutable.string {
+        let mark = "\(typography)-\(Int(fontSize))-\(mutable.string.hashValue)"
+        if tv.accessibilityValue != mark {
             tv.attributedText = mutable
-        } else if let current = tv.font?.pointSize, abs(Double(current) - fontSize) > 0.1 {
-            tv.attributedText = mutable
+            tv.accessibilityValue = mark
         }
     }
 

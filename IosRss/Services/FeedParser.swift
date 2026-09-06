@@ -297,7 +297,7 @@ struct FeedDiscovery {
     }
 }
 struct DiscoveredFeed: Identifiable { let id = UUID(); let title: String; let url: String }
-struct OPMLItem { let title: String; let url: String }
+struct OPMLItem { let title: String; let url: String; var groupName: String? = nil }
 struct OPMLParser {
     let data: Data
     func parse() -> [OPMLItem] {
@@ -306,13 +306,17 @@ struct OPMLParser {
         xml = xml.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         xml = HTMLUtils.decodeEntities(xml)
         var items: [OPMLItem] = []; var seen = Set<String>()
+        var currentGroup: String? = nil
         let outlinePattern = "<outline\\b[^>]*(?:/>|>)"
         if let regex = try? NSRegularExpression(pattern: outlinePattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) {
             for match in regex.matches(in: xml, range: NSRange(xml.startIndex..., in: xml)) {
                 guard let matchRange = Range(match.range, in: xml) else { continue }
                 let tag = String(xml[matchRange])
-                guard let rawURL = firstFeedURL(in: tag) else { continue }
-                appendItem(url: rawURL, title: titleFromOutline(tag), seen: &seen, into: &items)
+                if let rawURL = firstFeedURL(in: tag) {
+                    appendItem(url: rawURL, title: titleFromOutline(tag), groupName: currentGroup, seen: &seen, into: &items)
+                } else if let folder = titleFromOutline(tag), !folder.isEmpty {
+                    currentGroup = folder
+                }
             }
         }
         if items.isEmpty {
@@ -323,13 +327,13 @@ struct OPMLParser {
         if items.isEmpty { items.append(contentsOf: parseLinkAlternateFeeds(from: xml, seen: &seen)) }
         return items
     }
-    private func appendItem(url raw: String, title: String?, seen: inout Set<String>, into items: inout [OPMLItem]) {
+    private func appendItem(url raw: String, title: String?, groupName: String? = nil, seen: inout Set<String>, into items: inout [OPMLItem]) {
         let url = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !url.isEmpty, looksLikeURL(url) else { return }
         let canonical = FeedURL.canonical(url)
         guard !canonical.isEmpty, !seen.contains(canonical) else { return }
         seen.insert(canonical)
-        items.append(OPMLItem(title: FeedNaming.resolveTitle(parsed: title, url: url), url: url))
+        items.append(OPMLItem(title: FeedNaming.resolveTitle(parsed: title, url: url), url: url, groupName: groupName))
     }
     private func titleFromOutline(_ tag: String) -> String? {
         if let t = extractAttr("text", from: tag) ?? extractAttr("title", from: tag) {

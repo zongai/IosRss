@@ -16,13 +16,13 @@ enum EdgeTTS {
     private static let winEpoch: Double = 11_644_473_600
     private static let maxChunkBytes = 3200
 
-    static let defaultChineseVoice = "zh-CN-XiaoxiaoNeural"
+    static let defaultChineseVoice = "zh-CN-YunyangNeural"
     static let defaultEnglishVoice = "en-US-EmmaMultilingualNeural"
 
     static let popularVoices: [(id: String, name: String)] = [
+        ("zh-CN-YunyangNeural", "云扬（男·普通话）"),
         ("zh-CN-XiaoxiaoNeural", "晓晓（女·普通话）"),
         ("zh-CN-YunxiNeural", "云希（男·普通话）"),
-        ("zh-CN-YunyangNeural", "云扬（男·普通话）"),
         ("zh-CN-XiaoyiNeural", "晓伊（女·普通话）"),
         ("zh-CN-liaoning-XiaobeiNeural", "晓北（女·东北）"),
         ("zh-TW-HsiaoChenNeural", "曉臻（女·台湾）"),

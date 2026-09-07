@@ -40,7 +40,7 @@ struct FeedsListView: View {
                                     NavigationLink(value: feed) {
                                         FeedRow(feed: feed)
                                     }
-                                    .id("\(feed.id.uuidString)-\(feed.title)-\(feed.unreadCount)-\(feed.groupID?.uuidString ?? "")")
+                                    .id(feed.id)
                                     .swipeActions(edge: .trailing) {
                                         Button(role: .destructive) {
                                             if let idx = store.feeds.firstIndex(where: { $0.id == feed.id }) {
@@ -90,13 +90,6 @@ struct FeedsListView: View {
                                         if feed.groupID != nil {
                                             Button { store.moveFeed(feed.id, toGroup: nil) } label: {
                                                 Label("移出分组", systemImage: "folder.badge.minus")
-                                            }
-                                        }
-                                        ForEach(store.groups.sorted(by: { $0.sortOrder < $1.sortOrder })) { group in
-                                            if feed.groupID != group.id {
-                                                Button { store.moveFeed(feed.id, toGroup: group.id) } label: {
-                                                    Label(group.name, systemImage: "folder.fill")
-                                                }
                                             }
                                         }
                                     }
@@ -546,11 +539,10 @@ struct FeedRow: View {
                     .foregroundStyle(Color(.systemBackground))
                     .padding(.horizontal, 8).padding(.vertical, 4)
                     .background(Color.primary, in: .capsule).monospacedDigit()
-                    .animation(.snappy(duration: 0.2), value: live.unreadCount)
             }
         }
         .padding(.vertical, 6)
-        .id("\(live.id.uuidString)-\(live.unreadCount)-\(live.faviconURL ?? "")-\(live.fetchFullContentEnabled)")
+        .id(live.id)
     }
 }
 
@@ -584,9 +576,16 @@ struct FeedIcon: View {
     private func loadIcon() async {
         if image != nil || useLetter { return }
         if let cached = FaviconCache.shared.image(for: cacheKey) { image = cached; return }
-        if let data = OfflineCache.loadImage(url: cacheKey) {
+        if let data = OfflineCache.loadFavicon(key: cacheKey) {
             if data.isEmpty { useLetter = true; return }
             if let ui = UIImage(data: data), ui.size.width > 1 {
+                FaviconCache.shared.store(ui, for: cacheKey); image = ui; return
+            }
+        } else if let legacy = OfflineCache.loadImage(url: cacheKey) {
+            // 迁移旧 images 目录中的图标缓存
+            OfflineCache.saveFavicon(key: cacheKey, data: legacy)
+            if legacy.isEmpty { useLetter = true; return }
+            if let ui = UIImage(data: legacy), ui.size.width > 1 {
                 FaviconCache.shared.store(ui, for: cacheKey); image = ui; return
             }
         }
@@ -609,7 +608,7 @@ struct FeedIcon: View {
                 if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { continue }
                 guard let ui = UIImage(data: data), ui.size.width > 1 else { continue }
                 FaviconCache.shared.store(ui, for: cacheKey)
-                OfflineCache.saveImage(url: cacheKey, data: data)
+                OfflineCache.saveFavicon(key: cacheKey, data: data)
                 found = ui
                 break
             } catch { continue }
@@ -618,7 +617,7 @@ struct FeedIcon: View {
             image = found
         } else {
             useLetter = true
-            OfflineCache.saveImage(url: cacheKey, data: Data())
+            OfflineCache.saveFavicon(key: cacheKey, data: Data())
         }
         store.markFaviconFetchDone(live.id)
     }

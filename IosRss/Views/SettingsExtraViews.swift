@@ -99,3 +99,76 @@ struct TranslationSettingsView: View {
         .onChange(of: store.defaultTranslationEngine) { _, _ in store.persistSettings() }
     }
 }
+
+
+// MARK: - 文章黑名单（与 AI 黑名单独立）
+
+struct ArticleBlacklistSettingsView: View {
+    @Environment(AppStore.self) private var store
+    @State private var newTerm = ""
+    @State private var appliedCount: Int?
+
+    var body: some View {
+        @Bindable var store = store
+        Form {
+            Section {
+                if store.articleBlacklistTerms.isEmpty {
+                    Text("暂无关键词").foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(store.articleBlacklistTerms.enumerated()), id: \.offset) { index, term in
+                        HStack {
+                            Text(term)
+                            Spacer()
+                            Button {
+                                store.articleBlacklistTerms.remove(at: index)
+                                store.persistSettings()
+                            } label: {
+                                Image(systemName: "minus.circle.fill").foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                HStack {
+                    TextField("关键词，如广告、招聘", text: $newTerm)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onSubmit { addTerm() }
+                    Button("添加") { addTerm() }
+                        .disabled(newTerm.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            } header: {
+                Text("关键词")
+            } footer: {
+                Text("标题或摘要包含任一关键词时，自动标为已读并按未读规则隐藏。与 AI 黑名单互不影响，不区分大小写。")
+            }
+
+            if !store.articleBlacklistTerms.isEmpty {
+                Section {
+                    Button("立即应用到已有文章") {
+                        let n = store.applyArticleBlacklist()
+                        appliedCount = n
+                    }
+                    if let appliedCount {
+                        Text(appliedCount == 0 ? "没有新的命中条目" : "已将 \(appliedCount) 篇标为已读")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .navigationTitle("文章黑名单")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func addTerm() {
+        let term = newTerm.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return }
+        let exists = store.articleBlacklistTerms.contains { $0.caseInsensitiveCompare(term) == .orderedSame }
+        guard !exists else { newTerm = ""; return }
+        store.articleBlacklistTerms.append(term)
+        store.persistSettings()
+        newTerm = ""
+        appliedCount = store.applyArticleBlacklist()
+    }
+}

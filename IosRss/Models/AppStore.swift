@@ -31,6 +31,8 @@ class AppStore {
     var defaultTranslationProviderID: UUID?
     var defaultExplainProviderID: UUID?
     var aiBlacklistTerms: [String] = []
+    /// 文章黑名单：标题/摘要命中则自动标为已读（与 AI 黑名单独立）
+    var articleBlacklistTerms: [String] = []
     var aiBlacklistFallbackProviderID: UUID?
     var showReadArticles: Bool = false
     var translationPrompt: String = AppStore.defaultTranslationPrompt
@@ -53,6 +55,7 @@ class AppStore {
 
     init() {
         loadFromStorage()
+        _ = applyArticleBlacklist()
         if feeds.isEmpty { seedSampleData() }
         if UserDefaults.standard.string(forKey: "defaultTranslationEngine") == "Gemini" {
             defaultTranslationEngine = .ai
@@ -357,6 +360,14 @@ class AppStore {
             }
             newArticles.append(article)
         }
+        // 文章黑名单：新条目直接标已读
+        for i in newArticles.indices {
+            if matchesArticleBlacklist(newArticles[i]) {
+                newArticles[i].isRead = true
+                let key = Self.canonicalLink(newArticles[i].link)
+                if !key.isEmpty { readArticleLinks.insert(key) }
+            }
+        }
         feeds[idx].articles.insert(contentsOf: newArticles, at: 0)
         feeds[idx].unreadCount = feeds[idx].articles.filter { !$0.isRead }.count
         feeds[idx].lastFetched = Date()
@@ -387,6 +398,51 @@ class AppStore {
             if haystack.contains(term.lowercased()) { return true }
         }
         return false
+    }
+
+    func matchesArticleBlacklist(_ article: Article) -> Bool {
+        guard !articleBlacklistTerms.isEmpty else { return false }
+        let haystack = (article.title + "\n" + article.summary).lowercased()
+        for raw in articleBlacklistTerms {
+            let term = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !term.isEmpty else { continue }
+            if haystack.contains(term.lowercased()) { return true }
+        }
+        return false
+    }
+
+    /// 将命中文章黑名单的条目标为已读（不写 readArticleLinks 以外的额外逻辑）
+    @discardableResult
+    func applyArticleBlacklist(in feedID: UUID? = nil) -> Int {
+        var marked = 0
+        let indices: [Int]
+        if let feedID, let idx = feeds.firstIndex(where: { $0.id == feedID }) {
+            indices = [idx]
+        } else {
+            indices = Array(feeds.indices)
+        }
+        for i in indices {
+            var feed = feeds[i]
+            var changed = false
+            for j in feed.articles.indices {
+                guard !feed.articles[j].isRead else { continue }
+                guard matchesArticleBlacklist(feed.articles[j]) else { continue }
+                feed.articles[j].isRead = true
+                let key = Self.canonicalLink(feed.articles[j].link)
+                if !key.isEmpty { readArticleLinks.insert(key) }
+                marked += 1
+                changed = true
+            }
+            if changed {
+                feed.unreadCount = feed.articles.filter { !$0.isRead }.count
+                feeds[i] = feed
+            }
+        }
+        if marked > 0 {
+            persistReadLinks()
+            saveToStorage()
+        }
+        return marked
     }
 
     func resolveAIProvider(preferredID: UUID?, forText text: String) -> AIProvider? {
@@ -882,6 +938,7 @@ class AppStore {
             UserDefaults.standard.removeObject(forKey: "defaultExplainProviderID")
         }
         if let data = try? JSONEncoder().encode(aiBlacklistTerms) { UserDefaults.standard.set(data, forKey: "aiBlacklistTerms") }
+        if let data = try? JSONEncoder().encode(articleBlacklistTerms) { UserDefaults.standard.set(data, forKey: "articleBlacklistTerms") }
         if let id = aiBlacklistFallbackProviderID {
             UserDefaults.standard.set(id.uuidString, forKey: "aiBlacklistFallbackProviderID")
         } else {
@@ -923,6 +980,8 @@ class AppStore {
            let id = UUID(uuidString: s) { defaultExplainProviderID = id }
         if let data = UserDefaults.standard.data(forKey: "aiBlacklistTerms"),
            let decoded = try? JSONDecoder().decode([String].self, from: data) { aiBlacklistTerms = decoded }
+        if let data = UserDefaults.standard.data(forKey: "articleBlacklistTerms"),
+           let decoded = try? JSONDecoder().decode([String].self, from: data) { articleBlacklistTerms = decoded }
         if let s = UserDefaults.standard.string(forKey: "aiBlacklistFallbackProviderID"),
            let id = UUID(uuidString: s) { aiBlacklistFallbackProviderID = id }
     }

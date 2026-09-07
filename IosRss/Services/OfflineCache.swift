@@ -38,6 +38,13 @@ enum OfflineCache {
         return u
     }
 
+    /// 源图标专用目录，清理内容缓存时保留
+    private static var faviconDir: URL {
+        let u = rootURL.appendingPathComponent("favicons", isDirectory: true)
+        try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
+        return u
+    }
+
     /// 稳定缓存键：djb2 + 长度，避免路径注入与过长 URL
     private static func key(for raw: String) -> String {
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -128,11 +135,10 @@ enum OfflineCache {
         return try? Data(contentsOf: file)
     }
 
-    // MARK: - Image bytes (favicon 等，磁盘持久化)
+    // MARK: - Image bytes（正文配图等）
 
     static func saveImage(url: String, data: Data) {
         guard !url.isEmpty, !data.isEmpty else { return }
-        // 统一用 .bin，避免扩展名变化导致读不到
         let file = imagesDir.appendingPathComponent(key(for: url) + ".bin")
         try? data.write(to: file, options: [.atomic])
     }
@@ -140,12 +146,8 @@ enum OfflineCache {
     static func loadImage(url: String) -> Data? {
         guard !url.isEmpty else { return nil }
         let prefix = key(for: url)
-        // 优先新格式
         let primary = imagesDir.appendingPathComponent(prefix + ".bin")
-        if let data = try? Data(contentsOf: primary), !data.isEmpty {
-            return data
-        }
-        // 兼容旧扩展名缓存
+        if let data = try? Data(contentsOf: primary) { return data }
         guard let files = try? FileManager.default.contentsOfDirectory(at: imagesDir, includingPropertiesForKeys: nil) else {
             return nil
         }
@@ -153,6 +155,29 @@ enum OfflineCache {
             return try? Data(contentsOf: match)
         }
         return nil
+    }
+
+    // MARK: - Favicon（与内容缓存隔离，清理其他缓存不删除）
+
+    static func saveFavicon(key raw: String, data: Data) {
+        guard !raw.isEmpty else { return }
+        let file = faviconDir.appendingPathComponent(key(for: raw) + ".bin")
+        try? data.write(to: file, options: [.atomic])
+    }
+
+    /// 返回 nil 表示无缓存；空 Data 表示曾拉取失败（占位）
+    static func loadFavicon(key raw: String) -> Data? {
+        guard !raw.isEmpty else { return nil }
+        let file = faviconDir.appendingPathComponent(key(for: raw) + ".bin")
+        return try? Data(contentsOf: file)
+    }
+
+    static func faviconCacheSize() -> Int64 {
+        directorySize(faviconDir)
+    }
+
+    static func clearFaviconCache() {
+        removeContents(of: faviconDir)
     }
 
     // MARK: - Size / Clear / Prune

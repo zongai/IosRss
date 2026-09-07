@@ -31,6 +31,7 @@
 - **长文翻译**：约 1800 字分块并发，保留 `<img>`
 - **AI 摘要**：多 Provider；去除序号；卡片展示 Provider 名称（无编号列表）
 - **AI 黑名单**：原文命中关键词时切换到指定 fallback Provider
+- **文章黑名单**：标题/摘要命中关键词时自动标为已读（与 AI 黑名单独立）
 - **失败自动切换**：翻译 / 摘要 / 解释失败时按顺序尝试其他已配置 Key 的 Provider
 
 ### 其它
@@ -109,7 +110,8 @@ API Key 仅保存在本机 Keychain。
 | AI 解释 / 摘要 Provider | `defaultExplainProviderID`、`aiSummaryProvider` |
 | 中西文排版 | `ReaderTypography`、`SelectableParagraphView` |
 | 已读实时更新 | `markAsRead` + 列表依赖文章状态 |
-| 图标缓存 | `faviconFetchDone` 只获取一次；`OfflineCache` 磁盘缓存 |
+| 图标缓存 | `faviconFetchDone` 只获取一次；`favicons/` 独立目录，清理内容缓存不删除 |
+| 文章黑名单 | `articleBlacklistTerms` + `applyArticleBlacklist` |
 
 ## License
 

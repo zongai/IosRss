@@ -8,22 +8,31 @@ struct SettingsView: View {
         @Bindable var store = store
         NavigationStack {
             Form {
-                Section("通用") {
+                Section {
                     Picker("标题显示模式", selection: $store.titleDisplayMode) {
                         ForEach(TitleDisplayMode.allCases, id: \.self) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
                     }
                     Toggle("显示已读文章", isOn: $store.showReadArticles)
+                } header: {
+                    Text("阅读")
+                }
+                .onChange(of: store.titleDisplayMode) { _, _ in store.persistSettings() }
+                .onChange(of: store.showReadArticles) { _, _ in store.persistSettings() }
+
+                Section {
                     Picker("朗读音色", selection: $store.ttsVoice) {
                         Text("自动（按语言）").tag("")
                         ForEach(EdgeTTS.popularVoices, id: \.id) { v in
                             Text(v.name).tag(v.id)
                         }
                     }
+                } header: {
+                    Text("朗读")
+                } footer: {
+                    Text("使用 Microsoft Edge 在线语音，无需密钥。")
                 }
-                .onChange(of: store.titleDisplayMode) { _, _ in store.persistSettings() }
-                .onChange(of: store.showReadArticles) { _, _ in store.persistSettings() }
                 .onChange(of: store.ttsVoice) { _, _ in store.persistSettings() }
 
                 Section {
@@ -36,8 +45,20 @@ struct SettingsView: View {
                     NavigationLink(destination: AISettingsView()) {
                         Label("AI 设置", systemImage: "wand.and.stars")
                     }
+                    NavigationLink(destination: ArticleBlacklistSettingsView()) {
+                        HStack {
+                            Label("文章黑名单", systemImage: "eye.slash")
+                            Spacer()
+                            if !store.articleBlacklistTerms.isEmpty {
+                                Text("\(store.articleBlacklistTerms.count)")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 } header: {
-                    Text("功能设置")
+                    Text("功能")
+                } footer: {
+                    Text("AI 黑名单在「AI 设置」中配置，仅影响选用哪个 AI；文章黑名单会自动将命中条目标为已读。")
                 }
 
                 Section {
@@ -84,7 +105,7 @@ struct SettingsView: View {
                 } header: {
                     Text("离线")
                 } footer: {
-                    Text("订阅列表与已读标记始终保存在本地。清除后仅删除文章全文、Feed 快照与图片缓存，不影响订阅。")
+                    Text("订阅列表、已读标记与源图标缓存始终保留。清除后仅删除文章全文、Feed 快照与正文图片缓存，不影响订阅与源图标。")
                 }
                 .onAppear { cacheSizeText = store.cacheSizeDescription() }
 

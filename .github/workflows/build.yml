@@ -137,22 +137,25 @@ jobs:
             printf '# Changelog\n\n' > CHANGELOG.md
           fi
 
-          python3 -c '
-from pathlib import Path
-entry = Path("/tmp/changelog_entry.md").read_text()
-path = Path("CHANGELOG.md")
-text = path.read_text() if path.exists() else "# Changelog\n\n"
-marker = "## [Unreleased]"
-if marker in text:
-    idx = text.find(marker)
-    nl = text.find("\n", idx)
-    insert_at = nl + 1 if nl >= 0 else idx + len(marker)
-    text = text[:insert_at] + "\n" + entry + text[insert_at:]
-else:
-    nl = text.find("\n")
-    text = text[:nl+1] + "\n" + entry + text[nl+1:]
-path.write_text(text)
-'
+          cat > /tmp/update_changelog.py <<'PYEOF'
+          from pathlib import Path
+          entry = Path("/tmp/changelog_entry.md").read_text()
+          path = Path("CHANGELOG.md")
+          text = path.read_text() if path.exists() else "# Changelog\n\n"
+          marker = "## [Unreleased]"
+          if marker in text:
+              idx = text.find(marker)
+              nl = text.find("\n", idx)
+              insert_at = nl + 1 if nl >= 0 else idx + len(marker)
+              text = text[:insert_at] + "\n" + entry + text[insert_at:]
+          else:
+              nl = text.find("\n")
+              text = text[:nl+1] + "\n" + entry + text[nl+1:]
+          path.write_text(text)
+          PYEOF
+          # strip leading spaces from heredoc body for python
+          python3 -c "from pathlib import Path; p=Path('/tmp/update_changelog.py'); t=p.read_text(); p.write_text('\n'.join(line[10:] if line.startswith('          ') else line for line in t.splitlines())+('\n' if t.endswith('\n') else ''))"
+          python3 /tmp/update_changelog.py
 
           cp "$ENTRY_FILE" /tmp/release_notes.md
           echo "Updated CHANGELOG for ${DISPLAY}"

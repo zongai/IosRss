@@ -115,9 +115,16 @@ API Key 仅保存在本机 Keychain。
 | 中西文排版 | `ReaderTypography`、`SelectableParagraphView` |
 | 已读实时更新 | `markAsRead` + 列表依赖文章状态 |
 
+## 最近构建
+
+<!-- LATEST_BUILD_START -->
+- 版本：见 CI 产物
+- 说明：每次构建成功后由 CI 自动更新本节与下方版本号说明。
+<!-- LATEST_BUILD_END -->
+
 ## Changelog
 
-见仓库根目录 [`CHANGELOG.md`](CHANGELOG.md)。每次 CI 构建成功后会自动追加该版本的提交摘要，并写入对应 GitHub Release 说明。
+见仓库根目录 [`CHANGELOG.md`](CHANGELOG.md)。每次 CI 构建成功后会自动追加该版本的提交摘要，并同步更新本 README 的「最近构建」与版本号，同时写入对应 GitHub Release 说明。
 
 ## License
 

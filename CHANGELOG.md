@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+## [v1.2-5-build98] — 2026-09-07
+
+- ci: fix CHANGELOG step YAML (indent multiline python)
+
+
 ## [v1.2-5] — 种子条目（历史摘要）
 - docs: refresh README for TTS, article blacklist, favicon isolation (`3316fb1`)
 - feat: article blacklist, isolated favicon cache, settings layout, list perf (`9d5c901`)

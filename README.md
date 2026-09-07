@@ -38,6 +38,7 @@
 - **离线缓存**：订阅列表、Feed XML、文章全文 HTML、正文图片；源图标在独立目录；网络失败回退本地
 - **分区字号**：分组名、订阅列表、文章列表、阅读器、AI 摘要（字号设置在二级页）
 - **深色模式**：系统自适应
+- **多语言**：简体中文 / English（跟随系统语言，`Localizable.xcstrings`）
 - **CI**：推送 `v*` 标签或手动 `workflow_dispatch` 产出 unsigned IPA，并打对应 Release
 
 ## 结构

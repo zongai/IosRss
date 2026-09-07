@@ -4,7 +4,6 @@ struct AISettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var showAddProvider = false
     @State private var editingProvider: AIProvider?
-    @State private var newBlacklistTerm = ""
 
     var body: some View {
         @Bindable var store = store
@@ -61,40 +60,20 @@ struct AISettingsView: View {
             }
 
             Section {
-                ForEach(Array(store.aiBlacklistTerms.enumerated()), id: \.offset) { index, term in
+                NavigationLink {
+                    AIBlacklistSettingsView()
+                } label: {
                     HStack {
-                        Text(term).font(.system(size: 15))
+                        Text("AI 黑名单")
                         Spacer()
-                        Button {
-                            store.aiBlacklistTerms.remove(at: index)
-                            store.persistSettings()
-                        } label: {
-                            Image(systemName: "minus.circle.fill").foregroundStyle(.red)
+                        if !store.aiBlacklistTerms.isEmpty {
+                            Text("\(store.aiBlacklistTerms.count)")
+                                .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
-                HStack {
-                    TextField("添加关键词，如敏感词", text: $newBlacklistTerm)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .onSubmit { addBlacklistTerm() }
-                    Button("添加") { addBlacklistTerm() }
-                        .disabled(newBlacklistTerm.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                Picker("命中后使用", selection: Binding(
-                    get: { store.aiBlacklistFallbackProviderID },
-                    set: { store.aiBlacklistFallbackProviderID = $0; store.persistSettings() }
-                )) {
-                    Text("不切换（保持默认）").tag(Optional<UUID>.none)
-                    ForEach(store.aiProviders) { p in
-                        Text(p.name).tag(Optional(p.id))
-                    }
-                }
-            } header: {
-                Text("AI 黑名单")
             } footer: {
-                Text("当 AI 翻译 / 摘要 / 解释 的原文包含任一关键词时，自动改用上方指定的 Provider。不区分大小写。")
+                Text("配置翻译 / 摘要 / 解释命中关键词时使用的备用 Provider。")
             }
 
             Section {
@@ -148,9 +127,70 @@ struct AISettingsView: View {
         .sheet(isPresented: $showAddProvider) { EditProviderView(provider: nil) }
         .sheet(item: $editingProvider) { provider in EditProviderView(provider: provider) }
     }
+}
 
-    private func addBlacklistTerm() {
-        let term = newBlacklistTerm.trimmingCharacters(in: .whitespacesAndNewlines)
+// MARK: - AI 黑名单（三级：设置 → AI 设置 → AI 黑名单）
+
+struct AIBlacklistSettingsView: View {
+    @Environment(AppStore.self) private var store
+    @State private var newTerm = ""
+
+    var body: some View {
+        @Bindable var store = store
+        Form {
+            Section {
+                if store.aiBlacklistTerms.isEmpty {
+                    Text("暂无关键词").foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(store.aiBlacklistTerms.enumerated()), id: \.offset) { index, term in
+                        HStack {
+                            Text(term).font(.system(size: 15))
+                            Spacer()
+                            Button {
+                                store.aiBlacklistTerms.remove(at: index)
+                                store.persistSettings()
+                            } label: {
+                                Image(systemName: "minus.circle.fill").foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                HStack {
+                    TextField("添加关键词，如敏感词", text: $newTerm)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onSubmit { addTerm() }
+                    Button("添加") { addTerm() }
+                        .disabled(newTerm.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            } header: {
+                Text("关键词")
+            } footer: {
+                Text("当 AI 翻译 / 摘要 / 解释 的原文包含任一关键词时，自动改用下方指定的 Provider。不区分大小写。")
+            }
+
+            Section {
+                Picker("命中后使用", selection: Binding(
+                    get: { store.aiBlacklistFallbackProviderID },
+                    set: { store.aiBlacklistFallbackProviderID = $0; store.persistSettings() }
+                )) {
+                    Text("不切换（保持默认）").tag(Optional<UUID>.none)
+                    ForEach(store.aiProviders) { p in
+                        Text(p.name).tag(Optional(p.id))
+                    }
+                }
+            } header: {
+                Text("备用 Provider")
+            }
+        }
+        .navigationTitle("AI 黑名单")
+        .navigationBarTitleDisplayMode(.inline)
+        .onDisappear { store.persistSettings() }
+    }
+
+    private func addTerm() {
+        let term = newTerm.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !term.isEmpty else { return }
         let exists = store.aiBlacklistTerms.contains {
             $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == term.lowercased()
@@ -159,7 +199,7 @@ struct AISettingsView: View {
             store.aiBlacklistTerms.append(term)
             store.persistSettings()
         }
-        newBlacklistTerm = ""
+        newTerm = ""
     }
 }
 

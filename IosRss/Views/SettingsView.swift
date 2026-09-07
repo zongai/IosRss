@@ -58,7 +58,7 @@ struct SettingsView: View {
                 } header: {
                     Text("功能")
                 } footer: {
-                    Text("AI 黑名单在「AI 设置」中配置，仅影响选用哪个 AI；文章黑名单会自动将命中条目标为已读。")
+                    Text("AI 黑名单在「AI 设置 → AI 黑名单」；文章黑名单自动将命中条目标为已读。")
                 }
 
                 Section {

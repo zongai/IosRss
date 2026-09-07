@@ -19,6 +19,7 @@
 ### 阅读
 - **全文抓取**：摘要过短时自动或手动从原文页抓取（平衡标签匹配 + 启发式打分；WordPress 可走 REST 回退）；源关闭全文时隐藏工具栏按钮
 - **阅读体验**：中/西文分排版（首行缩进、行距）；HTML 实体解码、`AsyncImage` 配图、正文链接可点、应用内 Safari（默认关闭 Reader）
+- **TTS 朗读**：Microsoft Edge 在线神经语音（edge-tts 协议，无需 Key）；阅读页工具栏朗读/停止；设置可选音色
 - **框选 AI 解释**：选中文字菜单将「AI解释」置于最前；可单独指定解释 Provider 与自定义 Prompt（`{{text}}`）
 - **评论**：源开启后阅读页显示评论入口；Substack（含自定义域）公开评论 API；评论页支持翻译；添加 / 导入时自动识别 Substack 类平台并开启评论
 - **已读**：打开即标已读并实时隐藏（可配置显示已读）；左滑标已读 / 全部已读；已读链接持久化
@@ -50,6 +51,7 @@ IosRss/
 │   ├── FeedParser.swift              # RSS/Atom、OPML（含分组）、命名与图标
 │   ├── ArticleContentFetcher.swift   # 全文提取
 │   ├── CommentFetcher.swift          # Substack 等评论 + 自动开启判断
+│   ├── EdgeTTS.swift                 # Edge 在线 TTS（WebSocket）
 │   ├── OfflineCache.swift
 │   └── TranslationServices.swift     # 翻译 / AI
 └── Views/

@@ -15,9 +15,16 @@ struct SettingsView: View {
                         }
                     }
                     Toggle("显示已读文章", isOn: $store.showReadArticles)
+                    Picker("朗读音色", selection: $store.ttsVoice) {
+                        Text("自动（按语言）").tag("")
+                        ForEach(EdgeTTS.popularVoices, id: \.id) { v in
+                            Text(v.name).tag(v.id)
+                        }
+                    }
                 }
                 .onChange(of: store.titleDisplayMode) { _, _ in store.persistSettings() }
                 .onChange(of: store.showReadArticles) { _, _ in store.persistSettings() }
+                .onChange(of: store.ttsVoice) { _, _ in store.persistSettings() }
 
                 Section {
                     NavigationLink(destination: FontSettingsView()) {

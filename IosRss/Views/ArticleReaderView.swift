@@ -20,6 +20,7 @@ struct ArticleReaderView: View {
     @State private var translationProgress: String?
     @State private var fullContentHint: String?
     @State private var showComments = false
+    @ObservedObject private var tts = EdgeTTSPlayer.shared
 
     private var currentArticle: Article {
         store.feeds.flatMap { $0.articles }.first(where: { $0.id == article.id }) ?? article
@@ -77,6 +78,10 @@ struct ArticleReaderView: View {
                         .padding(.horizontal, 20).padding(.top, 8)
                 }
                 if let err = translationError {
+                    Text(err).font(.system(size: 13)).foregroundStyle(.red)
+                        .padding(.horizontal, 20).padding(.top, 8)
+                }
+                if let err = tts.errorMessage {
                     Text(err).font(.system(size: 13)).foregroundStyle(.red)
                         .padding(.horizontal, 20).padding(.top, 8)
                 }
@@ -152,6 +157,27 @@ struct ArticleReaderView: View {
                 }
                 .disabled(isGeneratingSummary)
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task {
+                        let html = showTranslated
+                            ? (translatedContent ?? currentArticle.translatedContent ?? currentArticle.content)
+                            : currentArticle.content
+                        let plain = HTMLUtils.stripTags(html)
+                        let fallback = currentArticle.summary
+                        let body = plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : plain
+                        let text = displayTitle + "\n" + body
+                        await tts.toggle(text: text, voice: store.ttsVoice.isEmpty ? nil : store.ttsVoice)
+                    }
+                } label: {
+                    if tts.isLoading {
+                        ProgressView().scaleEffect(0.75)
+                    } else {
+                        Label(tts.isPlaying ? "停止朗读" : "朗读",
+                              systemImage: tts.isPlaying ? "stop.fill" : "speaker.wave.2.fill")
+                    }
+                }
+            }
             if commentsAllowed {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showComments = true } label: {
@@ -172,6 +198,7 @@ struct ArticleReaderView: View {
                 SafariView(url: url).ignoresSafeArea()
             }
         }
+        .onDisappear { tts.stop() }
         .navigationDestination(isPresented: $showComments) {
             ArticleCommentsView(
                 articleTitle: currentArticle.title,

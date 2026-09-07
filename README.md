@@ -114,6 +114,10 @@ API Key 仅保存在本机 Keychain。
 | 中西文排版 | `ReaderTypography`、`SelectableParagraphView` |
 | 已读实时更新 | `markAsRead` + 列表依赖文章状态 |
 
+## Changelog
+
+见仓库根目录 [`CHANGELOG.md`](CHANGELOG.md)。每次 CI 构建成功后会自动追加该版本的提交摘要，并写入对应 GitHub Release 说明。
+
 ## License
 
 MIT（若仓库未另附 LICENSE，以仓库声明为准）。

@@ -33,6 +33,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ steps.ref.outputs.sha }}
+          fetch-depth: 0
 
       - name: Read app version
         id: ver
@@ -95,11 +96,95 @@ jobs:
           name: IosRss-ipa-${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.build }}-build${{ steps.ver.outputs.run }}
           path: ${{ steps.ver.outputs.ipa_name }}
 
+      - name: Update CHANGELOG
+        id: changelog
+        env:
+          DISPLAY: ${{ steps.ver.outputs.display }}
+        run: |
+          set -euo pipefail
+          DATE=$(date -u +%Y-%m-%d)
+          git fetch --tags --force origin 2>/dev/null || true
+
+          PREV=""
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -z "$PREV" ]; then
+            PREV=$(git tag -l 'v*' --sort=-creatordate | sed -n '2p' || true)
+          fi
+          echo "Previous tag: ${PREV:-<none>}"
+
+          if [ -n "$PREV" ]; then
+            RANGE="${PREV}..HEAD"
+          else
+            RANGE="HEAD~30..HEAD"
+          fi
+
+          LOG=$(git log --pretty=format:'- %s' "$RANGE" 2>/dev/null \
+            | grep -Ev '^(docs: changelog|docs: auto changelog)' \
+            || true)
+          if [ -z "$LOG" ]; then
+            LOG="- （无新的提交说明）"
+          fi
+
+          ENTRY_FILE=/tmp/changelog_entry.md
+          {
+            echo "## [${DISPLAY}] — ${DATE}"
+            echo ""
+            echo "$LOG"
+            echo ""
+          } > "$ENTRY_FILE"
+
+          if [ ! -f CHANGELOG.md ]; then
+            printf '# Changelog\n\n' > CHANGELOG.md
+          fi
+
+          python3 -c '
+from pathlib import Path
+entry = Path("/tmp/changelog_entry.md").read_text()
+path = Path("CHANGELOG.md")
+text = path.read_text() if path.exists() else "# Changelog\n\n"
+marker = "## [Unreleased]"
+if marker in text:
+    idx = text.find(marker)
+    nl = text.find("\n", idx)
+    insert_at = nl + 1 if nl >= 0 else idx + len(marker)
+    text = text[:insert_at] + "\n" + entry + text[insert_at:]
+else:
+    nl = text.find("\n")
+    text = text[:nl+1] + "\n" + entry + text[nl+1:]
+path.write_text(text)
+'
+
+          cp "$ENTRY_FILE" /tmp/release_notes.md
+          echo "Updated CHANGELOG for ${DISPLAY}"
+          head -50 CHANGELOG.md
+
+      - name: Commit CHANGELOG to main
+        if: success()
+        env:
+          DISPLAY: ${{ steps.ver.outputs.display }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp CHANGELOG.md /tmp/CHANGELOG.md.built
+          git fetch origin main
+          git checkout -B main origin/main
+          cp /tmp/CHANGELOG.md.built CHANGELOG.md
+          git add CHANGELOG.md
+          if git diff --staged --quiet; then
+            echo "CHANGELOG unchanged"
+            exit 0
+          fi
+          git commit -m "docs: changelog for ${DISPLAY}"
+          git push origin HEAD:main
+          echo "Pushed CHANGELOG to main"
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
           files: ${{ steps.ver.outputs.ipa_name }}
           tag_name: ${{ steps.ver.outputs.display }}
           name: IosRss ${{ steps.ver.outputs.display }}
-          generate_release_notes: true
+          body_path: /tmp/release_notes.md
+          generate_release_notes: false
           target_commitish: ${{ steps.ref.outputs.sha }}

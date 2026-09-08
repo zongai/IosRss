@@ -35,6 +35,8 @@ class AppStore {
     var articleBlacklistTerms: [String] = []
     var aiBlacklistFallbackProviderID: UUID?
     var showReadArticles: Bool = false
+    /// 阅读配色主题
+    var colorTheme: AppColorTheme = .azure
     var translationPrompt: String = AppStore.defaultTranslationPrompt
     var summaryPrompt: String = AppStore.defaultSummaryPrompt
     var explainPrompt: String = AppStore.defaultExplainPrompt
@@ -216,7 +218,13 @@ class AppStore {
         if changed { saveToStorage() }
     }
 
-    func addFeed(_ feed: RSSFeed) { feeds.append(feed); saveToStorage() }
+    func addFeed(_ feed: RSSFeed) {
+        var f = feed
+        let maxOrder = feeds.filter { $0.groupID == f.groupID }.map(\.sortOrder).max() ?? -1
+        f.sortOrder = maxOrder + 1
+        feeds.append(f)
+        saveToStorage()
+    }
     func deleteFeed(at offsets: IndexSet) { feeds.remove(atOffsets: offsets); saveToStorage() }
 
     func deleteAllFeeds() {
@@ -229,14 +237,31 @@ class AppStore {
         var sections: [(FeedGroup?, [RSSFeed])] = []
         for g in sortedGroups {
             let items = feeds.filter { $0.groupID == g.id }
+                .sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.title < $1.title) }
             if !items.isEmpty { sections.append((g, items)) }
         }
         let ungrouped = feeds.filter { feed in
             guard let gid = feed.groupID else { return true }
             return !groups.contains(where: { $0.id == gid })
-        }
+        }.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.title < $1.title) }
         if !ungrouped.isEmpty || sections.isEmpty { sections.append((nil, ungrouped)) }
         return sections
+    }
+
+    /// 同组内拖拽排序
+    func reorderFeeds(inGroup groupID: UUID?, from source: IndexSet, to destination: Int) {
+        var ranked = feeds.enumerated().filter { _, f in
+            if let groupID { return f.groupID == groupID }
+            return f.groupID == nil || !groups.contains(where: { $0.id == f.groupID })
+        }.sorted { a, b in
+            a.element.sortOrder < b.element.sortOrder
+                || (a.element.sortOrder == b.element.sortOrder && a.element.title < b.element.title)
+        }
+        ranked.move(fromOffsets: source, toOffset: destination)
+        for (rank, pair) in ranked.enumerated() {
+            feeds[pair.offset].sortOrder = rank
+        }
+        saveToStorage()
     }
 
     func addGroup(name: String) {
@@ -264,6 +289,8 @@ class AppStore {
     func moveFeed(_ feedID: UUID, toGroup groupID: UUID?) {
         guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
         feeds[idx].groupID = groupID
+        let maxOrder = feeds.filter { $0.groupID == groupID && $0.id != feedID }.map(\.sortOrder).max() ?? -1
+        feeds[idx].sortOrder = maxOrder + 1
         saveToStorage()
     }
 
@@ -923,6 +950,7 @@ class AppStore {
         UserDefaults.standard.set(titleDisplayMode.rawValue, forKey: "titleDisplayMode")
         UserDefaults.standard.set(defaultTranslationEngine.rawValue, forKey: "defaultTranslationEngine")
         UserDefaults.standard.set(showReadArticles, forKey: "showReadArticles")
+        UserDefaults.standard.set(colorTheme.rawValue, forKey: "colorTheme")
         UserDefaults.standard.set(translationPrompt, forKey: "translationPrompt")
         UserDefaults.standard.set(summaryPrompt, forKey: "summaryPrompt")
         UserDefaults.standard.set(explainPrompt, forKey: "explainPrompt")
@@ -964,6 +992,10 @@ class AppStore {
         if let raw = UserDefaults.standard.string(forKey: "defaultTranslationEngine"),
            let engine = TranslationEngine(rawValue: raw) { defaultTranslationEngine = engine }
         showReadArticles = UserDefaults.standard.object(forKey: "showReadArticles") as? Bool ?? false
+        if let raw = UserDefaults.standard.string(forKey: "colorTheme"),
+           let theme = AppColorTheme(rawValue: raw) {
+            colorTheme = theme
+        }
         if let p = UserDefaults.standard.string(forKey: "translationPrompt") { translationPrompt = p }
         if let p = UserDefaults.standard.string(forKey: "summaryPrompt") { summaryPrompt = p }
         if let p = UserDefaults.standard.string(forKey: "explainPrompt") { explainPrompt = p }
@@ -984,6 +1016,176 @@ class AppStore {
            let decoded = try? JSONDecoder().decode([String].self, from: data) { articleBlacklistTerms = decoded }
         if let s = UserDefaults.standard.string(forKey: "aiBlacklistFallbackProviderID"),
            let id = UUID(uuidString: s) { aiBlacklistFallbackProviderID = id }
+    }
+
+    /// 测试指定 AI Provider 是否可用（短 prompt）
+    func testAIProvider(_ provider: AIProvider) async -> (ok: Bool, message: String) {
+        let key = Keychain.load(key: "ai_key_\(provider.id)") ?? ""
+        guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return (false, "未配置 API Key")
+        }
+        do {
+            let reply = try await callAI(
+                prompt: "请只回复两个字：正常",
+                provider: provider,
+                apiKey: key,
+                maxTokens: 32
+            )
+            let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+            if Self.looksLikeAIErrorResponse(text) {
+                return (false, text.isEmpty ? "返回异常" : String(text.prefix(200)))
+            }
+            return (true, text.isEmpty ? "连接成功" : String(text.prefix(120)))
+        } catch {
+            return (false, error.localizedDescription)
+        }
+    }
+
+    /// 导出设置（不含订阅源文章，含分组/引擎/字号/黑名单/Provider 与 Key）
+    func exportSettingsJSON() throws -> Data {
+        struct ExportPayload: Codable {
+            var version: Int
+            var exportedAt: String
+            var titleDisplayMode: String
+            var defaultTranslationEngine: String
+            var showReadArticles: Bool
+            var fontSize: Double
+            var listTitleFontSize: Double
+            var listSummaryFontSize: Double
+            var readerTitleFontSize: Double
+            var aiSummaryFontSize: Double
+            var feedTitleFontSize: Double
+            var groupTitleFontSize: Double
+            var translationPrompt: String
+            var summaryPrompt: String
+            var explainPrompt: String
+            var readRetentionDays: Int
+            var fullContentCacheDays: Int
+            var ttsVoice: String
+            var aiProviders: [AIProvider]
+            var defaultSummaryProviderID: String?
+            var defaultTranslationProviderID: String?
+            var defaultExplainProviderID: String?
+            var aiBlacklistTerms: [String]
+            var articleBlacklistTerms: [String]
+            var aiBlacklistFallbackProviderID: String?
+            var groups: [FeedGroup]
+            var providerKeys: [String: String]
+            var deeplKey: String?
+            var microsoftKey: String?
+            var googleKey: String?
+        }
+        var keys: [String: String] = [:]
+        for p in aiProviders {
+            if let k = Keychain.load(key: "ai_key_\(p.id)"), !k.isEmpty {
+                keys[p.id.uuidString] = k
+            }
+        }
+        let payload = ExportPayload(
+            version: 1,
+            exportedAt: ISO8601DateFormatter().string(from: Date()),
+            titleDisplayMode: titleDisplayMode.rawValue,
+            defaultTranslationEngine: defaultTranslationEngine.rawValue,
+            showReadArticles: showReadArticles,
+            fontSize: fontSize,
+            listTitleFontSize: listTitleFontSize,
+            listSummaryFontSize: listSummaryFontSize,
+            readerTitleFontSize: readerTitleFontSize,
+            aiSummaryFontSize: aiSummaryFontSize,
+            feedTitleFontSize: feedTitleFontSize,
+            groupTitleFontSize: groupTitleFontSize,
+            translationPrompt: translationPrompt,
+            summaryPrompt: summaryPrompt,
+            explainPrompt: explainPrompt,
+            readRetentionDays: readRetentionDays,
+            fullContentCacheDays: fullContentCacheDays,
+            ttsVoice: ttsVoice,
+            aiProviders: aiProviders,
+            defaultSummaryProviderID: defaultSummaryProviderID?.uuidString,
+            defaultTranslationProviderID: defaultTranslationProviderID?.uuidString,
+            defaultExplainProviderID: defaultExplainProviderID?.uuidString,
+            aiBlacklistTerms: aiBlacklistTerms,
+            articleBlacklistTerms: articleBlacklistTerms,
+            aiBlacklistFallbackProviderID: aiBlacklistFallbackProviderID?.uuidString,
+            groups: groups,
+            providerKeys: keys,
+            deeplKey: Keychain.load(key: "deepl_translate_key"),
+            microsoftKey: Keychain.load(key: "microsoft_translate_key"),
+            googleKey: Keychain.load(key: "google_translate_key")
+        )
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try enc.encode(payload)
+    }
+
+    /// 从 JSON 导入设置（覆盖当前设置；不改动已有订阅文章）
+    func importSettingsJSON(_ data: Data) throws {
+        struct ExportPayload: Codable {
+            var version: Int?
+            var titleDisplayMode: String?
+            var defaultTranslationEngine: String?
+            var showReadArticles: Bool?
+            var fontSize: Double?
+            var listTitleFontSize: Double?
+            var listSummaryFontSize: Double?
+            var readerTitleFontSize: Double?
+            var aiSummaryFontSize: Double?
+            var feedTitleFontSize: Double?
+            var groupTitleFontSize: Double?
+            var translationPrompt: String?
+            var summaryPrompt: String?
+            var explainPrompt: String?
+            var readRetentionDays: Int?
+            var fullContentCacheDays: Int?
+            var ttsVoice: String?
+            var aiProviders: [AIProvider]?
+            var defaultSummaryProviderID: String?
+            var defaultTranslationProviderID: String?
+            var defaultExplainProviderID: String?
+            var aiBlacklistTerms: [String]?
+            var articleBlacklistTerms: [String]?
+            var aiBlacklistFallbackProviderID: String?
+            var groups: [FeedGroup]?
+            var providerKeys: [String: String]?
+            var deeplKey: String?
+            var microsoftKey: String?
+            var googleKey: String?
+        }
+        let payload = try JSONDecoder().decode(ExportPayload.self, from: data)
+        if let v = payload.titleDisplayMode, let m = TitleDisplayMode(rawValue: v) { titleDisplayMode = m }
+        if let v = payload.defaultTranslationEngine, let e = TranslationEngine(rawValue: v) { defaultTranslationEngine = e }
+        if let v = payload.showReadArticles { showReadArticles = v }
+        if let v = payload.fontSize { fontSize = v }
+        if let v = payload.listTitleFontSize { listTitleFontSize = v }
+        if let v = payload.listSummaryFontSize { listSummaryFontSize = v }
+        if let v = payload.readerTitleFontSize { readerTitleFontSize = v }
+        if let v = payload.aiSummaryFontSize { aiSummaryFontSize = v }
+        if let v = payload.feedTitleFontSize { feedTitleFontSize = v }
+        if let v = payload.groupTitleFontSize { groupTitleFontSize = v }
+        if let v = payload.translationPrompt { translationPrompt = v }
+        if let v = payload.summaryPrompt { summaryPrompt = v }
+        if let v = payload.explainPrompt { explainPrompt = v }
+        if let v = payload.readRetentionDays { readRetentionDays = v }
+        if let v = payload.fullContentCacheDays { fullContentCacheDays = v }
+        if let v = payload.ttsVoice { ttsVoice = v }
+        if let v = payload.aiProviders { aiProviders = v }
+        if let s = payload.defaultSummaryProviderID { defaultSummaryProviderID = UUID(uuidString: s) }
+        if let s = payload.defaultTranslationProviderID { defaultTranslationProviderID = UUID(uuidString: s) }
+        if let s = payload.defaultExplainProviderID { defaultExplainProviderID = UUID(uuidString: s) }
+        if let v = payload.aiBlacklistTerms { aiBlacklistTerms = v }
+        if let v = payload.articleBlacklistTerms { articleBlacklistTerms = v }
+        if let s = payload.aiBlacklistFallbackProviderID { aiBlacklistFallbackProviderID = UUID(uuidString: s) }
+        if let v = payload.groups { groups = v }
+        if let keys = payload.providerKeys {
+            for (id, key) in keys where !key.isEmpty {
+                Keychain.save(key: "ai_key_\(id)", value: key)
+            }
+        }
+        if let k = payload.deeplKey, !k.isEmpty { Keychain.save(key: "deepl_translate_key", value: k) }
+        if let k = payload.microsoftKey, !k.isEmpty { Keychain.save(key: "microsoft_translate_key", value: k) }
+        if let k = payload.googleKey, !k.isEmpty { Keychain.save(key: "google_translate_key", value: k) }
+        persistSettings()
+        saveToStorage()
     }
 
     private func seedSampleData() {}

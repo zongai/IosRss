@@ -3,7 +3,10 @@ import SafariServices
 
 struct ArticleReaderView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let article: Article
+    /// 当前列表中的兄弟文章（用于左滑下一篇）
+    var siblings: [Article] = []
 
     @State private var isTranslating = false
     @State private var isGeneratingSummary = false
@@ -20,10 +23,39 @@ struct ArticleReaderView: View {
     @State private var translationProgress: String?
     @State private var fullContentHint: String?
     @State private var showComments = false
+    @State private var barsHidden = false
+    @State private var displayedArticleID: UUID
     @ObservedObject private var tts = EdgeTTSPlayer.shared
 
+    init(article: Article, siblings: [Article] = []) {
+        self.article = article
+        self.siblings = siblings
+        _displayedArticleID = State(initialValue: article.id)
+    }
+
     private var currentArticle: Article {
-        store.feeds.flatMap { $0.articles }.first(where: { $0.id == article.id }) ?? article
+        store.feeds.flatMap { $0.articles }.first(where: { $0.id == displayedArticleID })
+            ?? siblings.first(where: { $0.id == displayedArticleID })
+            ?? article
+    }
+
+    private var siblingList: [Article] {
+        if !siblings.isEmpty { return siblings }
+        return store.articlesForFeed(currentArticle.feedID)
+    }
+
+    private var currentIndex: Int? {
+        siblingList.firstIndex(where: { $0.id == displayedArticleID })
+    }
+
+    private var nextArticle: Article? {
+        guard let i = currentIndex, i + 1 < siblingList.count else { return nil }
+        return siblingList[i + 1]
+    }
+
+    private var previousArticle: Article? {
+        guard let i = currentIndex, i > 0 else { return nil }
+        return siblingList[i - 1]
     }
 
     private var displayTitle: String {
@@ -31,13 +63,27 @@ struct ArticleReaderView: View {
         return currentArticle.title
     }
 
+    /// 正文/标题已是目标中文时不显示翻译按钮
+    private var isAlreadyTargetLanguage: Bool {
+        if currentArticle.translatedContent != nil || showTranslated { return false }
+        let title = currentArticle.title
+        let body = HTMLUtils.stripTags(currentArticle.content)
+        let sample = body.isEmpty ? title : String(body.prefix(400))
+        return ListLanguageDetect.isMostlyChinese(sample)
+    }
+
+    private var feedAutoTranslateEnabled: Bool {
+        store.feeds.first(where: { $0.id == currentArticle.feedID })?.autoTranslateEnabled ?? true
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(displayTitle)
-                        .font(.system(size: store.readerTitleFontSize, weight: .bold, design: .serif))
-                        .foregroundStyle(Color.primary)
+                        .font(AppTypography.font(size: store.readerTitleFontSize, weight: .semibold))
+                        .tracking(AppTypography.titleTracking)
+                        .foregroundStyle(theme.text)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if showTranslated,
                        let translated = currentArticle.translatedTitle,
@@ -121,9 +167,10 @@ struct ArticleReaderView: View {
                     .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 40)
             }
         }
-        .background(Color(.systemBackground))
+        .background(theme.background)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(barsHidden ? .hidden : .visible, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { store.toggleFavorite(currentArticle) } label: {
@@ -143,12 +190,14 @@ struct ArticleReaderView: View {
                     .disabled(isFetchingFull)
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await toggleTranslation() } } label: {
-                    if isTranslating { ProgressView().scaleEffect(0.75) }
-                    else { Label(showTranslated ? "原文" : "翻译", systemImage: "translate") }
+            if !isAlreadyTargetLanguage || showTranslated {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await toggleTranslation() } } label: {
+                        if isTranslating { ProgressView().scaleEffect(0.75) }
+                        else { Label(showTranslated ? "原文" : "翻译", systemImage: "translate") }
+                    }
+                    .disabled(isTranslating)
                 }
-                .disabled(isTranslating)
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { Task { await generateSummary() } } label: {
@@ -185,7 +234,7 @@ struct ArticleReaderView: View {
                     }
                 }
             }
-            if URL(string: article.link) != nil {
+            if URL(string: currentArticle.link) != nil {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showInAppBrowser = true } label: {
                         Label("浏览器", systemImage: "safari")
@@ -193,8 +242,31 @@ struct ArticleReaderView: View {
                 }
             }
         }
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                withAnimation(.easeInOut(duration: 0.2)) { barsHidden.toggle() }
+            }
+        )
+        .gesture(
+            DragGesture(minimumDistance: 40, coordinateSpace: .local)
+                .onEnded { value in
+                    let dx = value.translation.width
+                    let dy = value.translation.height
+                    guard abs(dx) > abs(dy), abs(dx) > 80 else { return }
+                    if dx < 0 {
+                        // 左滑 → 下一篇
+                        if let next = nextArticle {
+                            goToArticle(next)
+                        }
+                    } else if dx > 0 {
+                        if let prev = previousArticle {
+                            goToArticle(prev)
+                        }
+                    }
+                }
+        )
         .sheet(isPresented: $showInAppBrowser) {
-            if let url = URL(string: article.link) {
+            if let url = URL(string: currentArticle.link) {
                 SafariView(url: url).ignoresSafeArea()
             }
         }
@@ -206,17 +278,47 @@ struct ArticleReaderView: View {
             )
         }
         .onAppear {
-            aiSummary = currentArticle.aiSummary
-            aiSummaryProvider = currentArticle.aiSummaryProvider
-            if let cached = currentArticle.translatedContent, !cached.isEmpty {
-                translatedContent = cached
-                showTranslated = true
-            } else if let t = currentArticle.translatedTitle, !t.isEmpty {
-                showTranslated = true
-            }
-            if shouldOfferFullContent {
-                Task { await fetchFullContent(silent: true) }
-            }
+            prepareForCurrentArticle(autoTranslate: true)
+        }
+        .onChange(of: displayedArticleID) { _, _ in
+            prepareForCurrentArticle(autoTranslate: true)
+        }
+    }
+
+    private func goToArticle(_ next: Article) {
+        tts.stop()
+        store.markAsRead(next)
+        withAnimation(.snappy(duration: 0.25)) {
+            displayedArticleID = next.id
+            barsHidden = false
+        }
+    }
+
+    private func prepareForCurrentArticle(autoTranslate: Bool) {
+        aiSummary = currentArticle.aiSummary
+        aiSummaryProvider = currentArticle.aiSummaryProvider
+        translationError = nil
+        summaryError = nil
+        fullContentError = nil
+        fullContentHint = nil
+        translationProgress = nil
+        translatedContent = nil
+        showTranslated = false
+
+        if let cached = currentArticle.translatedContent, !cached.isEmpty {
+            translatedContent = cached
+            showTranslated = true
+        } else if let t = currentArticle.translatedTitle, !t.isEmpty {
+            showTranslated = true
+        }
+
+        if shouldOfferFullContent {
+            Task { await fetchFullContent(silent: true) }
+        }
+
+        if autoTranslate, feedAutoTranslateEnabled, !isAlreadyTargetLanguage,
+           currentArticle.translatedContent == nil, !showTranslated {
+            Task { await toggleTranslation() }
         }
     }
 
@@ -252,6 +354,10 @@ struct ArticleReaderView: View {
             if !silent {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 if fullContentHint?.contains("已获取全文") == true { fullContentHint = nil }
+            }
+            // 全文更新后，若开启自动翻译则继续译
+            if feedAutoTranslateEnabled, !ListLanguageDetect.isMostlyChinese(HTMLUtils.stripTags(updated.content)) {
+                await toggleTranslation()
             }
         } catch {
             if !silent { fullContentError = error.localizedDescription }
@@ -347,4 +453,3 @@ struct ArticleReaderView: View {
         isGeneratingSummary = false
     }
 }
-

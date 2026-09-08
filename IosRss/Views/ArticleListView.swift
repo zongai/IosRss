@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ArticleListView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let feed: RSSFeed
 
     @State private var showAllTranslations = false
@@ -79,8 +80,10 @@ struct ArticleListView: View {
         .animation(.snappy(duration: 0.25), value: articles.map(\.id))
         .navigationTitle(liveFeedTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(theme.background, for: .navigationBar)
+        .background(theme.background)
         .navigationDestination(for: Article.self) { article in
-            ArticleReaderView(article: article)
+            ArticleReaderView(article: article, siblings: articles)
                 .onAppear {
                     openedArticleID = article.id
                     readingIDs.insert(article.id)
@@ -98,14 +101,6 @@ struct ArticleListView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    store.showReadArticles.toggle()
-                    store.persistSettings()
-                } label: {
-                    Image(systemName: store.showReadArticles ? "eye" : "eye.slash")
-                }
-                .accessibilityLabel(store.showReadArticles ? "隐藏已读" : "显示已读")
-
                 Button {
                     Task { await toggleTranslateAll() }
                 } label: {
@@ -153,7 +148,7 @@ struct ArticleListView: View {
                 ContentUnavailableView(
                     store.showReadArticles ? "暂无文章" : "暂无未读文章",
                     systemImage: "newspaper",
-                    description: Text(store.showReadArticles ? "下拉刷新或稍后再来" : "点右上角眼睛可显示已读文章")
+                    description: Text(store.showReadArticles ? "下拉刷新或稍后再来" : "可在设置中开启「显示已读文章」")
                 )
             }
         }

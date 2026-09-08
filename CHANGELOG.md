@@ -1,6 +1,6 @@
 # Changelog
 
-本文件由 CI 在每次构建成功后自动追加条目（基于自上一构建标签以来的提交说明）。
+本文件由维护者手动更新（不再由 GitHub Actions 自动追加）。
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
@@ -8,35 +8,28 @@
 
 ## [Unreleased]
 
-## [v1.2-5-build98] — 2026-09-07
+### Added
+- 阅读页点击内容自动显隐导航工具栏
+- 开启自动翻译的源：进入阅读页自动翻译正文（非目标语言时）
+- 文章已是目标中文时隐藏翻译按钮
+- 订阅源拖拽排序（列表左上角「排序」）
+- 阅读页左滑下一篇 / 右滑上一篇
+- AI 设置 → 测试 AI 连接（验证 Provider 与 Key）
+- 设置导出 / 导入（JSON，含 Provider Key、黑名单、字号等）
+- 正文 MP3 / 音频链接播放卡片（`<audio>` 与裸链）
 
-- ci: fix CHANGELOG step YAML (indent multiline python)
+### Changed
+- 订阅页、文章列表页移除眼睛「显示已读」按钮（改在设置 → 阅读）
 
+### Fixed
+- 正文误显示的百分号编码片段（如 `%e8%ae%ae`）自动解码
 
-## [v1.2-5] — 种子条目（历史摘要）
-- docs: refresh README for TTS, article blacklist, favicon isolation (`3316fb1`)
-- feat: article blacklist, isolated favicon cache, settings layout, list perf (`9d5c901`)
-- chore: default Chinese TTS voice to Yunyang (云扬) (`543bd4c`)
-- feat: Edge TTS read-aloud (no API key) (`e23ef00`)
-- chore: bump CURRENT_PROJECT_VERSION to 5 (v1.2-5) (`8426292`)
-- fix: RSSFeed init argument order for faviconFetchDone (`88e59eb`)
-- feat: remove TXT export; delete all feeds; favicon once; per-feed auto-translate (`d38455a`)
-- docs: update README for comments, auto-translate, failover, UI polish (`c7f1349`)
-- fix: remove numbered list from AI summary card UI (`d7e8294`)
-- feat: show AI summary provider; put AI解释 first in selection menu (`788133b`)
-- fix: use generateSummary tuple .text for aiSummary assignment (`6256e66`)
-- fix: OPMLItem.groupName for grouped OPML import (`04b7867`)
-- fix: remove duplicate Swift types causing EmitModule failure (`a67b26a`)
-- feat: hide feeds with no unread in source list (`8fd04b7`)
-- fix: hide full-content toolbar icon when feed disables fetch (`643932a`)
-- fix: rename feed refreshes list immediately (`8cbeb50`)
-- feat: full sync local features — AI failover, comments, typography, groups (`bbacfca`)
-- chore: register FeedsListSupporting in pbxproj (`142dc4c`)
-- feat: FeedsListSupporting views (GroupHeader, FeedRow, document pickers) (`8bf862e`)
-- fix: restore FeedsListView with rename and comments toggles (`6c74871`)
-- feat: FeedsListView rename + per-feed full content/comments toggles (`659ee59`)
-- feat: ArticleContentViews for reader body rendering (`7ee983f`)
-- feat: ArticleContentViews + pbxproj (reader content/AI explain) (`3a63553`)
-- feat: ArticleReaderExtras (Safari/AISummary/Content) + pbxproj (`c842ce1`)
-- fix: restore ArticleReaderView with comments button (`6575ae4`)
+## [v1.2-5] — 2026-09-07
 
+### Added
+- AI 黑名单独立三级页；完整本地化；Edge TTS；文章黑名单
+- 源级自动翻译 / 全文 / 评论开关；源排序与分组折叠
+- 列表自动翻译；AI failover；Substack 评论
+
+### Docs / CI
+- README / CHANGELOG 改为维护者手动更新

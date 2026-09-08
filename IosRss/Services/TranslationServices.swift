@@ -308,9 +308,32 @@ func callGemini(prompt: String, provider: AIProvider, apiKey: String) async thro
 // MARK: - HTML Utilities (entities + strip)
 
 enum HTMLUtils {
+    /// 解码误写入正文的百分号编码片段（如 %e8%ae%ae → 议），最多两轮避免死循环
+    static func decodePercentEncodedText(_ text: String) -> String {
+        var result = text
+        for _ in 0..<2 {
+            guard let regex = try? NSRegularExpression(pattern: #"(?:%[0-9A-Fa-f]{2}){2,}"#) else { break }
+            let ns = result as NSString
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()
+            if matches.isEmpty { break }
+            var changed = false
+            for match in matches {
+                guard let full = Range(match.range, in: result) else { continue }
+                let encoded = String(result[full])
+                let plusFixed = encoded.replacingOccurrences(of: "+", with: " ")
+                if let decoded = plusFixed.removingPercentEncoding, decoded != encoded, !decoded.isEmpty {
+                    result.replaceSubrange(full, with: decoded)
+                    changed = true
+                }
+            }
+            if !changed { break }
+        }
+        return result
+    }
+
     /// 解码常见 HTML 实体（含数字实体如 &#8216;）
     static func decodeEntities(_ html: String) -> String {
-        var result = html
+        var result = decodePercentEncodedText(html)
         // 命名实体
         // 用拼接避免源文件中出现完整 HTML 实体字面量（部分同步路径会错误解码）
         let named: [(String, String)] = [

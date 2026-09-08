@@ -117,6 +117,16 @@ struct AISettingsView: View {
             } footer: {
                 Text("框选文字「AI解释」使用。用 {{text}} 表示选中内容（最长约 800 字）。")
             }
+
+            Section {
+                NavigationLink {
+                    AIProviderTestView()
+                } label: {
+                    Label("测试 AI 连接", systemImage: "antenna.radiowaves.left.and.right")
+                }
+            } footer: {
+                Text("向所选 Provider 发送短请求，确认 API Key 与网络是否正常。")
+            }
         }
         .navigationTitle("AI 设置")
         .navigationBarTitleDisplayMode(.inline)
@@ -126,6 +136,81 @@ struct AISettingsView: View {
         .onChange(of: store.explainPrompt) { _, _ in store.persistSettings() }
         .sheet(isPresented: $showAddProvider) { EditProviderView(provider: nil) }
         .sheet(item: $editingProvider) { provider in EditProviderView(provider: provider) }
+    }
+}
+
+// MARK: - AI 连接测试
+
+struct AIProviderTestView: View {
+    @Environment(AppStore.self) private var store
+    @State private var selectedID: UUID?
+    @State private var isTesting = false
+    @State private var resultText: String?
+    @State private var resultOK: Bool?
+
+    var body: some View {
+        Form {
+            Section {
+                if store.aiProviders.isEmpty {
+                    Text("请先添加 AI Provider").foregroundStyle(.secondary)
+                } else {
+                    Picker("Provider", selection: $selectedID) {
+                        Text("请选择").tag(Optional<UUID>.none)
+                        ForEach(store.aiProviders) { p in
+                            Text(p.name).tag(Optional(p.id))
+                        }
+                    }
+                    Button {
+                        Task { await runTest() }
+                    } label: {
+                        if isTesting {
+                            HStack {
+                                ProgressView()
+                                Text("测试中…")
+                            }
+                        } else {
+                            Label("开始测试", systemImage: "play.fill")
+                        }
+                    }
+                    .disabled(selectedID == nil || isTesting)
+                }
+            } header: {
+                Text("选择并测试")
+            }
+
+            if let resultText {
+                Section {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: resultOK == true ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundStyle(resultOK == true ? .green : .red)
+                        Text(resultText)
+                            .font(.system(size: 14))
+                            .textSelection(.enabled)
+                    }
+                } header: {
+                    Text("结果")
+                }
+            }
+        }
+        .navigationTitle("测试 AI")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if selectedID == nil {
+                selectedID = store.defaultSummaryProviderID ?? store.aiProviders.first?.id
+            }
+        }
+    }
+
+    private func runTest() async {
+        guard let id = selectedID,
+              let provider = store.aiProviders.first(where: { $0.id == id }) else { return }
+        isTesting = true
+        resultText = nil
+        resultOK = nil
+        let result = await store.testAIProvider(provider)
+        resultOK = result.ok
+        resultText = result.message
+        isTesting = false
     }
 }
 

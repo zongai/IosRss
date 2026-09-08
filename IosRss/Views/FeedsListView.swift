@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct FeedsListView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     @State private var showAddFeed = false
     @State private var showOPMLMenu = false
     @State private var showOPMLImport = false
@@ -17,6 +18,7 @@ struct FeedsListView: View {
     @State private var confirmDeleteAll = false
     @State private var renameFeedTarget: RSSFeed?
     @State private var renameFeedText = ""
+    @State private var editMode: EditMode = .inactive
 
     private static let allowedImportExtensions: Set<String> = ["opml", "xml", "rss", "atom", "txt"]
 
@@ -94,6 +96,9 @@ struct FeedsListView: View {
                                         }
                                     }
                                 }
+                                .onMove { source, dest in
+                                    store.reorderFeeds(inGroup: groupID, from: source, to: dest)
+                                }
                             }
                         } header: {
                             GroupSectionHeader(
@@ -112,23 +117,26 @@ struct FeedsListView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("Feed")
+            .scrollContentBackground(.hidden)
+            .background(theme.background)
+            .environment(\.editMode, $editMode)
+            .navigationTitle("订阅")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: RSSFeed.self) { feed in
                 ArticleListView(feed: feed)
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        withAnimation {
+                            editMode = editMode == .active ? .inactive : .active
+                        }
+                    } label: {
+                        Text(editMode == .active ? "完成" : "排序")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 18) {
-                        Button {
-                            store.showReadArticles.toggle()
-                            store.persistSettings()
-                        } label: {
-                            Image(systemName: store.showReadArticles ? "eye" : "eye.slash")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(.primary)
-                        }
-                        .accessibilityLabel(store.showReadArticles ? "隐藏无未读源" : "显示全部源")
                         Button { showGroupManager = true } label: {
                             Image(systemName: "folder.badge.gearshape")
                                 .font(.system(size: 16, weight: .medium))
@@ -395,7 +403,7 @@ struct FeedsListView: View {
         ContentUnavailableView {
             Label("暂无未读", systemImage: "checkmark.circle")
         } description: {
-            Text("所有订阅源都没有未读文章。可在设置中开启「显示已读文章」以查看全部源。")
+            Text("所有订阅源都没有未读文章。可在「设置 → 阅读」开启「显示已读文章」以查看全部源。")
         }
         .listRowSeparator(.hidden)
         .listRowInsets(.init(top: 60, leading: 0, bottom: 0, trailing: 0))
@@ -416,6 +424,7 @@ var emptyState: some View {
 
 struct GroupSectionHeader: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let title: String
     let feedCount: Int
     let unreadCount: Int
@@ -463,6 +472,7 @@ struct GroupSectionHeader: View {
 
 struct GroupManagerView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @State private var newName = ""
     @State private var renameTarget: FeedGroup?
@@ -517,6 +527,7 @@ struct GroupManagerView: View {
 
 struct FeedRow: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let feed: RSSFeed
     private var live: RSSFeed { store.feeds.first(where: { $0.id == feed.id }) ?? feed }
     var body: some View {
@@ -548,6 +559,7 @@ struct FeedRow: View {
 
 struct FeedIcon: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let feed: RSSFeed
     let size: CGFloat
     @State private var image: UIImage?

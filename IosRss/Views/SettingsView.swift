@@ -1,8 +1,14 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var cacheSizeText: String = "计算中…"
+    @State private var settingsExportURL: URL?
+    @State private var showSettingsExport = false
+    @State private var showSettingsImport = false
+    @State private var settingsMessage: String?
+    @State private var settingsError: String?
 
     var body: some View {
         @Bindable var store = store
@@ -15,6 +21,16 @@ struct SettingsView: View {
                         }
                     }
                     Toggle("显示已读文章", isOn: $store.showReadArticles)
+                    NavigationLink {
+                        ColorThemePickerView()
+                    } label: {
+                        HStack {
+                            Label("阅读配色", systemImage: "paintpalette")
+                            Spacer()
+                            Text(store.colorTheme.displayName)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 } header: {
                     Text("阅读")
                 }
@@ -109,6 +125,29 @@ struct SettingsView: View {
                 }
                 .onAppear { cacheSizeText = store.cacheSizeDescription() }
 
+                Section {
+                    Button {
+                        exportSettings()
+                    } label: {
+                        Label("导出全部设置", systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        showSettingsImport = true
+                    } label: {
+                        Label("导入设置", systemImage: "square.and.arrow.down")
+                    }
+                    if let settingsMessage {
+                        Text(settingsMessage).font(.system(size: 13)).foregroundStyle(.secondary)
+                    }
+                    if let settingsError {
+                        Text(settingsError).font(.system(size: 13)).foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("设置备份")
+                } footer: {
+                    Text("包含字号、翻译/AI Provider 与 Key、黑名单、分组、朗读音色等。不含订阅文章正文。导入会覆盖当前设置。")
+                }
+
                 Section("关于") {
                     HStack {
                         Text("默认翻译引擎")
@@ -140,9 +179,79 @@ struct SettingsView: View {
             }
             .navigationTitle("设置")
             .onDisappear { store.persistSettings() }
+            .sheet(isPresented: $showSettingsExport) {
+                if let url = settingsExportURL {
+                    NavigationStack {
+                        VStack(spacing: 16) {
+                            Image(systemName: "doc.text")
+                                .font(.system(size: 40))
+                                .foregroundStyle(.secondary)
+                            Text("IosRss-settings.json")
+                                .font(.headline)
+                            ShareLink(item: url) {
+                                Label("分享 / 保存", systemImage: "square.and.arrow.up")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .padding(.horizontal)
+                            Spacer()
+                        }
+                        .padding(.top, 40)
+                        .navigationTitle("导出设置")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("完成") { showSettingsExport = false }
+                            }
+                        }
+                    }
+                    .presentationDetents([.medium])
+                }
+            }
+            .fileImporter(
+                isPresented: $showSettingsImport,
+                allowedContentTypes: [.json],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    importSettings(from: url)
+                case .failure(let err):
+                    settingsError = err.localizedDescription
+                }
+            }
         }
     }
 
+    private func exportSettings() {
+        settingsError = nil
+        settingsMessage = nil
+        do {
+            let data = try store.exportSettingsJSON()
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("IosRss-settings.json")
+            try data.write(to: url, options: .atomic)
+            settingsExportURL = url
+            showSettingsExport = true
+            settingsMessage = "已生成导出文件"
+        } catch {
+            settingsError = error.localizedDescription
+        }
+    }
+
+    private func importSettings(from url: URL) {
+        settingsError = nil
+        settingsMessage = nil
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            try store.importSettingsJSON(data)
+            settingsMessage = "设置已导入"
+        } catch {
+            settingsError = error.localizedDescription
+        }
+    }
 }
 
 struct FontSettingsView: View {
@@ -190,5 +299,81 @@ struct FontSettingsView: View {
             Text("\(Int(value.wrappedValue))").foregroundStyle(.secondary).monospacedDigit()
             Stepper("", value: value, in: range, step: 1).labelsHidden()
         }
+    }
+}
+
+// MARK: - 阅读配色选择
+
+struct ColorThemePickerView: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(AppColorTheme.allCases) { option in
+                    Button {
+                        store.colorTheme = option
+                        store.persistSettings()
+                    } label: {
+                        HStack(spacing: 14) {
+                            ThemeSwatch(theme: option)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(option.displayName)
+                                    .font(AppTypography.label())
+                                    .foregroundStyle(theme.text)
+                                Text(option.subtitle)
+                                    .font(AppTypography.caption())
+                                    .foregroundStyle(theme.muted)
+                            }
+                            Spacer()
+                            if store.colorTheme == option {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(option.tokens.accent)
+                            }
+                        }
+                        .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(theme.card)
+                }
+            } footer: {
+                Text("配色影响背景、卡片、强调色与文字对比。Inter Tight 字体在所有主题下保持一致。")
+                    .font(AppTypography.caption())
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(theme.background)
+        .navigationTitle("阅读配色")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct ThemeSwatch: View {
+    let theme: AppColorTheme
+
+    var body: some View {
+        let t = theme.tokens
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(t.background)
+            VStack(spacing: 4) {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(t.card)
+                    .frame(height: 14)
+                    .padding(.horizontal, 6)
+                HStack(spacing: 3) {
+                    Circle().fill(t.accent).frame(width: 8, height: 8)
+                    Capsule().fill(t.track).frame(height: 4)
+                }
+                .padding(.horizontal, 6)
+            }
+        }
+        .frame(width: 44, height: 44)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(t.ring, lineWidth: 1)
+        )
+        .shadow(color: t.shadow, radius: 4, y: 2)
     }
 }

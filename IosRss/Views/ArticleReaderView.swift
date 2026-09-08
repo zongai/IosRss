@@ -26,6 +26,7 @@ struct ArticleReaderView: View {
     @State private var showChrome = true
     @State private var currentID: UUID?
     @State private var dragOffset: CGFloat = 0
+    @State private var lastScrollY: CGFloat = 0
 
     private var activeID: UUID { currentID ?? article.id }
 
@@ -60,6 +61,13 @@ struct ArticleReaderView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: ReaderScrollOffsetKey.self,
+                        value: geo.frame(in: .named("readerScroll")).minY
+                    )
+                }
+                .frame(height: 0)
                 VStack(alignment: .leading, spacing: 8) {
                     Text(displayTitle)
                         .font(AppTypography.font(size: store.readerTitleFontSize, weight: .semibold))
@@ -149,10 +157,34 @@ struct ArticleReaderView: View {
             }
         }
         .background(Color(.systemBackground))
+        .coordinateSpace(name: "readerScroll")
+        .onPreferenceChange(ReaderScrollOffsetKey.self) { y in
+            let delta = y - lastScrollY
+            // 内容上移（y 变小）= 向下滑动 → 隐藏；反向显示
+            if abs(delta) < 2 {
+                lastScrollY = y
+                return
+            }
+            if delta < -8, y < -20 {
+                if showChrome {
+                    withAnimation(.easeInOut(duration: 0.22)) { showChrome = false }
+                }
+            } else if delta > 6 {
+                if !showChrome {
+                    withAnimation(.easeInOut(duration: 0.22)) { showChrome = true }
+                }
+            }
+            // 接近顶部始终显示
+            if y > -10, !showChrome {
+                withAnimation(.easeInOut(duration: 0.22)) { showChrome = true }
+            }
+            lastScrollY = y
+        }
         .navigationTitle("")
         .appScreenBackground()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(showChrome ? .visible : .hidden, for: .navigationBar)
+        .toolbar(showChrome ? .visible : .hidden, for: .tabBar)
         .simultaneousGesture(
             TapGesture().onEnded {
                 withAnimation(.easeInOut(duration: 0.2)) { showChrome.toggle() }
@@ -423,3 +455,11 @@ struct ArticleReaderView: View {
     }
 }
 
+
+
+private struct ReaderScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}

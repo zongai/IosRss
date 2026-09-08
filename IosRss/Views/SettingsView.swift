@@ -3,6 +3,10 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var cacheSizeText: String = "计算中…"
+    @State private var settingsExportURL: URL?
+    @State private var showSettingsExport = false
+    @State private var showSettingsImport = false
+    @State private var settingsIOMessage: String?
 
     var body: some View {
         @Bindable var store = store
@@ -115,6 +119,32 @@ struct SettingsView: View {
                 }
                 .onAppear { cacheSizeText = store.cacheSizeDescription() }
 
+                Section {
+                    Button {
+                        do {
+                            let data = try store.exportSettingsJSON()
+                            let url = FileManager.default.temporaryDirectory.appendingPathComponent("IosRss-settings.json")
+                            try data.write(to: url, options: .atomic)
+                            settingsExportURL = url
+                            showSettingsExport = true
+                        } catch {
+                            settingsIOMessage = "导出失败：\(error.localizedDescription)"
+                        }
+                    } label: {
+                        Label("导出全部设置", systemImage: "square.and.arrow.up")
+                    }
+                    Button { showSettingsImport = true } label: {
+                        Label("导入设置", systemImage: "square.and.arrow.down")
+                    }
+                    if let settingsIOMessage {
+                        Text(settingsIOMessage).font(.footnote).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("设置备份")
+                } footer: {
+                    Text("包含字号、主题、翻译/AI 配置与 Provider（含 Key）。订阅源需单独 OPML 导出。")
+                }
+
                 Section("关于") {
                     HStack {
                         Text("默认翻译引擎")
@@ -145,6 +175,24 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("设置")
+            .sheet(isPresented: $showSettingsExport) {
+                if let url = settingsExportURL {
+                    SettingsExportPicker(url: url) { showSettingsExport = false }
+                }
+            }
+            .sheet(isPresented: $showSettingsImport) {
+                SettingsImportPicker { url in
+                    showSettingsImport = false
+                    guard let url else { return }
+                    do {
+                        let data = try Data(contentsOf: url)
+                        try store.importSettingsJSON(data)
+                        settingsIOMessage = "设置已导入"
+                    } catch {
+                        settingsIOMessage = "导入失败：\(error.localizedDescription)"
+                    }
+                }
+            }
             .onDisappear { store.persistSettings() }
         }
     }

@@ -218,7 +218,12 @@ class AppStore {
         if changed { saveToStorage() }
     }
 
-    func addFeed(_ feed: RSSFeed) { feeds.append(feed); saveToStorage() }
+    func addFeed(_ feed: RSSFeed) {
+        var f = feed
+        f.sortOrder = (feeds.map(\.sortOrder).max() ?? -1) + 1
+        feeds.append(f)
+        saveToStorage()
+    }
     func deleteFeed(at offsets: IndexSet) { feeds.remove(atOffsets: offsets); saveToStorage() }
 
     func deleteAllFeeds() {
@@ -226,19 +231,158 @@ class AppStore {
         saveToStorage()
     }
 
+    // MARK: - Settings export / import / AI probe
+
+    struct SettingsExportPayload: Codable {
+        var version: Int
+        var fontSize: Double
+        var listTitleFontSize: Double
+        var listSummaryFontSize: Double
+        var readerTitleFontSize: Double
+        var aiSummaryFontSize: Double
+        var feedTitleFontSize: Double
+        var groupTitleFontSize: Double
+        var titleDisplayMode: String
+        var defaultTranslationEngine: String
+        var showReadArticles: Bool
+        var translationPrompt: String
+        var summaryPrompt: String
+        var explainPrompt: String
+        var readRetentionDays: Int
+        var fullContentCacheDays: Int
+        var ttsVoice: String
+        var colorTheme: String
+        var aiBlacklistTerms: [String]
+        var articleBlacklistTerms: [String]
+        var defaultSummaryProviderID: UUID?
+        var defaultTranslationProviderID: UUID?
+        var defaultExplainProviderID: UUID?
+        var aiBlacklistFallbackProviderID: UUID?
+        var aiProviders: [AIProvider]
+        var translationKeys: [String: String]?
+        var aiKeys: [String: String]?
+    }
+
+    func exportSettingsJSON() throws -> Data {
+        let payload = SettingsExportPayload(
+            version: 1,
+            fontSize: fontSize,
+            listTitleFontSize: listTitleFontSize,
+            listSummaryFontSize: listSummaryFontSize,
+            readerTitleFontSize: readerTitleFontSize,
+            aiSummaryFontSize: aiSummaryFontSize,
+            feedTitleFontSize: feedTitleFontSize,
+            groupTitleFontSize: groupTitleFontSize,
+            titleDisplayMode: titleDisplayMode.rawValue,
+            defaultTranslationEngine: defaultTranslationEngine.rawValue,
+            showReadArticles: showReadArticles,
+            translationPrompt: translationPrompt,
+            summaryPrompt: summaryPrompt,
+            explainPrompt: explainPrompt,
+            readRetentionDays: readRetentionDays,
+            fullContentCacheDays: fullContentCacheDays,
+            ttsVoice: ttsVoice,
+            colorTheme: colorTheme.rawValue,
+            aiBlacklistTerms: aiBlacklistTerms,
+            articleBlacklistTerms: articleBlacklistTerms,
+            defaultSummaryProviderID: defaultSummaryProviderID,
+            defaultTranslationProviderID: defaultTranslationProviderID,
+            defaultExplainProviderID: defaultExplainProviderID,
+            aiBlacklistFallbackProviderID: aiBlacklistFallbackProviderID,
+            aiProviders: aiProviders,
+            translationKeys: [
+                "google_translate_key": Keychain.load(key: "google_translate_key") ?? "",
+                "microsoft_translate_key": Keychain.load(key: "microsoft_translate_key") ?? "",
+                "deepl_translate_key": Keychain.load(key: "deepl_translate_key") ?? ""
+            ].filter { !$0.value.isEmpty },
+            aiKeys: Dictionary(uniqueKeysWithValues: aiProviders.compactMap { p -> (String, String)? in
+                let key = "ai_key_" + p.id.uuidString
+                guard let k = Keychain.load(key: key), !k.isEmpty else { return nil }
+                return (p.id.uuidString, k)
+            }))
+        )
+        return try JSONEncoder().encode(payload)
+    }
+
+    func importSettingsJSON(_ data: Data) throws {
+        let payload = try JSONDecoder().decode(SettingsExportPayload.self, from: data)
+        fontSize = payload.fontSize
+        listTitleFontSize = payload.listTitleFontSize
+        listSummaryFontSize = payload.listSummaryFontSize
+        readerTitleFontSize = payload.readerTitleFontSize
+        aiSummaryFontSize = payload.aiSummaryFontSize
+        feedTitleFontSize = payload.feedTitleFontSize
+        groupTitleFontSize = payload.groupTitleFontSize
+        if let m = TitleDisplayMode(rawValue: payload.titleDisplayMode) { titleDisplayMode = m }
+        if let e = TranslationEngine(rawValue: payload.defaultTranslationEngine) { defaultTranslationEngine = e }
+        showReadArticles = payload.showReadArticles
+        translationPrompt = payload.translationPrompt
+        summaryPrompt = payload.summaryPrompt
+        explainPrompt = payload.explainPrompt
+        readRetentionDays = payload.readRetentionDays
+        fullContentCacheDays = payload.fullContentCacheDays
+        ttsVoice = payload.ttsVoice
+        if let th = AppColorTheme(rawValue: payload.colorTheme) { colorTheme = th }
+        aiBlacklistTerms = payload.aiBlacklistTerms
+        articleBlacklistTerms = payload.articleBlacklistTerms
+        defaultSummaryProviderID = payload.defaultSummaryProviderID
+        defaultTranslationProviderID = payload.defaultTranslationProviderID
+        defaultExplainProviderID = payload.defaultExplainProviderID
+        aiBlacklistFallbackProviderID = payload.aiBlacklistFallbackProviderID
+        if !payload.aiProviders.isEmpty { aiProviders = payload.aiProviders }
+        for (k, v) in (payload.translationKeys ?? [:]) where !v.isEmpty {
+            Keychain.save(key: k, value: v)
+        }
+        for (idStr, v) in (payload.aiKeys ?? [:]) where !v.isEmpty {
+            Keychain.save(key: "ai_key_" + idStr, value: v)
+        }
+        saveToStorage()
+    }
+
+    /// 向指定 / 默认 Provider 发送极短探测请求
+    func testAIProvider(_ providerID: UUID?) async throws -> String {
+        let result = try await callAIWithFailover(
+            preferredID: providerID,
+            probeText: "ping",
+            maxTokens: 32
+        ) {
+            "You are a connectivity probe. Reply with exactly the two letters: OK"
+        }
+        return "\(result.provider.name): \(result.text.trimmingCharacters(in: .whitespacesAndNewlines))"
+    }
+
     var feedsByGroup: [(group: FeedGroup?, feeds: [RSSFeed])] {
         let sortedGroups = groups.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name) }
         var sections: [(FeedGroup?, [RSSFeed])] = []
         for g in sortedGroups {
-            let items = feeds.filter { $0.groupID == g.id }
+            let items = feeds.filter { $0.groupID == g.id }.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.title < $1.title) }
             if !items.isEmpty { sections.append((g, items)) }
         }
         let ungrouped = feeds.filter { feed in
             guard let gid = feed.groupID else { return true }
             return !groups.contains(where: { $0.id == gid })
-        }
+        }.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.title < $1.title) }
         if !ungrouped.isEmpty || sections.isEmpty { sections.append((nil, ungrouped)) }
         return sections
+    }
+
+    /// 同组内重排：source/destination 为该组可见列表中的下标
+    func reorderFeeds(groupID: UUID?, from source: IndexSet, to destination: Int) {
+        var ids = feeds
+            .filter { feed in
+                if let groupID { return feed.groupID == groupID }
+                return feed.groupID == nil || !groups.contains(where: { $0.id == feed.groupID })
+            }
+            .sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.title < $1.title) }
+            .map(\.id)
+        ids.move(fromOffsets: source, toOffset: destination)
+        for (order, id) in ids.enumerated() {
+            guard let idx = feeds.firstIndex(where: { $0.id == id }) else { continue }
+            var f = feeds[idx]
+            f.sortOrder = order
+            feeds[idx] = f
+        }
+        saveToStorage()
     }
 
     func addGroup(name: String) {

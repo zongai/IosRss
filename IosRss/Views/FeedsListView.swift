@@ -8,6 +8,7 @@ struct FeedsListView: View {
     @State private var showOPMLMenu = false
     @State private var showOPMLImport = false
     @State private var showGroupManager = false
+    @State private var editMode: EditMode = .inactive
     @State private var exportFileURL: URL?
     @State private var showExportPicker = false
     @State private var importMessage: String?
@@ -94,6 +95,9 @@ struct FeedsListView: View {
                                         }
                                     }
                                 }
+                                .onMove { source, dest in
+                                    store.reorderFeeds(groupID: groupID, from: source, to: dest)
+                                }
                             }
                         } header: {
                             GroupSectionHeader(
@@ -112,6 +116,7 @@ struct FeedsListView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .environment(\.editMode, $editMode)
             .navigationTitle("Feed")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: RSSFeed.self) { feed in
@@ -121,14 +126,13 @@ struct FeedsListView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 18) {
                         Button {
-                            store.showReadArticles.toggle()
-                            store.persistSettings()
+                            withAnimation { editMode = editMode == .active ? .inactive : .active }
                         } label: {
-                            Image(systemName: store.showReadArticles ? "eye" : "eye.slash")
+                            Image(systemName: editMode == .active ? "checkmark" : "arrow.up.arrow.down")
                                 .font(.system(size: 16, weight: .medium))
                                 .foregroundStyle(.primary)
                         }
-                        .accessibilityLabel(store.showReadArticles ? "隐藏无未读源" : "显示全部源")
+                        .accessibilityLabel(editMode == .active ? "完成排序" : "排序")
                         Button { showGroupManager = true } label: {
                             Image(systemName: "folder.badge.gearshape")
                                 .font(.system(size: 16, weight: .medium))

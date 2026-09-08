@@ -4,6 +4,8 @@ struct AISettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var showAddProvider = false
     @State private var editingProvider: AIProvider?
+    @State private var isTestingAI = false
+    @State private var aiTestResult: String?
 
     var body: some View {
         @Bindable var store = store
@@ -57,6 +59,35 @@ struct AISettingsView: View {
                 Text("AI 解释")
             } footer: {
                 Text("框选文章文字后的「AI解释」使用此 Provider。选「跟随摘要引擎」时与摘要共用。")
+            }
+
+            Section {
+                Button {
+                    Task {
+                        isTestingAI = true
+                        aiTestResult = nil
+                        do {
+                            aiTestResult = try await store.testAIProvider(store.defaultSummaryProviderID)
+                        } catch {
+                            aiTestResult = "失败：\(error.localizedDescription)"
+                        }
+                        isTestingAI = false
+                    }
+                } label: {
+                    HStack {
+                        Label("测试 AI 连接", systemImage: "network")
+                        Spacer()
+                        if isTestingAI { ProgressView() }
+                    }
+                }
+                .disabled(isTestingAI || store.aiProviders.isEmpty)
+                if let aiTestResult {
+                    Text(aiTestResult)
+                        .font(.footnote)
+                        .foregroundStyle(aiTestResult.hasPrefix("失败") ? .red : .secondary)
+                }
+            } footer: {
+                Text("使用默认摘要 Provider 发送极短请求，用于确认 Key 与接口可用。")
             }
 
             Section {

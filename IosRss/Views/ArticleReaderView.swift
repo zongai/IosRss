@@ -4,6 +4,7 @@ import SafariServices
 struct ArticleReaderView: View {
     @Environment(AppStore.self) private var store
     let article: Article
+    var feedID: UUID? = nil
 
     @State private var isTranslating = false
     @State private var isGeneratingSummary = false
@@ -21,10 +22,34 @@ struct ArticleReaderView: View {
     @State private var fullContentHint: String?
     @State private var showComments = false
     @ObservedObject private var tts = EdgeTTSPlayer.shared
+    @State private var showChrome = true
+    @State private var currentID: UUID?
+    @State private var dragOffset: CGFloat = 0
+
+    private var activeID: UUID { currentID ?? article.id }
 
     private var currentArticle: Article {
-        store.feeds.flatMap { $0.articles }.first(where: { $0.id == article.id }) ?? article
+        store.feeds.flatMap { $0.articles }.first(where: { $0.id == activeID }) ?? article
     }
+
+    private var feedArticles: [Article] {
+        let fid = feedID ?? currentArticle.feedID
+        return store.articlesForFeed(fid)
+            .sorted { ($0.publishedDate ?? .distantPast) > ($1.publishedDate ?? .distantPast) }
+    }
+
+    private var currentIndex: Int? {
+        feedArticles.firstIndex(where: { $0.id == activeID })
+    }
+
+    private var needsTranslation: Bool {
+        let sample = HTMLUtils.stripTags(currentArticle.content)
+        let title = currentArticle.title
+        let text = (title + "\n" + sample).trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return false }
+        return !ListLanguageDetect.isMostlyChinese(text)
+    }
+
 
     private var displayTitle: String {
         if showTranslated, let t = currentArticle.translatedTitle, !t.isEmpty { return t }
@@ -124,6 +149,27 @@ struct ArticleReaderView: View {
         .background(Color(.systemBackground))
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(showChrome ? .visible : .hidden, for: .navigationBar)
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                withAnimation(.easeInOut(duration: 0.2)) { showChrome.toggle() }
+            }
+        )
+        .gesture(
+            DragGesture(minimumDistance: 40)
+                .onEnded { value in
+                    // 左滑：下一篇（更新时间更旧）
+                    if value.translation.width < -80, abs(value.translation.height) < 80 {
+                        goNextArticle()
+                    } else if value.translation.width > 80, abs(value.translation.height) < 80 {
+                        goPrevArticle()
+                    }
+                }
+        )
+        .onAppear {
+            if currentID == nil { currentID = article.id }
+            store.markAsRead(currentArticle)
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { store.toggleFavorite(currentArticle) } label: {
@@ -144,11 +190,13 @@ struct ArticleReaderView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await toggleTranslation() } } label: {
-                    if isTranslating { ProgressView().scaleEffect(0.75) }
-                    else { Label(showTranslated ? "原文" : "翻译", systemImage: "translate") }
+                if needsTranslation || showTranslated {
+                    Button { Task { await toggleTranslation() } } label: {
+                        if isTranslating { ProgressView().scaleEffect(0.75) }
+                        else { Label(showTranslated ? "原文" : "翻译", systemImage: "translate") }
+                    }
+                    .disabled(isTranslating)
                 }
-                .disabled(isTranslating)
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { Task { await generateSummary() } } label: {
@@ -321,6 +369,30 @@ struct ArticleReaderView: View {
             updated.translatedTitle = result.trimmingCharacters(in: .whitespacesAndNewlines)
             store.updateArticle(updated)
         }
+    }
+
+    private func goNextArticle() {
+        guard let idx = currentIndex, idx + 1 < feedArticles.count else { return }
+        let next = feedArticles[idx + 1]
+        currentID = next.id
+        showTranslated = false
+        translatedContent = nil
+        aiSummary = next.aiSummary
+        aiSummaryProvider = next.aiSummaryProvider
+        store.markAsRead(next)
+        withAnimation(.snappy(duration: 0.2)) { showChrome = true }
+    }
+
+    private func goPrevArticle() {
+        guard let idx = currentIndex, idx > 0 else { return }
+        let prev = feedArticles[idx - 1]
+        currentID = prev.id
+        showTranslated = false
+        translatedContent = nil
+        aiSummary = prev.aiSummary
+        aiSummaryProvider = prev.aiSummaryProvider
+        store.markAsRead(prev)
+        withAnimation(.snappy(duration: 0.2)) { showChrome = true }
     }
 
     private func generateSummary() async {

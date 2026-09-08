@@ -80,7 +80,7 @@ struct ArticleListView: View {
         .navigationTitle(liveFeedTitle)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(for: Article.self) { article in
-            ArticleReaderView(article: article)
+            ArticleReaderView(article: article, feedID: feed.id)
                 .onAppear {
                     openedArticleID = article.id
                     readingIDs.insert(article.id)
@@ -98,14 +98,6 @@ struct ArticleListView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    store.showReadArticles.toggle()
-                    store.persistSettings()
-                } label: {
-                    Image(systemName: store.showReadArticles ? "eye" : "eye.slash")
-                }
-                .accessibilityLabel(store.showReadArticles ? "隐藏已读" : "显示已读")
-
                 Button {
                     Task { await toggleTranslateAll() }
                 } label: {
@@ -153,7 +145,7 @@ struct ArticleListView: View {
                 ContentUnavailableView(
                     store.showReadArticles ? "暂无文章" : "暂无未读文章",
                     systemImage: "newspaper",
-                    description: Text(store.showReadArticles ? "下拉刷新或稍后再来" : "点右上角眼睛可显示已读文章")
+                    description: Text(store.showReadArticles ? "下拉刷新或稍后再来" : "可在设置中开启「显示已读文章」")
                 )
             }
         }
@@ -189,9 +181,11 @@ struct ArticleListView: View {
     /// 自动翻译：仅处理「未译且非目标中文」的标题 / 摘要
     private func autoTranslatePending(force: Bool) async {
         guard !isTranslatingAll else { return }
-        let feedEnabled = store.feeds.first(where: { $0.id == feed.id })?.autoTranslateEnabled ?? true
+        let live = store.feeds.first(where: { $0.id == feed.id })
+        let feedEnabled = live?.autoTranslateEnabled ?? true
         guard feedEnabled else { return }
-        let snapshot = articles
+        // 使用源内全部文章（不仅是当前可见未读），避免过滤导致跳过
+        let snapshot = store.articlesForFeed(feed.id)
         var jobs: [ListTranslationJob] = []
         jobs.reserveCapacity(snapshot.count * 2)
         var skipMark: [(id: UUID, title: String?, summary: String?)] = []

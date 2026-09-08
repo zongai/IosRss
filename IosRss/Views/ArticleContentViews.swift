@@ -31,6 +31,8 @@ struct ArticleContentView: View {
                         onExplain: { startExplain($0) }
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
+                case .audio(let urlString):
+                    AudioLinkPlayerCard(urlString: urlString)
                 case .image(let urlString):
                     if let url = URL(string: urlString) {
                         AsyncImage(url: url) { phase in
@@ -102,14 +104,46 @@ enum ReaderTypography {
 enum ContentBlock {
     case paragraph(AttributedString, ReaderTypography)
     case image(String)
+    case audio(String)
 }
 
 enum ContentBlockParser {
     static func parse(_ html: String, prefersChineseTypography: Bool = false) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
-        var working = html
+        var working = HTMLUtils.decodePercentEncodings(HTMLUtils.decodeEntities(html))
         working = working.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
         working = working.replacingOccurrences(of: #"</p>|</div>|</li>|</h[1-6]>"#, with: "\n\n", options: .regularExpression)
+
+        let audioPattern = #"<a[^>]+href=[\"']([^\"']+\.(?:mp3|m4a|wav|aac)(?:\?[^\"']*)?)[\"'][^>]*>.*?</a>|<(?:audio|source)[^>]+src=[\"']([^\"']+)[\"'][^>]*>"#
+        if let aregex = try? NSRegularExpression(pattern: audioPattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) {
+            let ns = working as NSString
+            let matches = aregex.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed()
+            for match in matches {
+                var url: String?
+                if match.numberOfRanges >= 2, match.range(at: 1).location != NSNotFound, let r = Range(match.range(at: 1), in: working) {
+                    url = String(working[r])
+                } else if match.numberOfRanges >= 3, match.range(at: 2).location != NSNotFound, let r = Range(match.range(at: 2), in: working) {
+                    url = String(working[r])
+                }
+                if let url, !url.isEmpty {
+                    blocks.append(.audio(url))
+                }
+                if let full = Range(match.range, in: working) {
+                    working.replaceSubrange(full, with: "\n")
+                }
+            }
+        }
+        // bare mp3 URLs in text
+        if let bare = try? NSRegularExpression(pattern: #"https?://[^\s<>\"']+\.mp3(?:\?[^\s<>\"']*)?"#, options: .caseInsensitive) {
+            let ns = working as NSString
+            for match in bare.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed() {
+                if let r = Range(match.range, in: working) {
+                    let url = String(working[r])
+                    blocks.append(.audio(url))
+                    working.replaceSubrange(r, with: "\n")
+                }
+            }
+        }
 
         let imgPattern = #"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*/?>"#
         var imageURLs: [String] = []
@@ -215,5 +249,82 @@ enum ContentBlockParser {
             attributed[start..<end].underlineStyle = .single
         }
         return attributed
+    }
+}
+
+
+// MARK: - MP3 / audio link player
+
+import AVFoundation
+
+struct AudioLinkPlayerCard: View {
+    let urlString: String
+    @State private var player: AVPlayer?
+    @State private var isPlaying = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("音频")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(urlString)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                Button {
+                    toggle()
+                } label: {
+                    Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 36))
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .buttonStyle(.plain)
+            }
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.vertical, 6)
+        .onDisappear { stop() }
+    }
+
+    private func toggle() {
+        if isPlaying {
+            player?.pause()
+            isPlaying = false
+            return
+        }
+        guard let url = URL(string: urlString) else {
+            error = "无效音频地址"
+            return
+        }
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            self.error = error.localizedDescription
+        }
+        if player == nil {
+            player = AVPlayer(url: url)
+        }
+        player?.play()
+        isPlaying = true
+        error = nil
+    }
+
+    private func stop() {
+        player?.pause()
+        player = nil
+        isPlaying = false
     }
 }

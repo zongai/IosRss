@@ -309,6 +309,37 @@ func callGemini(prompt: String, provider: AIProvider, apiKey: String) async thro
 
 enum HTMLUtils {
     /// 解码常见 HTML 实体（含数字实体如 &#8216;）
+    /// 解码正文中残留的百分号编码片段（如 %e8%ae%ae → 议）
+    static func decodePercentEncodings(_ text: String) -> String {
+        var result = text
+        // 连续 %XX 序列
+        if let regex = try? NSRegularExpression(pattern: #"(?:%[0-9A-Fa-f]{2}){2,}"#, options: []) {
+            let ns = result as NSString
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()
+            for match in matches {
+                guard let range = Range(match.range, in: result) else { continue }
+                let encoded = String(result[range])
+                if let decoded = encoded.removingPercentEncoding, decoded != encoded {
+                    result.replaceSubrange(range, with: decoded)
+                }
+            }
+        }
+        // 单个 %XX 若为可打印字符也尝试
+        if let regex = try? NSRegularExpression(pattern: #"%[0-9A-Fa-f]{2}"#, options: []) {
+            let ns = result as NSString
+            let matches = regex.matches(in: result, range: NSRange(location: 0, length: ns.length)).reversed()
+            for match in matches {
+                guard let range = Range(match.range, in: result) else { continue }
+                let encoded = String(result[range])
+                if let decoded = encoded.removingPercentEncoding, decoded != encoded,
+                   decoded.unicodeScalars.allSatisfy({ !$0.properties.isNoncharacterCodePoint }) {
+                    result.replaceSubrange(range, with: decoded)
+                }
+            }
+        }
+        return result
+    }
+
     static func decodeEntities(_ html: String) -> String {
         var result = html
         // 命名实体
@@ -363,7 +394,7 @@ enum HTMLUtils {
                 }
             }
         }
-        return result
+        return decodePercentEncodings(result)
     }
 
     static func stripTags(_ html: String) -> String {

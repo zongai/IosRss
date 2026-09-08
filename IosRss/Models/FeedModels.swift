@@ -7,9 +7,9 @@ enum AppVersion {
     static var marketing: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3"
     }
-    /// 工程构建号，如 3（CURRENT_PROJECT_VERSION）
+    /// 工程构建号，如 4（CURRENT_PROJECT_VERSION）
     static var build: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "3"
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "4"
     }
     /// CI 在编译前写入 run_number；本地为空字符串
     /// 勿改字面量格式，build.yml 依赖此行做 sed 替换
@@ -23,7 +23,7 @@ enum AppVersion {
         }
         return nil
     }
-    /// 展示：CI 为 v1.3-3-build43；本地为 v1.3-3
+    /// 展示：CI 为 v1.3-4-build43；本地为 v1.3-4
     static var display: String {
         if let g = githubBuild {
             return "v\(marketing)-\(build)-build\(g)"

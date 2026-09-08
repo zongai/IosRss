@@ -348,16 +348,23 @@ class AppStore {
         saveToStorage()
     }
 
-    /// 向指定 / 默认 Provider 发送极短探测请求
+    /// 仅测试指定 Provider（不 failover 到其它）
     func testAIProvider(_ providerID: UUID?) async throws -> String {
-        let result = try await callAIWithFailover(
-            preferredID: providerID,
-            probeText: "ping",
-            maxTokens: 32
-        ) {
-            "You are a connectivity probe. Reply with exactly the two letters: OK"
+        guard let id = providerID,
+              let provider = aiProviders.first(where: { $0.id == id }) else {
+            throw TranslationError.noProvider
         }
-        return "\(result.provider.name): \(result.text.trimmingCharacters(in: .whitespacesAndNewlines))"
+        let key = Keychain.load(key: "ai_key_" + id.uuidString) ?? ""
+        guard !key.isEmpty else {
+            throw TranslationError.apiError("未配置 API Key")
+        }
+        let prompt = "You are a connectivity probe. Reply with exactly the two letters: OK"
+        let raw = try await callAI(prompt: prompt, provider: provider, apiKey: key, maxTokens: 32)
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if Self.looksLikeAIErrorResponse(text) {
+            throw TranslationError.apiError(text)
+        }
+        return provider.name + ": " + text
     }
 
     var feedsByGroup: [(group: FeedGroup?, feeds: [RSSFeed])] {

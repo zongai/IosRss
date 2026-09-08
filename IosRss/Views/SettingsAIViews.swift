@@ -4,17 +4,38 @@ struct AISettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var showAddProvider = false
     @State private var editingProvider: AIProvider?
-    @State private var isTestingAI = false
-    @State private var aiTestResult: String?
+    @State private var testingProviderID: UUID?
+    @State private var providerTestResults: [UUID: String] = [:]
 
     var body: some View {
         @Bindable var store = store
         Form {
             Section {
                 ForEach(store.aiProviders) { provider in
-                    AIProviderRow(provider: provider)
+                    VStack(alignment: .leading, spacing: 4) {
+                        AIProviderRow(provider: provider)
+                        if testingProviderID == provider.id {
+                            HStack(spacing: 6) {
+                                ProgressView().scaleEffect(0.75)
+                                Text("测试中…").font(.caption).foregroundStyle(.secondary)
+                            }
+                        } else if let result = providerTestResults[provider.id] {
+                            Text(result)
+                                .font(.caption)
+                                .foregroundStyle(result.hasPrefix("失败") ? .red : .secondary)
+                        }
+                    }
                         .contentShape(Rectangle())
                         .onTapGesture { editingProvider = provider }
+                        .swipeActions(edge: .leading) {
+                            Button {
+                                Task { await testProvider(provider) }
+                            } label: {
+                                Label("测试", systemImage: "network")
+                            }
+                            .tint(.blue)
+                            .disabled(testingProviderID != nil)
+                        }
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
                                 store.aiProviders.removeAll(where: { $0.id == provider.id })
@@ -42,7 +63,7 @@ struct AISettingsView: View {
             } header: {
                 Text("AI Provider")
             } footer: {
-                Text("Gemini、OpenAI、Anthropic 等统一管理。添加时可选模板，Gemini 会自动走专用接口。")
+                Text("左滑可测试该 Provider。Gemini、OpenAI、Anthropic 等统一管理；Gemini 走专用接口。")
             }
 
             Section {
@@ -59,35 +80,6 @@ struct AISettingsView: View {
                 Text("AI 解释")
             } footer: {
                 Text("框选文章文字后的「AI解释」使用此 Provider。选「跟随摘要引擎」时与摘要共用。")
-            }
-
-            Section {
-                Button {
-                    Task {
-                        isTestingAI = true
-                        aiTestResult = nil
-                        do {
-                            aiTestResult = try await store.testAIProvider(store.defaultSummaryProviderID)
-                        } catch {
-                            aiTestResult = "失败：\(error.localizedDescription)"
-                        }
-                        isTestingAI = false
-                    }
-                } label: {
-                    HStack {
-                        Label("测试 AI 连接", systemImage: "network")
-                        Spacer()
-                        if isTestingAI { ProgressView() }
-                    }
-                }
-                .disabled(isTestingAI || store.aiProviders.isEmpty)
-                if let aiTestResult {
-                    Text(aiTestResult)
-                        .font(.footnote)
-                        .foregroundStyle(aiTestResult.hasPrefix("失败") ? .red : .secondary)
-                }
-            } footer: {
-                Text("使用默认摘要 Provider 发送极短请求，用于确认 Key 与接口可用。")
             }
 
             Section {
@@ -157,6 +149,18 @@ struct AISettingsView: View {
         .onChange(of: store.explainPrompt) { _, _ in store.persistSettings() }
         .sheet(isPresented: $showAddProvider) { EditProviderView(provider: nil) }
         .sheet(item: $editingProvider) { provider in EditProviderView(provider: provider) }
+    }
+
+    private func testProvider(_ provider: AIProvider) async {
+        testingProviderID = provider.id
+        providerTestResults[provider.id] = nil
+        do {
+            let result = try await store.testAIProvider(provider.id)
+            providerTestResults[provider.id] = result
+        } catch {
+            providerTestResults[provider.id] = "失败：\(error.localizedDescription)"
+        }
+        testingProviderID = nil
     }
 }
 
@@ -280,6 +284,8 @@ struct EditProviderView: View {
     @Environment(AppStore.self) private var store
     let provider: AIProvider?
 
+    @State private var isTesting = false
+    @State private var testResult: String?
     @State private var name = ""
     @State private var baseURL = ""
     @State private var model = ""
@@ -318,6 +324,26 @@ struct EditProviderView: View {
                 } footer: {
                     Text("API Key 加密存储，不会明文保存。Gemini 在 Google AI Studio 获取免费 Key。")
                 }
+                Section {
+                    Button {
+                        Task { await testCurrent() }
+                    } label: {
+                        HStack {
+                            Label("测试此 Provider", systemImage: "network")
+                            Spacer()
+                            if isTesting { ProgressView() }
+                        }
+                    }
+                    .disabled(isTesting || baseURL.isEmpty || model.isEmpty)
+                    if let testResult {
+                        Text(testResult)
+                            .font(.caption)
+                            .foregroundStyle(testResult.hasPrefix("失败") ? .red : .secondary)
+                    }
+                } footer: {
+                    Text("使用当前表单中的配置（需先保存 Key 后对新 Provider 更准确；已有 Provider 直接测已存 Key）。")
+                }
+
                 Section("默认设置") {
                     Toggle("设为默认摘要引擎", isOn: $isDefaultSummary)
                     Toggle("设为默认 AI 翻译引擎", isOn: $isDefaultTranslation)
@@ -354,6 +380,43 @@ struct EditProviderView: View {
         baseURL = template.baseURL
         model = template.model
         kind = template.kind
+    }
+
+    private func testCurrent() async {
+        // 确保 Key 已写入（若表单有输入）
+        let id = provider?.id ?? UUID()
+        if !apiKey.isEmpty {
+            Keychain.save(key: "ai_key_\(id)", value: apiKey)
+        }
+        // 临时写入/更新 provider 列表中的连接信息以便 callAI 能解析
+        let temp = AIProvider(
+            id: id, name: name.isEmpty ? "Test" : name,
+            baseURL: baseURL, model: model, kind: kind
+        )
+        if let idx = store.aiProviders.firstIndex(where: { $0.id == id }) {
+            let prev = store.aiProviders[idx]
+            store.aiProviders[idx] = temp
+            isTesting = true
+            testResult = nil
+            do {
+                testResult = try await store.testAIProvider(id)
+            } catch {
+                testResult = "失败：\(error.localizedDescription)"
+            }
+            isTesting = false
+            store.aiProviders[idx] = prev
+        } else {
+            store.aiProviders.append(temp)
+            isTesting = true
+            testResult = nil
+            do {
+                testResult = try await store.testAIProvider(id)
+            } catch {
+                testResult = "失败：\(error.localizedDescription)"
+            }
+            isTesting = false
+            store.aiProviders.removeAll { $0.id == id }
+        }
     }
 
     private func save() {

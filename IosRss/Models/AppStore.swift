@@ -44,6 +44,8 @@ class AppStore {
     var ttsVoice: String = ""
     /// 阅读主题色板
     var colorTheme: AppColorTheme = .azure
+    /// 外观：跟随系统 / 浅色 / 深色
+    var appearanceMode: AppearanceMode = .system
 
     static let defaultTranslationPrompt = "请将以下内容翻译成中文，只输出译文，不要解释：\n\n{{text}}"
     static let defaultSummaryPrompt = "请用3-5句话概括以下文章的核心内容，用中文回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：\n\n标题：{{title}}\n\n内容：{{content}}"
@@ -252,6 +254,7 @@ class AppStore {
         var fullContentCacheDays: Int
         var ttsVoice: String
         var colorTheme: String
+        var appearanceMode: String?
         var aiBlacklistTerms: [String]
         var articleBlacklistTerms: [String]
         var defaultSummaryProviderID: UUID?
@@ -283,6 +286,7 @@ class AppStore {
             fullContentCacheDays: fullContentCacheDays,
             ttsVoice: ttsVoice,
             colorTheme: colorTheme.rawValue,
+            appearanceMode: appearanceMode.rawValue,
             aiBlacklistTerms: aiBlacklistTerms,
             articleBlacklistTerms: articleBlacklistTerms,
             defaultSummaryProviderID: defaultSummaryProviderID,
@@ -323,6 +327,7 @@ class AppStore {
         fullContentCacheDays = payload.fullContentCacheDays
         ttsVoice = payload.ttsVoice
         if let th = AppColorTheme(rawValue: payload.colorTheme) { colorTheme = th }
+        if let raw = payload.appearanceMode, let mode = AppearanceMode(rawValue: raw) { appearanceMode = mode }
         aiBlacklistTerms = payload.aiBlacklistTerms
         articleBlacklistTerms = payload.articleBlacklistTerms
         defaultSummaryProviderID = payload.defaultSummaryProviderID
@@ -1076,6 +1081,7 @@ class AppStore {
         UserDefaults.standard.set(fullContentCacheDays, forKey: "fullContentCacheDays")
         UserDefaults.standard.set(ttsVoice, forKey: "ttsVoice")
         UserDefaults.standard.set(colorTheme.rawValue, forKey: "colorTheme")
+        UserDefaults.standard.set(appearanceMode.rawValue, forKey: "appearanceMode")
         if let data = try? JSONEncoder().encode(aiProviders) { UserDefaults.standard.set(data, forKey: "aiProviders") }
         if let id = defaultSummaryProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultSummaryProviderID") }
         if let id = defaultTranslationProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultTranslationProviderID") }
@@ -1119,6 +1125,8 @@ class AppStore {
         ttsVoice = UserDefaults.standard.string(forKey: "ttsVoice") ?? ""
         if let raw = UserDefaults.standard.string(forKey: "colorTheme"),
            let theme = AppColorTheme(rawValue: raw) { colorTheme = theme }
+        if let raw = UserDefaults.standard.string(forKey: "appearanceMode"),
+           let mode = AppearanceMode(rawValue: raw) { appearanceMode = mode }
         if let data = UserDefaults.standard.data(forKey: "aiProviders"),
            let decoded = try? JSONDecoder().decode([AIProvider].self, from: data) { aiProviders = decoded }
         if let s = UserDefaults.standard.string(forKey: "defaultSummaryProviderID"),

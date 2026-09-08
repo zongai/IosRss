@@ -1,6 +1,33 @@
 import SwiftUI
 import UIKit
 
+// MARK: - Appearance (follow system / force light / force dark)
+
+enum AppearanceMode: String, CaseIterable, Codable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+
+    /// nil = 交给系统
+    var preferredColorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
 // MARK: - Color Theme (reading-friendly palettes)
 
 enum AppColorTheme: String, CaseIterable, Codable, Identifiable {
@@ -36,6 +63,26 @@ enum AppColorTheme: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .midnight, .graphite: return true
         default: return false
+        }
+    }
+
+    /// 系统深色时优先使用的夜读主题
+    static var preferredDark: AppColorTheme { .midnight }
+    /// 系统浅色时优先使用的日间主题
+    static var preferredLight: AppColorTheme { .azure }
+
+    /// 按当前界面色相解析实际色板（跟随系统时在浅/深色间自动切换）
+    static func resolved(selected: AppColorTheme, appearance: AppearanceMode, systemScheme: ColorScheme) -> AppColorTheme {
+        let effective: ColorScheme
+        switch appearance {
+        case .system: effective = systemScheme
+        case .light: effective = .light
+        case .dark: effective = .dark
+        }
+        if effective == .dark {
+            return selected.isDark ? selected : .preferredDark
+        } else {
+            return selected.isDark ? .preferredLight : selected
         }
     }
 

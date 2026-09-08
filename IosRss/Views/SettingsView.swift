@@ -19,6 +19,14 @@ struct SettingsView: View {
                         }
                     }
                     Toggle("显示已读文章", isOn: $store.showReadArticles)
+                    Picker("外观", selection: $store.appearanceMode) {
+                        ForEach(AppearanceMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: store.appearanceMode) { _, _ in store.persistSettings() }
+
                     NavigationLink {
                         Form {
                             ThemePalettePicker(selection: $store.colorTheme)

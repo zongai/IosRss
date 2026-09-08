@@ -4,6 +4,7 @@ struct ContentView: View {
     @State private var store = AppStore()
 
     var body: some View {
+        let tokens = store.colorTheme.tokens
         TabView {
             Tab("订阅", systemImage: "newspaper") {
                 FeedsListView()
@@ -15,7 +16,9 @@ struct ContentView: View {
                 SettingsView()
             }
         }
-        .tint(Color.primary)
+        .tint(tokens.accent)
         .environment(store)
+        .environment(\.theme, tokens)
+        .preferredColorScheme(store.colorTheme.isDark ? .dark : .light)
     }
 }

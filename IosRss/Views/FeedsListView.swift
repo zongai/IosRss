@@ -125,14 +125,16 @@ struct FeedsListView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 18) {
-                        Button {
-                            withAnimation { editMode = editMode == .active ? .inactive : .active }
-                        } label: {
-                            Image(systemName: editMode == .active ? "checkmark" : "arrow.up.arrow.down")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(.primary)
+                        if store.feedSortMode == .manual {
+                            Button {
+                                withAnimation { editMode = editMode == .active ? .inactive : .active }
+                            } label: {
+                                Image(systemName: editMode == .active ? "checkmark" : "arrow.up.arrow.down")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundStyle(.primary)
+                            }
+                            .accessibilityLabel(editMode == .active ? "完成排序" : "排序")
                         }
-                        .accessibilityLabel(editMode == .active ? "完成排序" : "排序")
                         Button { showGroupManager = true } label: {
                             Image(systemName: "folder.badge.gearshape")
                                 .font(.system(size: 16, weight: .medium))

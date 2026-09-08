@@ -48,6 +48,8 @@ class AppStore {
     var appearanceMode: AppearanceMode = .system
     /// 界面与阅读字体
     var appFontFamily: AppFontFamily = .system
+    /// 订阅源排序方式（默认未读优先自动排序）
+    var feedSortMode: FeedSortMode = .unreadThenTitle
 
     static let defaultTranslationPrompt = "请将以下内容翻译成中文，只输出译文，不要解释：\n\n{{text}}"
     static let defaultSummaryPrompt = "请用3-5句话概括以下文章的核心内容，用中文回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：\n\n标题：{{title}}\n\n内容：{{content}}"
@@ -362,15 +364,40 @@ class AppStore {
         let sortedGroups = groups.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name) }
         var sections: [(FeedGroup?, [RSSFeed])] = []
         for g in sortedGroups {
-            let items = feeds.filter { $0.groupID == g.id }.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.title < $1.title) }
+            let items = sortedFeeds(feeds.filter { $0.groupID == g.id })
             if !items.isEmpty { sections.append((g, items)) }
         }
-        let ungrouped = feeds.filter { feed in
+        let ungrouped = sortedFeeds(feeds.filter { feed in
             guard let gid = feed.groupID else { return true }
             return !groups.contains(where: { $0.id == gid })
-        }.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.title < $1.title) }
+        })
         if !ungrouped.isEmpty || sections.isEmpty { sections.append((nil, ungrouped)) }
         return sections
+    }
+
+    /// 按当前 `feedSortMode` 对源列表排序
+    func sortedFeeds(_ list: [RSSFeed]) -> [RSSFeed] {
+        switch feedSortMode {
+        case .unreadThenTitle:
+            return list.sorted {
+                if $0.unreadCount != $1.unreadCount { return $0.unreadCount > $1.unreadCount }
+                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            }
+        case .title:
+            return list.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        case .lastFetched:
+            return list.sorted {
+                let a = $0.lastFetched ?? .distantPast
+                let b = $1.lastFetched ?? .distantPast
+                if a != b { return a > b }
+                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            }
+        case .manual:
+            return list.sorted {
+                if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            }
+        }
     }
 
     /// 同组内重排：source/destination 为该组可见列表中的下标
@@ -1085,6 +1112,7 @@ class AppStore {
         UserDefaults.standard.set(colorTheme.rawValue, forKey: "colorTheme")
         UserDefaults.standard.set(appearanceMode.rawValue, forKey: "appearanceMode")
         UserDefaults.standard.set(appFontFamily.rawValue, forKey: "appFontFamily")
+        UserDefaults.standard.set(feedSortMode.rawValue, forKey: "feedSortMode")
         if let data = try? JSONEncoder().encode(aiProviders) { UserDefaults.standard.set(data, forKey: "aiProviders") }
         if let id = defaultSummaryProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultSummaryProviderID") }
         if let id = defaultTranslationProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultTranslationProviderID") }
@@ -1135,6 +1163,10 @@ class AppStore {
             appFontFamily = font
         } else if UserDefaults.standard.string(forKey: "appFontFamily") == "sourceHanSans" {
             appFontFamily = .system
+        }
+        if let raw = UserDefaults.standard.string(forKey: "feedSortMode"),
+           let mode = FeedSortMode(rawValue: raw) {
+            feedSortMode = mode
         }
         if let data = UserDefaults.standard.data(forKey: "aiProviders"),
            let decoded = try? JSONDecoder().decode([AIProvider].self, from: data) { aiProviders = decoded }

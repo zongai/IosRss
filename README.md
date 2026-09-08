@@ -2,7 +2,7 @@
 
 原生 SwiftUI 实现的 iOS / iPadOS RSS 阅读器。支持 RSS 与 Atom，内置全文抓取、多引擎翻译、AI 摘要 / 解释、Edge TTS 朗读、源分组、评论（Substack 等）与离线缓存。
 
-**版本**：本地调试 `v1.3-1`；CI 构建 `v1.3-1-build{N}`（`N` = GitHub Actions `run_number`）。
+**版本**：本地调试 `v1.3-2`；CI 构建 `v1.3-2-build{N}`（`N` = GitHub Actions `run_number`）。
 
 > **文档维护**：`README.md` 与 `CHANGELOG.md` 由维护者手动更新，**不由** GitHub Actions 自动改写。
 
@@ -12,7 +12,7 @@
 - **订阅管理**：添加 RSS / Atom；自动发现常见 feed 路径；源名称可重命名
 - **源分组**：添加时可指定分组；移动到分组；分组管理；**分组可折叠**
 - **无未读隐藏**：默认只显示有未读的源；在设置中开启「显示已读文章」可查看全部
-- **源排序**：工具栏进入排序模式后拖拽调整（`sortOrder`）
+- **源排序**：默认**未读优先自动排序**；可按名称、最近更新或手动拖拽（设置 → 订阅源排序）
 - **OPML 导入 / 导出**：标准 OPML 2.0（含分组嵌套）；导出可选保存位置
 - **Feed 图标**：仅获取一次；磁盘缓存与内容缓存隔离
 - **源级开关**：全文获取、评论获取、自动翻译
@@ -91,8 +91,8 @@ IosRss/
 
 | 场景 | 显示 |
 |------|------|
-| 本地 Xcode | `v1.3-1` |
-| GitHub Actions | `v1.3-1-build{N}` |
+| 本地 Xcode | `v1.3-2` |
+| GitHub Actions | `v1.3-2-build{N}` |
 
 ## Changelog
 

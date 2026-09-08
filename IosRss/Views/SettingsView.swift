@@ -19,6 +19,12 @@ struct SettingsView: View {
                         }
                     }
                     Toggle("显示已读文章", isOn: $store.showReadArticles)
+                    Picker("订阅源排序", selection: $store.feedSortMode) {
+                        ForEach(FeedSortMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .onChange(of: store.feedSortMode) { _, _ in store.persistSettings() }
                     Picker("外观", selection: $store.appearanceMode) {
                         ForEach(AppearanceMode.allCases) { mode in
                             Text(mode.displayName).tag(mode)

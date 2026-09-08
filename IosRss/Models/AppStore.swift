@@ -46,6 +46,8 @@ class AppStore {
     var colorTheme: AppColorTheme = .azure
     /// 外观：跟随系统 / 浅色 / 深色
     var appearanceMode: AppearanceMode = .system
+    /// 界面与阅读字体
+    var appFontFamily: AppFontFamily = .sourceHanSans
 
     static let defaultTranslationPrompt = "请将以下内容翻译成中文，只输出译文，不要解释：\n\n{{text}}"
     static let defaultSummaryPrompt = "请用3-5句话概括以下文章的核心内容，用中文回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：\n\n标题：{{title}}\n\n内容：{{content}}"
@@ -1082,6 +1084,7 @@ class AppStore {
         UserDefaults.standard.set(ttsVoice, forKey: "ttsVoice")
         UserDefaults.standard.set(colorTheme.rawValue, forKey: "colorTheme")
         UserDefaults.standard.set(appearanceMode.rawValue, forKey: "appearanceMode")
+        UserDefaults.standard.set(appFontFamily.rawValue, forKey: "appFontFamily")
         if let data = try? JSONEncoder().encode(aiProviders) { UserDefaults.standard.set(data, forKey: "aiProviders") }
         if let id = defaultSummaryProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultSummaryProviderID") }
         if let id = defaultTranslationProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultTranslationProviderID") }
@@ -1127,6 +1130,8 @@ class AppStore {
            let theme = AppColorTheme(rawValue: raw) { colorTheme = theme }
         if let raw = UserDefaults.standard.string(forKey: "appearanceMode"),
            let mode = AppearanceMode(rawValue: raw) { appearanceMode = mode }
+        if let raw = UserDefaults.standard.string(forKey: "appFontFamily"),
+           let font = AppFontFamily(rawValue: raw) { appFontFamily = font }
         if let data = UserDefaults.standard.data(forKey: "aiProviders"),
            let decoded = try? JSONDecoder().decode([AIProvider].self, from: data) { aiProviders = decoded }
         if let s = UserDefaults.standard.string(forKey: "defaultSummaryProviderID"),

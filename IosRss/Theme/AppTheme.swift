@@ -182,7 +182,39 @@ struct ThemeTokens {
     var shadow: Color
 }
 
-// MARK: - Typography (Inter Tight when available, else SF Pro)
+// MARK: - Font family
+
+enum AppFontFamily: String, CaseIterable, Codable, Identifiable {
+    case sourceHanSans
+    case system
+    case pingFangSC
+    case songti
+    case heiti
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .sourceHanSans: return "思源黑体"
+        case .system: return "系统默认"
+        case .pingFangSC: return "苹方"
+        case .songti: return "宋体"
+        case .heiti: return "黑体"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .sourceHanSans: return "Source Han Sans，适合中文阅读"
+        case .system: return "跟随 iOS 系统字体（SF Pro）"
+        case .pingFangSC: return "系统中文字体 PingFang SC"
+        case .songti: return "宋体，偏印刷感"
+        case .heiti: return "黑体，端庄醒目"
+        }
+    }
+}
+
+// MARK: - Typography (Source Han Sans / system families)
 
 enum AppTypography {
     static func greeting() -> Font { font(size: 26, weight: .semibold) }
@@ -193,17 +225,62 @@ enum AppTypography {
     static func caption() -> Font { font(size: 12.5, weight: .regular) }
     static func label() -> Font { font(size: 13, weight: .medium) }
 
+    /// 当前选用的字体家族（由设置写入 UserDefaults）
+    static var family: AppFontFamily {
+        if let raw = UserDefaults.standard.string(forKey: "appFontFamily"),
+           let f = AppFontFamily(rawValue: raw) {
+            return f
+        }
+        return .sourceHanSans
+    }
+
     static func font(size: CGFloat, weight: Font.Weight) -> Font {
-        let name: String
-        switch weight {
-        case .semibold, .bold, .heavy, .black: name = "InterTight-SemiBold"
-        case .medium: name = "InterTight-Medium"
-        default: name = "InterTight-Regular"
+        font(size: size, weight: weight, family: family)
+    }
+
+    static func font(size: CGFloat, weight: Font.Weight, family: AppFontFamily) -> Font {
+        switch family {
+        case .sourceHanSans:
+            // Regular=正文；Normal≈正文；Medium=小标题；Bold=标题
+            let name: String
+            switch weight {
+            case .bold, .heavy, .black, .semibold:
+                name = "SourceHanSansSC-Bold"
+            case .medium:
+                name = "SourceHanSansSC-Medium"
+            default:
+                // 正文优先 Regular；Normal 作备选
+                if UIFont(name: "SourceHanSansSC-Regular", size: size) != nil {
+                    name = "SourceHanSansSC-Regular"
+                } else {
+                    name = "SourceHanSansSC-Normal"
+                }
+            }
+            if UIFont(name: name, size: size) != nil {
+                return .custom(name, size: size)
+            }
+            return .system(size: size, weight: weight)
+        case .system:
+            return .system(size: size, weight: weight)
+        case .pingFangSC:
+            let name: String
+            switch weight {
+            case .bold, .heavy, .black, .semibold: name = "PingFangSC-Semibold"
+            case .medium: name = "PingFangSC-Medium"
+            default: name = "PingFangSC-Regular"
+            }
+            return UIFont(name: name, size: size) != nil ? .custom(name, size: size) : .system(size: size, weight: weight)
+        case .songti:
+            let name = "STSongti-SC-Regular"
+            return UIFont(name: name, size: size) != nil ? .custom(name, size: size) : .system(size: size, weight: weight, design: .serif)
+        case .heiti:
+            let name: String
+            switch weight {
+            case .bold, .heavy, .black, .semibold: name = "STHeitiSC-Medium"
+            default: name = "STHeitiSC-Light"
+            }
+            return UIFont(name: name, size: size) != nil ? .custom(name, size: size) : .system(size: size, weight: weight)
         }
-        if UIFont(name: name, size: size) != nil {
-            return .custom(name, size: size)
-        }
-        return .system(size: size, weight: weight)
     }
 
     static let titleTracking: CGFloat = -0.8

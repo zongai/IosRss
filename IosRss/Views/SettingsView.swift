@@ -29,6 +29,44 @@ struct SettingsView: View {
 
                     NavigationLink {
                         Form {
+                            ForEach(AppFontFamily.allCases) { family in
+                                Button {
+                                    store.appFontFamily = family
+                                    store.persistSettings()
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(family.displayName)
+                                                .font(AppTypography.font(size: 16, weight: .medium, family: family))
+                                                .foregroundStyle(Color.primary)
+                                            Text(family.subtitle)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        if store.appFontFamily == family {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundStyle(store.colorTheme.tokens.accent)
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                            }
+                        }
+                        .navigationTitle("字体")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .appScreenBackground()
+                    } label: {
+                        HStack {
+                            Text("字体")
+                            Spacer()
+                            Text(store.appFontFamily.displayName)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    NavigationLink {
+                        Form {
                             ThemePalettePicker(selection: $store.colorTheme)
                                 .onChange(of: store.colorTheme) { _, _ in store.persistSettings() }
                         }

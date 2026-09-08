@@ -598,6 +598,15 @@ struct FeedRow: View {
     }
 }
 
+extension FeedRow {
+    static func relativeString(_ date: Date) -> String {
+        let f = RelativeDateTimeFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.unitsStyle = .abbreviated
+        return f.localizedString(for: date, relativeTo: Date())
+    }
+}
+
 struct FeedIcon: View {
     @Environment(AppStore.self) private var store
     let feed: RSSFeed

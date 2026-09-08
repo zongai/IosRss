@@ -49,7 +49,7 @@ struct ArticleReaderView: View {
         let title = currentArticle.title
         let text = (title + "\n" + sample).trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { return false }
-        return !ListLanguageDetect.isMostlyChinese(text)
+        return !ListLanguageDetect.isMostlyTarget(text, language: store.targetLanguage)
     }
 
 

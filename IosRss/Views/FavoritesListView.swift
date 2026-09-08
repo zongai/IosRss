@@ -2,21 +2,29 @@ import SwiftUI
 
 struct FavoritesListView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     @State private var readingIDs: Set<UUID> = []
 
     private var articles: [Article] {
-        store.allArticles.filter(\.isFavorite)
+        store.favoriteArticles
+            .sorted { ($0.publishedDate ?? .distantPast) > ($1.publishedDate ?? .distantPast) }
     }
 
     var body: some View {
         NavigationStack {
             List {
                 ForEach(articles) { article in
+                    let showTranslation = (article.translatedTitle?.isEmpty == false)
+                        || (article.translatedSummary?.isEmpty == false)
                     NavigationLink(value: article) {
-                        ArticleRow(article: article, showTranslation: false)
+                        ArticleRow(
+                            article: article,
+                            showTranslation: showTranslation,
+                            preferUnreadStyle: true
+                        )
                     }
-                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) {
                             store.toggleFavorite(article)
@@ -27,6 +35,7 @@ struct FavoritesListView: View {
                 }
             }
             .listStyle(.plain)
+            .appScreenBackground()
             .navigationTitle("收藏")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: Article.self) { article in

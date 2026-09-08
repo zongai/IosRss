@@ -50,14 +50,18 @@ class AppStore {
     var appFontFamily: AppFontFamily = .system
     /// 订阅源排序方式（默认未读优先自动排序）
     var feedSortMode: FeedSortMode = .unreadThenTitle
+    /// 翻译目标语言
+    var targetLanguage: AppLanguage = .zhHans
+    /// AI 摘要/解释等输出语言
+    var aiOutputLanguage: AppLanguage = .zhHans
 
-    static let defaultTranslationPrompt = "请将以下内容翻译成中文，只输出译文，不要解释：\n\n{{text}}"
-    static let defaultSummaryPrompt = "请用3-5句话概括以下文章的核心内容，用中文回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：\n\n标题：{{title}}\n\n内容：{{content}}"
+    static let defaultTranslationPrompt = "请将以下内容翻译成{{lang}}，只输出译文，不要解释：\n\n{{text}}"
+    static let defaultSummaryPrompt = "请用3-5句话概括以下文章的核心内容，用{{lang}}回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：\n\n标题：{{title}}\n\n内容：{{content}}"
     static let defaultExplainPrompt = """
-    请用简洁的中文解释下面这段文字（词义、专有名词、语境或背景）。只输出解释，不要标题，不要复述整段原文：
+请用简洁的{{lang}}解释下面这段文字（词义、专有名词、语境或背景）。只输出解释，不要标题，不要复述整段原文：
 
-    {{text}}
-    """
+{{text}}
+"""
 
     private var readArticleLinks: Set<String> = []
 
@@ -713,19 +717,22 @@ class AppStore {
     }
 
     func translateText(_ text: String) async throws -> String {
+        let lang = targetLanguage
         switch defaultTranslationEngine {
-        case .google: return try await GoogleTranslate.translate(text: text)
+        case .google: return try await GoogleTranslate.translate(text: text, targetLang: lang.googleCode)
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
-            return try await MicrosoftTranslate.translate(text: text, apiKey: key)
+            return try await MicrosoftTranslate.translate(text: text, apiKey: key, targetLang: lang.microsoftCode)
         case .deepl:
             let key = Keychain.load(key: "deepl_translate_key") ?? ""
-            return try await DeepLTranslate.translate(text: text, apiKey: key)
+            return try await DeepLTranslate.translate(text: text, apiKey: key, targetLang: lang.deeplCode)
         case .ai:
             let preferred = defaultTranslationProviderID ?? defaultSummaryProviderID
             let template = translationPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? AppStore.defaultTranslationPrompt : translationPrompt
-            var prompt = template.replacingOccurrences(of: "{{text}}", with: text)
+            var prompt = template
+                .replacingOccurrences(of: "{{lang}}", with: lang.promptLabel)
+                .replacingOccurrences(of: "{{text}}", with: text)
             if !template.contains("{{text}}") { prompt += "\n\n" + text }
             let (result, _) = try await callAIWithFailover(
                 preferredID: preferred,
@@ -744,10 +751,10 @@ class AppStore {
         switch engine {
         case .deepl:
             let key = Keychain.load(key: "deepl_translate_key") ?? ""
-            return await translateNativeBatch(texts, chunkSize: 40) { try await DeepLTranslate.translate(texts: $0, apiKey: key) }
+            return await translateNativeBatch(texts, chunkSize: 40) { try await DeepLTranslate.translate(texts: $0, apiKey: key, targetLang: targetLanguage.deeplCode) }
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
-            return await translateNativeBatch(texts, chunkSize: 40) { try await MicrosoftTranslate.translate(texts: $0, apiKey: key) }
+            return await translateNativeBatch(texts, chunkSize: 40) { try await MicrosoftTranslate.translate(texts: $0, apiKey: key, targetLang: targetLanguage.microsoftCode) }
         case .google, .ai:
             return await translateConcurrently(texts, concurrency: limit)
         }
@@ -893,6 +900,7 @@ class AppStore {
         let template = summaryPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? AppStore.defaultSummaryPrompt : summaryPrompt
         var prompt = template
+            .replacingOccurrences(of: "{{lang}}", with: aiOutputLanguage.promptLabel)
             .replacingOccurrences(of: "{{title}}", with: article.title)
             .replacingOccurrences(of: "{{content}}", with: content)
         if !template.contains("{{title}}") && !template.contains("{{content}}") {
@@ -927,7 +935,9 @@ class AppStore {
         guard !clipped.isEmpty else { throw TranslationError.apiError("未选中有效文字") }
         let template = explainPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? AppStore.defaultExplainPrompt : explainPrompt
-        var prompt = template.replacingOccurrences(of: "{{text}}", with: clipped)
+        var prompt = template
+            .replacingOccurrences(of: "{{lang}}", with: aiOutputLanguage.promptLabel)
+            .replacingOccurrences(of: "{{text}}", with: clipped)
         if !template.contains("{{text}}") { prompt += "\n\n\(clipped)" }
         let (result, _) = try await callAIWithFailover(
             preferredID: preferred,
@@ -1120,6 +1130,8 @@ class AppStore {
         UserDefaults.standard.set(appearanceMode.rawValue, forKey: "appearanceMode")
         UserDefaults.standard.set(appFontFamily.rawValue, forKey: "appFontFamily")
         UserDefaults.standard.set(feedSortMode.rawValue, forKey: "feedSortMode")
+        UserDefaults.standard.set(targetLanguage.rawValue, forKey: "targetLanguage")
+        UserDefaults.standard.set(aiOutputLanguage.rawValue, forKey: "aiOutputLanguage")
         if let data = try? JSONEncoder().encode(aiProviders) { UserDefaults.standard.set(data, forKey: "aiProviders") }
         if let id = defaultSummaryProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultSummaryProviderID") }
         if let id = defaultTranslationProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultTranslationProviderID") }
@@ -1174,6 +1186,14 @@ class AppStore {
         if let raw = UserDefaults.standard.string(forKey: "feedSortMode"),
            let mode = FeedSortMode(rawValue: raw) {
             feedSortMode = mode
+        }
+        if let raw = UserDefaults.standard.string(forKey: "targetLanguage"),
+           let lang = AppLanguage(rawValue: raw) {
+            targetLanguage = lang
+        }
+        if let raw = UserDefaults.standard.string(forKey: "aiOutputLanguage"),
+           let lang = AppLanguage(rawValue: raw) {
+            aiOutputLanguage = lang
         }
         if let data = UserDefaults.standard.data(forKey: "aiProviders"),
            let decoded = try? JSONDecoder().decode([AIProvider].self, from: data) { aiProviders = decoded }

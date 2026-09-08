@@ -110,7 +110,7 @@ struct AISettingsView: View {
             } header: {
                 Text("翻译 Prompt")
             } footer: {
-                Text("仅「AI 翻译」引擎使用。用 {{text}} 表示待译内容。")
+                Text("仅「AI 翻译」引擎使用。{{text}} 为待译内容，{{lang}} 为目标语言名称。")
             }
 
             Section {
@@ -124,7 +124,7 @@ struct AISettingsView: View {
             } header: {
                 Text("摘要 Prompt")
             } footer: {
-                Text("用 {{title}} 表示标题，{{content}} 表示正文（自动截取前 2500 字）。")
+                Text("{{title}}/{{content}} 为标题与正文；{{lang}} 为 AI 输出语言。")
             }
 
             Section {
@@ -138,7 +138,7 @@ struct AISettingsView: View {
             } header: {
                 Text("解释 Prompt")
             } footer: {
-                Text("框选文字「AI解释」使用。用 {{text}} 表示选中内容（最长约 800 字）。")
+                Text("{{text}} 为选中内容；{{lang}} 为 AI 输出语言。")
             }
         }
         .navigationTitle("AI 设置")

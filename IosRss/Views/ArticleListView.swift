@@ -200,7 +200,7 @@ struct ArticleListView: View {
                 let title = article.title.trimmingCharacters(in: .whitespacesAndNewlines)
                 if title.isEmpty {
                     // skip
-                } else if ListLanguageDetect.isMostlyChinese(title) {
+                } else if ListLanguageDetect.isMostlyTarget(title, language: store.targetLanguage) {
                     // 已是目标语言：写入原文作译文，避免下次再判
                     skipMark.append((article.id, title, nil))
                 } else {
@@ -211,7 +211,7 @@ struct ArticleListView: View {
             // 摘要预览
             let preview = article.summary.trimmingCharacters(in: .whitespacesAndNewlines)
             if article.translatedSummary == nil && !preview.isEmpty {
-                if ListLanguageDetect.isMostlyChinese(preview) {
+                if ListLanguageDetect.isMostlyTarget(preview, language: store.targetLanguage) {
                     skipMark.append((article.id, nil, preview))
                 } else {
                     jobs.append(ListTranslationJob(articleID: article.id, field: .summary, text: preview))
@@ -251,7 +251,7 @@ struct ArticleListView: View {
             if article.translatedTitle == nil {
                 let title = article.title.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !title.isEmpty {
-                    if ListLanguageDetect.isMostlyChinese(title) {
+                    if ListLanguageDetect.isMostlyTarget(title, language: store.targetLanguage) {
                         store.applyListTranslations([(article.id, title, nil)])
                     } else {
                         jobs.append(ListTranslationJob(articleID: article.id, field: .title, text: title))
@@ -260,7 +260,7 @@ struct ArticleListView: View {
             }
             let preview = article.summary.trimmingCharacters(in: .whitespacesAndNewlines)
             if article.translatedSummary == nil && !preview.isEmpty {
-                if ListLanguageDetect.isMostlyChinese(preview) {
+                if ListLanguageDetect.isMostlyTarget(preview, language: store.targetLanguage) {
                     store.applyListTranslations([(article.id, nil, preview)])
                 } else {
                     jobs.append(ListTranslationJob(articleID: article.id, field: .summary, text: preview))
@@ -304,6 +304,58 @@ struct ArticleListView: View {
 
 /// 列表翻译用：粗判文本是否已是目标中文，避免无谓请求
 enum ListLanguageDetect {
+    /// 文本是否已接近目标语言（用于跳过翻译）
+    static func isMostlyTarget(_ text: String, language: AppLanguage) -> Bool {
+        if language.isChinese { return isMostlyChinese(text) }
+        if language == .ja { return isMostlyJapanese(text) }
+        if language == .ko { return isMostlyKorean(text) }
+        // 拉丁系：CJK 占比很低且拉丁字母足够
+        return isMostlyLatin(text)
+    }
+
+    static func isMostlyJapanese(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        var jp = 0, letters = 0
+        for ch in trimmed {
+            if ch.isNewline || ch.isWhitespace || ch.isPunctuation || ch.isSymbol || ch.isNumber { continue }
+            letters += 1
+            if let v = ch.unicodeScalars.first?.value {
+                // Hiragana, Katakana, CJK
+                if (0x3040...0x30FF).contains(v) || (0x4E00...0x9FFF).contains(v) { jp += 1 }
+            }
+        }
+        guard letters > 0 else { return false }
+        return Double(jp) / Double(letters) >= 0.35
+    }
+
+    static func isMostlyKorean(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        var ko = 0, letters = 0
+        for ch in trimmed {
+            if ch.isNewline || ch.isWhitespace || ch.isPunctuation || ch.isSymbol || ch.isNumber { continue }
+            letters += 1
+            if let v = ch.unicodeScalars.first?.value, (0xAC00...0xD7AF).contains(v) { ko += 1 }
+        }
+        guard letters > 0 else { return false }
+        return Double(ko) / Double(letters) >= 0.35
+    }
+
+    static func isMostlyLatin(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        var latin = 0, letters = 0, cjk = 0
+        for ch in trimmed {
+            if ch.isNewline || ch.isWhitespace || ch.isPunctuation || ch.isSymbol || ch.isNumber { continue }
+            letters += 1
+            if isCJK(ch) { cjk += 1 }
+            else if ch.isLetter { latin += 1 }
+        }
+        guard letters > 0 else { return false }
+        return Double(cjk) / Double(letters) < 0.15 && Double(latin) / Double(letters) >= 0.5
+    }
+
     /// 汉字占比足够高，或短文本中含明显汉字时视为中文
     static func isMostlyChinese(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -354,6 +406,8 @@ struct ArticleRow: View {
     @Environment(\.theme) private var theme
     let article: Article
     let showTranslation: Bool
+    /// 收藏页等场景：始终使用未读样式（强调色）
+    var preferUnreadStyle: Bool = false
 
     /// 始终取 store 中最新文章（已读/收藏/译文），避免 ForEach 快照滞后
     private var live: Article {
@@ -375,8 +429,8 @@ struct ArticleRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .top, spacing: 6) {
                     Text(displayTitle)
-                        .font(.system(size: store.listTitleFontSize, weight: live.isRead ? .regular : .semibold))
-                        .foregroundStyle(live.isRead ? Color.secondary : Color.primary)
+                        .font(AppTypography.font(size: store.listTitleFontSize, weight: (preferUnreadStyle || !live.isRead) ? .semibold : .regular))
+                        .foregroundStyle((preferUnreadStyle || !live.isRead) ? theme.text : theme.muted)
                         .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     if live.isFavorite {
                         Image(systemName: "star.fill")

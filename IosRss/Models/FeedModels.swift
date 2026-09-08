@@ -7,9 +7,9 @@ enum AppVersion {
     static var marketing: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3"
     }
-    /// 工程构建号，如 4（CURRENT_PROJECT_VERSION）
+    /// 工程构建号，如 5（CURRENT_PROJECT_VERSION）
     static var build: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "4"
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "5"
     }
     /// CI 在编译前写入 run_number；本地为空字符串
     /// 勿改字面量格式，build.yml 依赖此行做 sed 替换
@@ -23,7 +23,7 @@ enum AppVersion {
         }
         return nil
     }
-    /// 展示：CI 为 v1.3-4-build43；本地为 v1.3-4
+    /// 展示：CI 为 v1.3-5-build43；本地为 v1.3-5
     static var display: String {
         if let g = githubBuild {
             return "v\(marketing)-\(build)-build\(g)"
@@ -204,6 +204,77 @@ struct Article: Identifiable, Codable, Hashable {
 }
 
 /// 订阅源列表排序
+enum AppLanguage: String, CaseIterable, Codable, Identifiable {
+    case zhHans, zhHant, en, ja, ko, fr, de, es
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .zhHans: return "简体中文"
+        case .zhHant: return "繁體中文"
+        case .en: return "English"
+        case .ja: return "日本語"
+        case .ko: return "한국어"
+        case .fr: return "Français"
+        case .de: return "Deutsch"
+        case .es: return "Español"
+        }
+    }
+
+    /// Google Translate `tl`
+    var googleCode: String {
+        switch self {
+        case .zhHans: return "zh-CN"
+        case .zhHant: return "zh-TW"
+        case .en: return "en"
+        case .ja: return "ja"
+        case .ko: return "ko"
+        case .fr: return "fr"
+        case .de: return "de"
+        case .es: return "es"
+        }
+    }
+
+    /// Microsoft Translator `to`
+    var microsoftCode: String {
+        switch self {
+        case .zhHans: return "zh-Hans"
+        case .zhHant: return "zh-Hant"
+        default: return googleCode
+        }
+    }
+
+    /// DeepL `target_lang`
+    var deeplCode: String {
+        switch self {
+        case .zhHans, .zhHant: return "ZH"
+        case .en: return "EN"
+        case .ja: return "JA"
+        case .ko: return "KO"
+        case .fr: return "FR"
+        case .de: return "DE"
+        case .es: return "ES"
+        }
+    }
+
+    /// 写入 AI Prompt 的语言称呼
+    var promptLabel: String {
+        switch self {
+        case .zhHans: return "简体中文"
+        case .zhHant: return "繁体中文"
+        case .en: return "English"
+        case .ja: return "日本語"
+        case .ko: return "한국어"
+        case .fr: return "French"
+        case .de: return "German"
+        case .es: return "Spanish"
+        }
+    }
+
+    var isChinese: Bool { self == .zhHans || self == .zhHant }
+}
+
 enum FeedSortMode: String, CaseIterable, Codable, Identifiable {
     case unreadThenTitle
     case title

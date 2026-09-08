@@ -10,6 +10,16 @@ struct TranslationSettingsView: View {
         @Bindable var store = store
         Form {
             Section {
+                Picker("翻译目标语言", selection: $store.targetLanguage) {
+                    ForEach(AppLanguage.allCases) { lang in
+                        Text(lang.displayName).tag(lang)
+                    }
+                }
+                Picker("AI 输出语言", selection: $store.aiOutputLanguage) {
+                    ForEach(AppLanguage.allCases) { lang in
+                        Text(lang.displayName).tag(lang)
+                    }
+                }
                 Picker("默认翻译引擎", selection: $store.defaultTranslationEngine) {
                     ForEach(TranslationEngine.allCases, id: \.self) { engine in
                         Text(engine.rawValue).tag(engine)
@@ -97,6 +107,8 @@ struct TranslationSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear { store.persistSettings() }
         .onChange(of: store.defaultTranslationEngine) { _, _ in store.persistSettings() }
+        .onChange(of: store.targetLanguage) { _, _ in store.persistSettings() }
+        .onChange(of: store.aiOutputLanguage) { _, _ in store.persistSettings() }
     }
 }
 

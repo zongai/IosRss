@@ -30,7 +30,7 @@
 - **列表自动翻译**：源开启时，进入列表自动翻译「未译且非中文」的标题与摘要预览
 - **长文翻译**：约 1800 字分块并发，保留 `<img>`
 - **AI 摘要**：多 Provider；去除序号；卡片展示 Provider 名称（无编号列表）
-- **AI 黑名单**：发给 AI 的原文命中关键词时，切换到指定 fallback Provider（仅影响 AI 路由）
+- **AI 黑名单**：发给 AI 的原文命中关键词时，切换到指定 fallback Provider（仅影响 AI 路由）；独立三级设置页
 - **文章黑名单**：标题/摘要命中关键词时**自动标为已读**（与 AI 黑名单完全独立，设置 → 文章黑名单）
 - **失败自动切换**：翻译 / 摘要 / 解释失败时按顺序尝试其他已配置 Key 的 Provider
 
@@ -82,7 +82,7 @@ IosRss/
 | 自动清理 | 已读保留天数、全文磁盘缓存天数（0 = 不清理） |
 | 离线 | 查看占用；清除全文 / Feed / 正文图片（**保留订阅与源图标**） |
 | 翻译设置 | 默认引擎与各引擎 Key |
-| AI 设置 | Provider、默认解释引擎与 Prompt、**AI 黑名单**与 fallback |
+| AI 设置 | Provider、默认解释引擎与 Prompt、**AI 黑名单**（三级页）与 fallback |
 | 关于 | 当前引擎摘要、版本号 |
 
 API Key 仅保存在本机 Keychain。
@@ -114,17 +114,17 @@ API Key 仅保存在本机 Keychain。
 | 图标缓存隔离 | `OfflineCache.favicons/`、`faviconFetchDone` |
 | 中西文排版 | `ReaderTypography`、`SelectableParagraphView` |
 | 已读实时更新 | `markAsRead` + 列表依赖文章状态 |
+| 本地化 | `Localizable.xcstrings` |
 
 ## 最近构建
 
-<!-- LATEST_BUILD_START -->
-- 版本：见 CI 产物
-- 说明：每次构建成功后由 CI 自动更新本节与下方版本号说明。
-<!-- LATEST_BUILD_END -->
+- **版本**：`v1.2-5`
+- **日期**：2026-09-07
+- **主要变更**：AI 黑名单三级页 + 完整 zh-Hans/en 本地化；Edge TTS；文章黑名单；favicon 隔离；源级自动翻译；无未读隐藏；评论与 failover 等（详见 [CHANGELOG.md](CHANGELOG.md)）
 
 ## Changelog
 
-见仓库根目录 [`CHANGELOG.md`](CHANGELOG.md)。每次 CI 构建成功后会自动追加该版本的提交摘要，并同步更新本 README 的「最近构建」与版本号，同时写入对应 GitHub Release 说明。
+见仓库根目录 [`CHANGELOG.md`](CHANGELOG.md)。由维护者手动更新（不再由 CI 自动追加）。
 
 ## License
 

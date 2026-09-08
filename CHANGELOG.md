@@ -1,6 +1,6 @@
 # Changelog
 
-本文件由 CI 在每次构建成功后自动追加条目（基于自上一构建标签以来的提交说明）。
+本文件由维护者手动更新（不再由 GitHub Actions 自动追加）。
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
@@ -8,35 +8,39 @@
 
 ## [Unreleased]
 
-## [v1.2-5-build98] — 2026-09-07
+## [v1.2-5] — 2026-09-07
 
-- ci: fix CHANGELOG step YAML (indent multiline python)
+### Added
+- AI 黑名单独立三级页（设置 → AI 设置 → AI 黑名单）
+- 完整本地化：`Localizable.xcstrings`（源语言 zh-Hans，含 English）
+- Edge TTS 朗读（无需 API Key，默认中文音色「云扬」）
+- 文章黑名单：标题/摘要命中关键词时自动标为已读（与 AI 黑名单独立）
+- 源级自动翻译开关（长按菜单）
+- 一键删除全部订阅
+- 源图标只获取一次（`faviconFetchDone`），磁盘缓存与离线内容隔离
+- 无未读源默认隐藏（工具栏眼睛或「显示已读文章」可查看全部）
+- 列表自动翻译未译且非中文的标题与摘要预览
+- AI 摘要卡片显示 Provider 名称；框选菜单「AI解释」置顶
+- AI 失败自动切换 Provider（`callAIWithFailover`）
+- 源可重命名（立即刷新列表）
+- 源级全文获取 / 评论获取开关
+- Substack（含自定义域）公开评论抓取与评论页翻译
+- 中/西文分排版（首行缩进等）
+- 分组可折叠（状态持久化）
 
+### Changed
+- 设置布局调整：AI 黑名单、文章黑名单、字号等进入二级/三级页
+- 默认中文 TTS 音色改为云扬（Yunyang）
+- 移除 TXT 导出
 
-## [v1.2-5] — 种子条目（历史摘要）
-- docs: refresh README for TTS, article blacklist, favicon isolation (`3316fb1`)
-- feat: article blacklist, isolated favicon cache, settings layout, list perf (`9d5c901`)
-- chore: default Chinese TTS voice to Yunyang (云扬) (`543bd4c`)
-- feat: Edge TTS read-aloud (no API key) (`e23ef00`)
-- chore: bump CURRENT_PROJECT_VERSION to 5 (v1.2-5) (`8426292`)
-- fix: RSSFeed init argument order for faviconFetchDone (`88e59eb`)
-- feat: remove TXT export; delete all feeds; favicon once; per-feed auto-translate (`d38455a`)
-- docs: update README for comments, auto-translate, failover, UI polish (`c7f1349`)
-- fix: remove numbered list from AI summary card UI (`d7e8294`)
-- feat: show AI summary provider; put AI解释 first in selection menu (`788133b`)
-- fix: use generateSummary tuple .text for aiSummary assignment (`6256e66`)
-- fix: OPMLItem.groupName for grouped OPML import (`04b7867`)
-- fix: remove duplicate Swift types causing EmitModule failure (`a67b26a`)
-- feat: hide feeds with no unread in source list (`8fd04b7`)
-- fix: hide full-content toolbar icon when feed disables fetch (`643932a`)
-- fix: rename feed refreshes list immediately (`8cbeb50`)
-- feat: full sync local features — AI failover, comments, typography, groups (`bbacfca`)
-- chore: register FeedsListSupporting in pbxproj (`142dc4c`)
-- feat: FeedsListSupporting views (GroupHeader, FeedRow, document pickers) (`8bf862e`)
-- fix: restore FeedsListView with rename and comments toggles (`6c74871`)
-- feat: FeedsListView rename + per-feed full content/comments toggles (`659ee59`)
-- feat: ArticleContentViews for reader body rendering (`7ee983f`)
-- feat: ArticleContentViews + pbxproj (reader content/AI explain) (`3a63553`)
-- feat: ArticleReaderExtras (Safari/AISummary/Content) + pbxproj (`c842ce1`)
-- fix: restore ArticleReaderView with comments button (`6575ae4`)
+### Fixed
+- OPML 分组导入（`OPMLItem.groupName`）
+- 重命名源后列表立即刷新
+- 关闭全文抓取时隐藏阅读页全文按钮
+- 重复 Swift 类型导致 EmitModule 失败
+- AI summary 赋值使用 generateSummary 元组 `.text`
 
+### Docs / CI
+- README 全面刷新（TTS、黑名单、favicon 隔离、评论、自动翻译等）
+- CI 构建时注入 `githubBuildNumber`；版本展示为 `v1.2-5-build{N}`
+- 停止由 CI 自动回写 CHANGELOG / README（改由维护者手动更新）

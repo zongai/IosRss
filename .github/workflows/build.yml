@@ -96,8 +96,8 @@ jobs:
           name: IosRss-ipa-${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.build }}-build${{ steps.ver.outputs.run }}
           path: ${{ steps.ver.outputs.ipa_name }}
 
-      - name: Update CHANGELOG and README
-        id: changelog
+      - name: Generate release notes
+        id: notes
         env:
           DISPLAY: ${{ steps.ver.outputs.display }}
         run: |
@@ -119,125 +119,24 @@ jobs:
           fi
 
           LOG=$(git log --pretty=format:'- %s' "$RANGE" 2>/dev/null \
-            | grep -Ev '^(docs: changelog|docs: auto changelog)' \
+            | grep -Ev '^(docs: changelog|docs: auto changelog|ci:)' \
             || true)
           if [ -z "$LOG" ]; then
             LOG="- （无新的提交说明）"
           fi
 
-          ENTRY_FILE=/tmp/changelog_entry.md
           {
-            echo "## [${DISPLAY}] — ${DATE}"
+            echo "## ${DISPLAY} — ${DATE}"
             echo ""
             echo "$LOG"
             echo ""
-          } > "$ENTRY_FILE"
+            echo "完整变更见仓库 [CHANGELOG.md](https://github.com/zongai/IosRss/blob/main/CHANGELOG.md)。"
+            echo ""
+            echo "> README 与 CHANGELOG 由维护者手动更新，CI 不再自动回写。"
+          } > /tmp/release_notes.md
 
-          if [ ! -f CHANGELOG.md ]; then
-            printf '# Changelog\n\n' > CHANGELOG.md
-          fi
-
-          cat > /tmp/update_changelog.py <<'PYEOF'
-          from pathlib import Path
-          entry = Path("/tmp/changelog_entry.md").read_text()
-          path = Path("CHANGELOG.md")
-          text = path.read_text() if path.exists() else "# Changelog\n\n"
-          marker = "## [Unreleased]"
-          if marker in text:
-              idx = text.find(marker)
-              nl = text.find("\n", idx)
-              insert_at = nl + 1 if nl >= 0 else idx + len(marker)
-              text = text[:insert_at] + "\n" + entry + text[insert_at:]
-          else:
-              nl = text.find("\n")
-              text = text[:nl+1] + "\n" + entry + text[nl+1:]
-          path.write_text(text)
-          PYEOF
-          # strip leading spaces from heredoc body for python
-          python3 -c "from pathlib import Path; p=Path('/tmp/update_changelog.py'); t=p.read_text(); p.write_text('\n'.join(line[10:] if line.startswith('          ') else line for line in t.splitlines())+('\n' if t.endswith('\n') else ''))"
-          python3 /tmp/update_changelog.py
-
-          # 同步更新 README：版本号展示 + 最近构建
-          cat > /tmp/update_readme.py <<'PYEOF'
-          from pathlib import Path
-          import os, re
-          display = os.environ.get("DISPLAY", "")
-          marketing = os.environ.get("MARKETING", "1.2")
-          build = os.environ.get("BUILD", "5")
-          run = os.environ.get("RUN", "")
-          date = os.environ.get("DATE", "")
-          log = Path("/tmp/changelog_entry.md").read_text()
-          # 取变更列表（跳过标题行）
-          lines = [ln for ln in log.splitlines() if ln.startswith("- ")][:12]
-          bullets = "\n".join(lines) if lines else "- （无新的提交说明）"
-          path = Path("README.md")
-          text = path.read_text() if path.exists() else ""
-          # 版本展示行
-          text = re.sub(
-              r"\*\*版本展示\*\*：CI 构建为 `[^`]+`（N 为 GitHub Actions `run_number`）；本地调试为 `[^`]+`。",
-              f"**版本展示**：CI 构建为 `v{marketing}-{build}-build{{N}}`（N 为 GitHub Actions `run_number`）；本地调试为 `v{marketing}-{build}`。最近一次构建：`{display}`。",
-              text,
-              count=1,
-          )
-          # 版本号表格中的示例
-          text = re.sub(
-              r"\| 本地 Xcode \| `[^`]+` \| — \|",
-              f"| 本地 Xcode | `v{marketing}-{build}` | — |",
-              text,
-              count=1,
-          )
-          text = re.sub(
-              r"\| GitHub Actions \| `[^`]+` \| `[^`]+` \|",
-              f"| GitHub Actions | `v{marketing}-{build}-build{{N}}` | `IosRss-{marketing}-{build}-build{{N}}.ipa` |",
-              text,
-              count=1,
-          )
-          text = re.sub(
-              r"- `\d+` = `CURRENT_PROJECT_VERSION`",
-              f"- `{build}` = `CURRENT_PROJECT_VERSION`",
-              text,
-              count=1,
-          )
-          block = (
-              f"- **版本**：`{display}`\n"
-              f"- **日期**：{date} (UTC)\n"
-              f"- **主要变更**：\n{bullets}\n"
-          )
-          start, end = "<!-- LATEST_BUILD_START -->", "<!-- LATEST_BUILD_END -->"
-          if start in text and end in text:
-              i, j = text.find(start), text.find(end)
-              text = text[: i + len(start)] + "\n" + block + text[j:]
-          path.write_text(text)
-          PYEOF
-          python3 -c "from pathlib import Path; p=Path('/tmp/update_readme.py'); t=p.read_text(); p.write_text('\n'.join(line[10:] if line.startswith('          ') else line for line in t.splitlines())+('\n' if t.endswith('\n') else ''))"
-          DISPLAY="${DISPLAY}" MARKETING="${{ steps.ver.outputs.version }}" BUILD="${{ steps.ver.outputs.build }}" RUN="${{ steps.ver.outputs.run }}" DATE="$(date -u +%Y-%m-%d)"             python3 /tmp/update_readme.py
-
-          cp "$ENTRY_FILE" /tmp/release_notes.md
-          echo "Updated CHANGELOG + README for ${DISPLAY}"
-          head -50 CHANGELOG.md
-
-      - name: Commit CHANGELOG and README to main
-        if: success()
-        env:
-          DISPLAY: ${{ steps.ver.outputs.display }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          cp CHANGELOG.md /tmp/CHANGELOG.md.built
-          cp README.md /tmp/README.md.built
-          git fetch origin main
-          git checkout -B main origin/main
-          cp /tmp/CHANGELOG.md.built CHANGELOG.md
-          cp /tmp/README.md.built README.md
-          git add CHANGELOG.md README.md
-          if git diff --staged --quiet; then
-            echo "docs unchanged"
-            exit 0
-          fi
-          git commit -m "docs: changelog + README for ${DISPLAY}"
-          git push origin HEAD:main
-          echo "Pushed CHANGELOG + README to main"
+          echo "Release notes generated for ${DISPLAY}"
+          cat /tmp/release_notes.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v3

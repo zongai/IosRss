@@ -42,6 +42,8 @@ class AppStore {
     var fullContentCacheDays: Int = 30
     /// Edge TTS 音色；空则按正文语言自动选择
     var ttsVoice: String = ""
+    /// 阅读主题色板
+    var colorTheme: AppColorTheme = .azure
 
     static let defaultTranslationPrompt = "请将以下内容翻译成中文，只输出译文，不要解释：\n\n{{text}}"
     static let defaultSummaryPrompt = "请用3-5句话概括以下文章的核心内容，用中文回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：\n\n标题：{{title}}\n\n内容：{{content}}"
@@ -929,6 +931,7 @@ class AppStore {
         UserDefaults.standard.set(readRetentionDays, forKey: "readRetentionDays")
         UserDefaults.standard.set(fullContentCacheDays, forKey: "fullContentCacheDays")
         UserDefaults.standard.set(ttsVoice, forKey: "ttsVoice")
+        UserDefaults.standard.set(colorTheme.rawValue, forKey: "colorTheme")
         if let data = try? JSONEncoder().encode(aiProviders) { UserDefaults.standard.set(data, forKey: "aiProviders") }
         if let id = defaultSummaryProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultSummaryProviderID") }
         if let id = defaultTranslationProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultTranslationProviderID") }
@@ -970,6 +973,8 @@ class AppStore {
         readRetentionDays = UserDefaults.standard.object(forKey: "readRetentionDays") as? Int ?? 7
         fullContentCacheDays = UserDefaults.standard.object(forKey: "fullContentCacheDays") as? Int ?? 30
         ttsVoice = UserDefaults.standard.string(forKey: "ttsVoice") ?? ""
+        if let raw = UserDefaults.standard.string(forKey: "colorTheme"),
+           let theme = AppColorTheme(rawValue: raw) { colorTheme = theme }
         if let data = UserDefaults.standard.data(forKey: "aiProviders"),
            let decoded = try? JSONDecoder().decode([AIProvider].self, from: data) { aiProviders = decoded }
         if let s = UserDefaults.standard.string(forKey: "defaultSummaryProviderID"),

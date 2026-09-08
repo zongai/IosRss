@@ -15,11 +15,17 @@ struct SettingsView: View {
                         }
                     }
                     Toggle("显示已读文章", isOn: $store.showReadArticles)
+                    Picker("阅读主题", selection: $store.colorTheme) {
+                        ForEach(AppColorTheme.allCases) { theme in
+                            Text(theme.displayName).tag(theme)
+                        }
+                    }
                 } header: {
                     Text("阅读")
                 }
                 .onChange(of: store.titleDisplayMode) { _, _ in store.persistSettings() }
                 .onChange(of: store.showReadArticles) { _, _ in store.persistSettings() }
+                .onChange(of: store.colorTheme) { _, _ in store.persistSettings() }
 
                 Section {
                     Picker("朗读音色", selection: $store.ttsVoice) {

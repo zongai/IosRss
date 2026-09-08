@@ -47,7 +47,7 @@ class AppStore {
     /// 外观：跟随系统 / 浅色 / 深色
     var appearanceMode: AppearanceMode = .system
     /// 界面与阅读字体
-    var appFontFamily: AppFontFamily = .sourceHanSans
+    var appFontFamily: AppFontFamily = .system
 
     static let defaultTranslationPrompt = "请将以下内容翻译成中文，只输出译文，不要解释：\n\n{{text}}"
     static let defaultSummaryPrompt = "请用3-5句话概括以下文章的核心内容，用中文回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：\n\n标题：{{title}}\n\n内容：{{content}}"
@@ -1131,7 +1131,11 @@ class AppStore {
         if let raw = UserDefaults.standard.string(forKey: "appearanceMode"),
            let mode = AppearanceMode(rawValue: raw) { appearanceMode = mode }
         if let raw = UserDefaults.standard.string(forKey: "appFontFamily"),
-           let font = AppFontFamily(rawValue: raw) { appFontFamily = font }
+           let font = AppFontFamily(rawValue: raw) {
+            appFontFamily = font
+        } else if UserDefaults.standard.string(forKey: "appFontFamily") == "sourceHanSans" {
+            appFontFamily = .system
+        }
         if let data = UserDefaults.standard.data(forKey: "aiProviders"),
            let decoded = try? JSONDecoder().decode([AIProvider].self, from: data) { aiProviders = decoded }
         if let s = UserDefaults.standard.string(forKey: "defaultSummaryProviderID"),

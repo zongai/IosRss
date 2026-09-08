@@ -20,7 +20,7 @@
 
 ### 阅读
 - **全文抓取**：摘要过短时自动或手动抓取；源关闭时隐藏工具栏按钮
-- **排版**：思源黑体（可换字体）；中/西文分排版；首行缩进
+- **排版**：可选系统/苹方等字体；中/西文分排版；首行缩进
 - **导航栏显隐**：阅读页点击内容可隐藏/显示导航栏
 - **左右滑**：左滑下一篇、右滑上一篇（同列表）
 - **TTS**：Edge 在线语音（默认云扬）；无需 API Key
@@ -38,7 +38,7 @@
 ### 外观与字体
 - **外观**：跟随系统（默认）/ 浅色 / 深色
 - **阅读主题**：Azure、Sepia、Midnight、Forest、Graphite（随系统明暗自动匹配浅/深色板）
-- **字体**：思源黑体（默认，内置 Regular / Normal / Medium / Bold）、系统默认、苹方、宋体、黑体
+- **字体**：系统默认（默认）、苹方、宋体、黑体（不内置大字体包，减小安装体积）
 - 设计 token：软阴影卡片、无硬边框、分区字号
 
 ### 其它
@@ -50,7 +50,6 @@
 ```
 IosRss/
 ├── App.swift / ContentView.swift / Cloud.swift / Info.plist
-├── Fonts/                    # Source Han Sans SC
 ├── Theme/AppTheme.swift      # 主题 token、字体、外观
 ├── Models/
 │   ├── AppStore.swift

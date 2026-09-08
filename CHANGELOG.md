@@ -8,9 +8,11 @@
 
 ## [Unreleased]
 
+### Removed
+- 移除内置思源黑体（Source Han Sans SC）字体文件，显著减小安装包体积；默认改用系统字体
+
 ### Added
-- **思源黑体（Source Han Sans SC）** 内置四字重：Regular / Normal / Medium / Bold；默认界面与阅读字体
-- 设置 → **字体**：思源黑体、系统默认、苹方、宋体、黑体
+- 设置 → **字体**：系统默认、苹方、宋体、黑体
 - **外观**：跟随系统（默认）/ 浅色 / 深色；阅读色板随系统明暗自动匹配
 - 阅读主题色板：Azure / Sepia / Midnight / Forest / Graphite（设计 token + 软卡片）
 - 阅读页点击显隐导航栏；左滑下一篇 / 右滑上一篇
@@ -20,7 +22,7 @@
 - 新 App 图标（书 + RSS）
 
 ### Changed
-- 默认字体由 Inter Tight 改为思源黑体；无内置字体时回退系统字体
+- 默认使用系统字体（已移除内置思源黑体以减小包体）
 - 订阅页 / 文章列表移除眼睛按钮；「显示已读」仅在设置中
 - 已是目标中文的文章隐藏翻译按钮
 - README / CHANGELOG 改为维护者手动维护（CI 仅生成 Release 说明）

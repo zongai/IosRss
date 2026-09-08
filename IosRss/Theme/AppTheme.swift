@@ -185,7 +185,6 @@ struct ThemeTokens {
 // MARK: - Font family
 
 enum AppFontFamily: String, CaseIterable, Codable, Identifiable {
-    case sourceHanSans
     case system
     case pingFangSC
     case songti
@@ -195,7 +194,6 @@ enum AppFontFamily: String, CaseIterable, Codable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .sourceHanSans: return "思源黑体"
         case .system: return "系统默认"
         case .pingFangSC: return "苹方"
         case .songti: return "宋体"
@@ -205,7 +203,6 @@ enum AppFontFamily: String, CaseIterable, Codable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .sourceHanSans: return "Source Han Sans，适合中文阅读"
         case .system: return "跟随 iOS 系统字体（SF Pro）"
         case .pingFangSC: return "系统中文字体 PingFang SC"
         case .songti: return "宋体，偏印刷感"
@@ -231,7 +228,7 @@ enum AppTypography {
            let f = AppFontFamily(rawValue: raw) {
             return f
         }
-        return .sourceHanSans
+        return .system
     }
 
     static func font(size: CGFloat, weight: Font.Weight) -> Font {
@@ -240,26 +237,6 @@ enum AppTypography {
 
     static func font(size: CGFloat, weight: Font.Weight, family: AppFontFamily) -> Font {
         switch family {
-        case .sourceHanSans:
-            // Regular=正文；Normal≈正文；Medium=小标题；Bold=标题
-            let name: String
-            switch weight {
-            case .bold, .heavy, .black, .semibold:
-                name = "SourceHanSansSC-Bold"
-            case .medium:
-                name = "SourceHanSansSC-Medium"
-            default:
-                // 正文优先 Regular；Normal 作备选
-                if UIFont(name: "SourceHanSansSC-Regular", size: size) != nil {
-                    name = "SourceHanSansSC-Regular"
-                } else {
-                    name = "SourceHanSansSC-Normal"
-                }
-            }
-            if UIFont(name: name, size: size) != nil {
-                return .custom(name, size: size)
-            }
-            return .system(size: size, weight: weight)
         case .system:
             return .system(size: size, weight: weight)
         case .pingFangSC:

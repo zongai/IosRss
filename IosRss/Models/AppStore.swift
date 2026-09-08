@@ -305,7 +305,7 @@ class AppStore {
                 let key = "ai_key_" + p.id.uuidString
                 guard let k = Keychain.load(key: key), !k.isEmpty else { return nil }
                 return (p.id.uuidString, k)
-            }))
+            })
         )
         return try JSONEncoder().encode(payload)
     }

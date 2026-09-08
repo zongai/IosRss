@@ -117,7 +117,7 @@ struct FeedsListView: View {
             }
             .listStyle(.insetGrouped)
             .environment(\.editMode, $editMode)
-            .navigationTitle("Feed")
+            .navigationTitle("订阅")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: RSSFeed.self) { feed in
                 ArticleListView(feed: feed)
@@ -157,6 +157,27 @@ struct FeedsListView: View {
                 }
             }
             .refreshable { await store.refreshAll() }
+            .overlay(alignment: .top) {
+                if store.isLoading {
+                    ProgressView()
+                        .padding(8)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .padding(.top, 8)
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if let msg = store.errorMessage, !msg.isEmpty {
+                    Text(msg)
+                        .font(AppTypography.caption())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.red.opacity(0.9))
+                        .onTapGesture { store.errorMessage = nil }
+                }
+            }
+
         }
         .sheet(isPresented: $showAddFeed) { AddFeedView() }
         .sheet(isPresented: $showGroupManager) { GroupManagerView() }
@@ -401,7 +422,13 @@ struct FeedsListView: View {
         ContentUnavailableView {
             Label("暂无未读", systemImage: "checkmark.circle")
         } description: {
-            Text("所有订阅源都没有未读文章。可在设置中开启「显示已读文章」以查看全部源。")
+            Text("所有订阅源都没有未读文章。")
+        } actions: {
+            Button("显示全部订阅源") {
+                store.showReadArticles = true
+                store.persistSettings()
+            }
+            .buttonStyle(.borderedProminent)
         }
         .listRowSeparator(.hidden)
         .listRowInsets(.init(top: 60, leading: 0, bottom: 0, trailing: 0))
@@ -537,10 +564,22 @@ struct FeedRow: View {
                     .tracking(AppTypography.titleTracking * 0.4)
                     .foregroundStyle(theme.text)
                     .lineLimit(1)
-                if !live.fetchFullContentEnabled {
-                    Text("全文获取已关")
-                        .font(AppTypography.caption())
-                        .foregroundStyle(theme.muted)
+                HStack(spacing: 6) {
+                    if let last = live.lastFetched {
+                        Text(Self.relativeString(last))
+                            .font(AppTypography.caption())
+                            .foregroundStyle(theme.muted)
+                    }
+                    if !live.fetchFullContentEnabled {
+                        Text("全文关")
+                            .font(AppTypography.caption())
+                            .foregroundStyle(theme.muted)
+                    }
+                    if live.autoTranslateEnabled {
+                        Text("自动译")
+                            .font(AppTypography.caption())
+                            .foregroundStyle(theme.muted.opacity(0.85))
+                    }
                 }
             }
             Spacer(minLength: 8)

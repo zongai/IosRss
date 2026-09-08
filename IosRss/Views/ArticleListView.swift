@@ -143,11 +143,23 @@ struct ArticleListView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(.systemBackground))
             } else if articles.isEmpty {
-                ContentUnavailableView(
-                    store.showReadArticles ? "暂无文章" : "暂无未读文章",
-                    systemImage: "newspaper",
-                    description: Text(store.showReadArticles ? "下拉刷新或稍后再来" : "可在设置中开启「显示已读文章」")
-                )
+                ContentUnavailableView {
+                    Label(store.showReadArticles ? "暂无文章" : "暂无未读文章", systemImage: "newspaper")
+                } description: {
+                    Text(store.showReadArticles ? "下拉刷新或稍后再来" : "当前仅显示未读。可在设置中开启「显示已读文章」。")
+                } actions: {
+                    if !store.showReadArticles {
+                        Button("显示已读文章") {
+                            store.showReadArticles = true
+                            store.persistSettings()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    Button("刷新") {
+                        Task { await store.refreshFeed(feed.id) }
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
         .refreshable {

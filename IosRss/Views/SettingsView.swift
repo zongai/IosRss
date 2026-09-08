@@ -242,6 +242,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("设置")
+            .navigationBarTitleDisplayMode(.large)
             .sheet(isPresented: $showSettingsExport) {
                 if let url = settingsExportURL {
                     SettingsExportPicker(url: url) { showSettingsExport = false }

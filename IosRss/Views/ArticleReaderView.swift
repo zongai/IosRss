@@ -153,7 +153,7 @@ struct ArticleReaderView: View {
                     ? (translatedContent ?? currentArticle.translatedContent ?? currentArticle.content)
                     : currentArticle.content
                 ArticleContentView(html: displayContent, fontSize: store.fontSize, prefersChineseTypography: showTranslated)
-                    .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 40)
+                    .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 56)
             }
         }
         .background(Color(.systemBackground))

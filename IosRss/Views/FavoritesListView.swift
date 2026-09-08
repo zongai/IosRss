@@ -50,7 +50,7 @@ struct FavoritesListView: View {
                     ContentUnavailableView {
                         Label("暂无收藏", systemImage: "star")
                     } description: {
-                        Text("在文章列表左滑，或在阅读页点星号即可收藏。收藏的文章不会被自动清理。")
+                        Text("在文章列表左滑收藏，或在阅读页点星号。收藏不会被自动清理。")
                     }
                 }
             }

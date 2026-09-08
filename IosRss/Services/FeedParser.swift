@@ -287,6 +287,9 @@ struct FeedDiscovery {
         if url.scheme == nil || (url.scheme?.isEmpty ?? true) {
             finalURL = URL(string: "https://\(url.absoluteString)") ?? url
         }
+        guard NetworkURLPolicy.isAllowed(finalURL) else {
+            throw URLError(.badURL)
+        }
         let (data, _) = try await URLSession.shared.data(from: finalURL)
         let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
         if !articles.isEmpty {

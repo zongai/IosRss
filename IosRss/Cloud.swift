@@ -1,3 +1,4 @@
+// Cloud 同步 / 登录当前为 stub，产品内未暴露入口；保留类型以免历史引用编译失败。
 // RESTORED_FROM_LOCAL_SEE_NEXT_COMMIT
 import Foundation
 

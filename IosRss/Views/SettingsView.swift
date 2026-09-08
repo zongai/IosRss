@@ -7,6 +7,9 @@ struct SettingsView: View {
     @State private var showSettingsExport = false
     @State private var showSettingsImport = false
     @State private var settingsIOMessage: String?
+    @State private var exportIncludeSecrets = false
+    @State private var showImportConfirm = false
+    @State private var pendingImportData: Data?
 
     var body: some View {
         @Bindable var store = store
@@ -183,9 +186,10 @@ struct SettingsView: View {
                 .onAppear { cacheSizeText = store.cacheSizeDescription() }
 
                 Section {
+                    Toggle("导出时包含 API Key", isOn: $exportIncludeSecrets)
                     Button {
                         do {
-                            let data = try store.exportSettingsJSON()
+                            let data = try store.exportSettingsJSON(includeSecrets: exportIncludeSecrets)
                             let url = FileManager.default.temporaryDirectory.appendingPathComponent("IosRss-settings.json")
                             try data.write(to: url, options: .atomic)
                             settingsExportURL = url
@@ -205,7 +209,7 @@ struct SettingsView: View {
                 } header: {
                     Text("设置备份")
                 } footer: {
-                    Text("包含字号、主题、翻译/AI 配置与 Provider（含 Key）。订阅源需单独 OPML 导出。")
+                    Text("默认不含 API Key。开启「导出时包含 API Key」后文件含敏感信息，请妥善保管。订阅源请用 OPML 单独导出。")
                 }
 
                 Section("关于") {
@@ -248,13 +252,27 @@ struct SettingsView: View {
                     showSettingsImport = false
                     guard let url else { return }
                     do {
-                        let data = try Data(contentsOf: url)
+                        pendingImportData = try Data(contentsOf: url)
+                        showImportConfirm = true
+                    } catch {
+                        settingsIOMessage = "读取文件失败：\(error.localizedDescription)"
+                    }
+                }
+            }
+            .alert("导入设置？", isPresented: $showImportConfirm) {
+                Button("取消", role: .cancel) { pendingImportData = nil }
+                Button("导入", role: .destructive) {
+                    guard let data = pendingImportData else { return }
+                    do {
                         try store.importSettingsJSON(data)
                         settingsIOMessage = "设置已导入"
                     } catch {
                         settingsIOMessage = "导入失败：\(error.localizedDescription)"
                     }
+                    pendingImportData = nil
                 }
+            } message: {
+                Text("将覆盖当前字号、主题、翻译与 AI 配置等。若文件含 API Key 也会写入。此操作不可撤销。")
             }
             .onDisappear { store.persistSettings() }
         }

@@ -185,18 +185,15 @@ struct ArticleReaderView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(showChrome ? .visible : .hidden, for: .navigationBar)
         .toolbar(showChrome ? .visible : .hidden, for: .tabBar)
+        // 换篇：仅识别明显水平滑动，避免干扰纵向滚动与工具栏显隐
         .simultaneousGesture(
-            TapGesture().onEnded {
-                withAnimation(.easeInOut(duration: 0.2)) { showChrome.toggle() }
-            }
-        )
-        .gesture(
-            DragGesture(minimumDistance: 40)
+            DragGesture(minimumDistance: 50)
                 .onEnded { value in
-                    // 左滑：下一篇（更新时间更旧）
-                    if value.translation.width < -80, abs(value.translation.height) < 80 {
+                    guard abs(value.translation.width) > 90,
+                          abs(value.translation.height) < 45 else { return }
+                    if value.translation.width < 0 {
                         goNextArticle()
-                    } else if value.translation.width > 80, abs(value.translation.height) < 80 {
+                    } else {
                         goPrevArticle()
                     }
                 }

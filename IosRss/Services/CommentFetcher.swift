@@ -38,7 +38,7 @@ enum CommentFetcher {
 
     /// 从文章链接抓取网页评论（优先 Substack 公开 API）
     static func fetchComments(from articleURL: String) async throws -> [WebComment] {
-        guard let url = URL(string: articleURL), let host = url.host, !host.isEmpty else {
+        guard let url = NetworkURLPolicy.validate(articleURL), let host = url.host, !host.isEmpty else {
             throw CommentFetchError.postNotFound
         }
 
@@ -53,7 +53,7 @@ enum CommentFetcher {
     static func shouldAutoEnableComments(feedURL: String, sampleArticleLinks: [String] = []) -> Bool {
         let candidates = [feedURL] + sampleArticleLinks
         for raw in candidates {
-            guard let url = URL(string: raw), let host = url.host?.lowercased() else { continue }
+            guard let url = NetworkURLPolicy.validate(raw), let host = url.host?.lowercased() else { continue }
             if host == "substack.com" || host.hasSuffix(".substack.com") {
                 return true
             }

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 // MARK: - App Version
 
@@ -7,9 +8,9 @@ enum AppVersion {
     static var marketing: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3"
     }
-    /// 工程构建号，如 5（CURRENT_PROJECT_VERSION）
+    /// 工程构建号，如 6（CURRENT_PROJECT_VERSION）
     static var build: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "5"
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "6"
     }
     /// CI 在编译前写入 run_number；本地为空字符串
     /// 勿改字面量格式，build.yml 依赖此行做 sed 替换
@@ -23,7 +24,7 @@ enum AppVersion {
         }
         return nil
     }
-    /// 展示：CI 为 v1.3-5-build43；本地为 v1.3-5
+    /// 展示：CI 为 v1.3-6-build43；本地为 v1.3-6
     static var display: String {
         if let g = githubBuild {
             return "v\(marketing)-\(build)-build\(g)"
@@ -360,24 +361,60 @@ struct AIProvider: Identifiable, Codable, Hashable {
     )
 }
 
-// MARK: - Keychain Helper (UserDefaults-backed, base64-encoded)
+// MARK: - Keychain (Security.framework; migrates legacy UserDefaults Base64)
 
 enum Keychain {
-    private static let prefix = "feed_kc_"
+    private static let service = "com.example.IosRss.keys"
+    private static let legacyPrefix = "feed_kc_"
 
     static func save(key: String, value: String) {
-        let encoded = Data(value.utf8).base64EncodedString()
-        UserDefaults.standard.set(encoded, forKey: prefix + key)
+        let data = Data(value.utf8)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key
+        ]
+        SecItemDelete(query as CFDictionary)
+        var add = query
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        SecItemAdd(add as CFDictionary, nil)
+        // 清除旧版明文/Base64 备份
+        UserDefaults.standard.removeObject(forKey: legacyPrefix + key)
     }
 
     static func load(key: String) -> String? {
-        guard let encoded = UserDefaults.standard.string(forKey: prefix + key),
-              let data = Data(base64Encoded: encoded) else { return nil }
-        return String(data: data, encoding: .utf8)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecSuccess, let data = item as? Data,
+           let s = String(data: data, encoding: .utf8), !s.isEmpty {
+            return s
+        }
+        // 迁移：旧 UserDefaults Base64
+        if let encoded = UserDefaults.standard.string(forKey: legacyPrefix + key),
+           let data = Data(base64Encoded: encoded),
+           let s = String(data: data, encoding: .utf8), !s.isEmpty {
+            save(key: key, value: s)
+            return s
+        }
+        return nil
     }
 
     static func delete(key: String) {
-        UserDefaults.standard.removeObject(forKey: prefix + key)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key
+        ]
+        SecItemDelete(query as CFDictionary)
+        UserDefaults.standard.removeObject(forKey: legacyPrefix + key)
     }
 }
 

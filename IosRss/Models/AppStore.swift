@@ -274,7 +274,7 @@ class AppStore {
         var aiKeys: [String: String]?
     }
 
-    func exportSettingsJSON() throws -> Data {
+    func exportSettingsJSON(includeSecrets: Bool = false) throws -> Data {
         let payload = SettingsExportPayload(
             version: 1,
             fontSize: fontSize,
@@ -302,16 +302,16 @@ class AppStore {
             defaultExplainProviderID: defaultExplainProviderID,
             aiBlacklistFallbackProviderID: aiBlacklistFallbackProviderID,
             aiProviders: aiProviders,
-            translationKeys: [
+            translationKeys: includeSecrets ? [
                 "google_translate_key": Keychain.load(key: "google_translate_key") ?? "",
                 "microsoft_translate_key": Keychain.load(key: "microsoft_translate_key") ?? "",
                 "deepl_translate_key": Keychain.load(key: "deepl_translate_key") ?? ""
-            ].filter { !$0.value.isEmpty },
-            aiKeys: Dictionary(uniqueKeysWithValues: aiProviders.compactMap { p -> (String, String)? in
+            ].filter { !$0.value.isEmpty } : nil,
+            aiKeys: includeSecrets ? Dictionary(uniqueKeysWithValues: aiProviders.compactMap { p -> (String, String)? in
                 let key = "ai_key_" + p.id.uuidString
                 guard let k = Keychain.load(key: key), !k.isEmpty else { return nil }
                 return (p.id.uuidString, k)
-            })
+            }) : nil
         )
         return try JSONEncoder().encode(payload)
     }
@@ -520,7 +520,10 @@ class AppStore {
     func refreshFeed(_ feedID: UUID) async {
         guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
         let urlStr = feeds[idx].url
-        guard let url = URL(string: urlStr) else { return }
+        guard let url = NetworkURLPolicy.validate(urlStr) else {
+            errorMessage = "不允许的地址（仅支持公网 http/https）"
+            return
+        }
         isLoading = true
         defer { isLoading = false }
         do {

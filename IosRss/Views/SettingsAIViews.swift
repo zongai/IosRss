@@ -322,7 +322,7 @@ struct EditProviderView: View {
                 } header: {
                     Text("API Key")
                 } footer: {
-                    Text("API Key 加密存储，不会明文保存。Gemini 在 Google AI Studio 获取免费 Key。")
+                    Text("API Key 存于系统钥匙串（本机解锁后可用），不会写入订阅备份。Gemini 可在 Google AI Studio 获取 Key。")
                 }
                 Section {
                     Button {

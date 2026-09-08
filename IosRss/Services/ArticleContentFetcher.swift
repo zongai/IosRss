@@ -27,9 +27,7 @@ enum ArticleContentFetcher {
     }
 
     static func fetchFullContent(from urlString: String) async throws -> Result {
-        guard let url = URL(string: urlString),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else {
+        guard let url = NetworkURLPolicy.validate(urlString) else {
             throw FetchError.invalidURL
         }
 

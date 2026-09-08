@@ -19,9 +19,20 @@ struct SettingsView: View {
                         }
                     }
                     Toggle("显示已读文章", isOn: $store.showReadArticles)
-                    Picker("阅读主题", selection: $store.colorTheme) {
-                        ForEach(AppColorTheme.allCases) { theme in
-                            Text(theme.displayName).tag(theme)
+                    NavigationLink {
+                        Form {
+                            ThemePalettePicker(selection: $store.colorTheme)
+                                .onChange(of: store.colorTheme) { _, _ in store.persistSettings() }
+                        }
+                        .navigationTitle("阅读主题")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .appScreenBackground()
+                    } label: {
+                        HStack {
+                            Text("阅读主题")
+                            Spacer()
+                            Text(store.colorTheme.displayName)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 } header: {

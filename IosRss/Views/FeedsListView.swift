@@ -420,6 +420,7 @@ var emptyState: some View {
 
 struct GroupSectionHeader: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let title: String
     let feedCount: Int
     let unreadCount: Int
@@ -437,8 +438,9 @@ struct GroupSectionHeader: View {
                     .foregroundStyle(Color.secondary)
                     .frame(width: max(12, titleSize - 1), alignment: .center)
                 Text(title)
-                    .font(.system(size: titleSize, weight: .semibold))
-                    .foregroundStyle(Color.secondary)
+                    .font(AppTypography.font(size: titleSize, weight: .semibold))
+                    .tracking(AppTypography.sectionTracking * 0.5)
+                    .foregroundStyle(theme.muted)
                     .textCase(nil)
                 if isCollapsed {
                     Text("\(feedCount)")
@@ -521,28 +523,33 @@ struct GroupManagerView: View {
 
 struct FeedRow: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let feed: RSSFeed
     private var live: RSSFeed { store.feeds.first(where: { $0.id == feed.id }) ?? feed }
     var body: some View {
         HStack(spacing: 14) {
-            FeedIcon(feed: live, size: 38)
-            VStack(alignment: .leading, spacing: 2) {
+            FeedIcon(feed: live, size: 40)
+            VStack(alignment: .leading, spacing: 3) {
                 Text(live.title)
-                    .font(.system(size: store.feedTitleFontSize, weight: .medium))
-                    .foregroundStyle(Color.primary)
+                    .font(AppTypography.font(size: store.feedTitleFontSize, weight: .semibold))
+                    .tracking(AppTypography.titleTracking * 0.4)
+                    .foregroundStyle(theme.text)
+                    .lineLimit(1)
                 if !live.fetchFullContentEnabled {
                     Text("全文获取已关")
-                        .font(.system(size: max(10, store.feedTitleFontSize - 5)))
-                        .foregroundStyle(.secondary)
+                        .font(AppTypography.caption())
+                        .foregroundStyle(theme.muted)
                 }
             }
-            Spacer()
+            Spacer(minLength: 8)
             if live.unreadCount > 0 {
                 Text("\(live.unreadCount)")
-                    .font(.system(size: max(11, store.feedTitleFontSize - 4), weight: .bold))
-                    .foregroundStyle(Color(.systemBackground))
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Color.primary, in: .capsule).monospacedDigit()
+                    .font(AppTypography.label())
+                    .monospacedDigit()
+                    .foregroundStyle(theme.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(theme.accentSoft, in: Capsule())
             }
         }
         .padding(.vertical, 6)

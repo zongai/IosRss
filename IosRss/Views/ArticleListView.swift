@@ -77,6 +77,7 @@ struct ArticleListView: View {
         }
         .listStyle(.plain)
         .animation(.snappy(duration: 0.25), value: articles.map(\.id))
+        .appScreenBackground()
         .navigationTitle(liveFeedTitle)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(for: Article.self) { article in
@@ -350,6 +351,7 @@ private struct ListTranslationJob {
 
 struct ArticleRow: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let article: Article
     let showTranslation: Bool
 

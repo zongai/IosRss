@@ -3,6 +3,7 @@ import SafariServices
 
 struct ArticleReaderView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let article: Article
     var feedID: UUID? = nil
 
@@ -61,8 +62,9 @@ struct ArticleReaderView: View {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(displayTitle)
-                        .font(.system(size: store.readerTitleFontSize, weight: .bold, design: .serif))
-                        .foregroundStyle(Color.primary)
+                        .font(AppTypography.font(size: store.readerTitleFontSize, weight: .semibold))
+                        .tracking(AppTypography.titleTracking)
+                        .foregroundStyle(theme.text)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if showTranslated,
                        let translated = currentArticle.translatedTitle,
@@ -148,6 +150,7 @@ struct ArticleReaderView: View {
         }
         .background(Color(.systemBackground))
         .navigationTitle("")
+        .appScreenBackground()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(showChrome ? .visible : .hidden, for: .navigationBar)
         .simultaneousGesture(

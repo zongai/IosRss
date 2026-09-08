@@ -1,0 +1,238 @@
+import SwiftUI
+import CoreText
+
+// MARK: - Color Theme (reading-friendly palettes)
+
+enum AppColorTheme: String, CaseIterable, Codable, Identifiable {
+    case azure
+    case sepia
+    case midnight
+    case forest
+    case graphite
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .azure: return "Azure 蓝"
+        case .sepia: return "Sepia 纸感"
+        case .midnight: return "Midnight 夜读"
+        case .forest: return "Forest 松绿"
+        case .graphite: return "Graphite 石墨"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .azure: return "主色 #3866D6，清爽默认"
+        case .sepia: return "暖纸色，长时间阅读更护眼"
+        case .midnight: return "深色低蓝光，夜间阅读"
+        case .forest: return "柔和绿调，减少刺眼感"
+        case .graphite: return "中性灰，专注正文"
+        }
+    }
+
+    var isDark: Bool {
+        switch self {
+        case .midnight, .graphite: return true
+        default: return false
+        }
+    }
+
+    var tokens: ThemeTokens {
+        switch self {
+        case .azure:
+            return ThemeTokens(
+                text: Color(hex: 0x1A1F36),
+                muted: Color(hex: 0x6B7289),
+                strong: Color(hex: 0x0F172A),
+                accent: Color(hex: 0x3866D6),
+                background: Color(hex: 0xF4F7FC),
+                card: Color(hex: 0xFFFFFF),
+                surface: Color(hex: 0xEEF2FA),
+                track: Color(hex: 0xE2E8F4),
+                ring: Color(hex: 0x3866D6).opacity(0.12),
+                accentSoft: Color(hex: 0x3866D6).opacity(0.12),
+                shadow: Color(hex: 0x1A1F36).opacity(0.08)
+            )
+        case .sepia:
+            return ThemeTokens(
+                text: Color(hex: 0x3D2B1F),
+                muted: Color(hex: 0x8B7355),
+                strong: Color(hex: 0x2A1C12),
+                accent: Color(hex: 0xA67C52),
+                background: Color(hex: 0xF7F0E4),
+                card: Color(hex: 0xFFF8EE),
+                surface: Color(hex: 0xEFE6D6),
+                track: Color(hex: 0xE5D9C5),
+                ring: Color(hex: 0xA67C52).opacity(0.14),
+                accentSoft: Color(hex: 0xA67C52).opacity(0.12),
+                shadow: Color(hex: 0x3D2B1F).opacity(0.07)
+            )
+        case .midnight:
+            return ThemeTokens(
+                text: Color(hex: 0xE8ECF6),
+                muted: Color(hex: 0x8B93A7),
+                strong: Color(hex: 0xFFFFFF),
+                accent: Color(hex: 0x5B8DEF),
+                background: Color(hex: 0x0E1219),
+                card: Color(hex: 0x171C26),
+                surface: Color(hex: 0x1E2533),
+                track: Color(hex: 0x2A3344),
+                ring: Color(hex: 0x5B8DEF).opacity(0.18),
+                accentSoft: Color(hex: 0x5B8DEF).opacity(0.16),
+                shadow: Color.black.opacity(0.35)
+            )
+        case .forest:
+            return ThemeTokens(
+                text: Color(hex: 0x1C2B22),
+                muted: Color(hex: 0x5F7366),
+                strong: Color(hex: 0x0F1A14),
+                accent: Color(hex: 0x3D8B6E),
+                background: Color(hex: 0xF2F6F3),
+                card: Color(hex: 0xFFFFFF),
+                surface: Color(hex: 0xE6EEE9),
+                track: Color(hex: 0xD5E0D9),
+                ring: Color(hex: 0x3D8B6E).opacity(0.14),
+                accentSoft: Color(hex: 0x3D8B6E).opacity(0.12),
+                shadow: Color(hex: 0x1C2B22).opacity(0.07)
+            )
+        case .graphite:
+            return ThemeTokens(
+                text: Color(hex: 0xE6E8EC),
+                muted: Color(hex: 0x9AA0AA),
+                strong: Color(hex: 0xFFFFFF),
+                accent: Color(hex: 0x7B8CDE),
+                background: Color(hex: 0x121418),
+                card: Color(hex: 0x1A1D23),
+                surface: Color(hex: 0x22262E),
+                track: Color(hex: 0x2E333C),
+                ring: Color(hex: 0x7B8CDE).opacity(0.16),
+                accentSoft: Color(hex: 0x7B8CDE).opacity(0.14),
+                shadow: Color.black.opacity(0.4)
+            )
+        }
+    }
+}
+
+struct ThemeTokens {
+    var text: Color
+    var muted: Color
+    var strong: Color
+    var accent: Color
+    var background: Color
+    var card: Color
+    var surface: Color
+    var track: Color
+    var ring: Color
+    var accentSoft: Color
+    var shadow: Color
+}
+
+enum AppTypography {
+    static func greeting() -> Font { font(size: 26, weight: .semibold) }
+    static func title() -> Font { font(size: 22, weight: .semibold) }
+    static func section() -> Font { font(size: 19, weight: .semibold) }
+    static func body() -> Font { font(size: 14.5, weight: .regular) }
+    static func bodyLarge() -> Font { font(size: 16, weight: .regular) }
+    static func caption() -> Font { font(size: 12.5, weight: .regular) }
+    static func label() -> Font { font(size: 13, weight: .medium) }
+
+    static func font(size: CGFloat, weight: Font.Weight) -> Font {
+        let name: String
+        switch weight {
+        case .semibold, .bold, .heavy, .black: name = "InterTight-SemiBold"
+        case .medium: name = "InterTight-Medium"
+        default: name = "InterTight-Regular"
+        }
+        return .custom(name, size: size)
+    }
+
+    static let titleTracking: CGFloat = -0.75
+    static let sectionTracking: CGFloat = 0.35
+    static let bodyTracking: CGFloat = 0.25
+}
+
+enum AppMetrics {
+    static let pageMargin: CGFloat = 26
+    static let cardGroupSpacing: CGFloat = 18
+    static let innerSpacing: CGFloat = 10
+    static let cardRadius: CGFloat = 18
+    static let chipRadius: CGFloat = 12
+    static let iconButtonSize: CGFloat = 42
+}
+
+private struct ThemeTokensKey: EnvironmentKey {
+    static let defaultValue = AppColorTheme.azure.tokens
+}
+
+extension EnvironmentValues {
+    var theme: ThemeTokens {
+        get { self[ThemeTokensKey.self] }
+        set { self[ThemeTokensKey.self] = newValue }
+    }
+}
+
+struct SoftCardBackground: ViewModifier {
+    @Environment(\.theme) private var theme
+    var radius: CGFloat = AppMetrics.cardRadius
+    func body(content: Content) -> some View {
+        content.background(
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(theme.card)
+                .shadow(color: theme.shadow, radius: 10, x: 0, y: 4)
+                .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(theme.ring, lineWidth: 1))
+        )
+    }
+}
+
+struct SoftIconButtonStyle: ButtonStyle {
+    @Environment(\.theme) private var theme
+    var size: CGFloat = AppMetrics.iconButtonSize
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(width: size, height: size)
+            .background(
+                Circle().fill(theme.surface)
+                    .shadow(color: theme.shadow, radius: configuration.isPressed ? 2 : 6, x: 0, y: configuration.isPressed ? 1 : 3)
+                    .overlay(Circle().stroke(theme.ring, lineWidth: 1))
+            )
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+extension View {
+    func softCard(radius: CGFloat = AppMetrics.cardRadius) -> some View { modifier(SoftCardBackground(radius: radius)) }
+    func appTitleStyle() -> some View { font(AppTypography.title()).tracking(AppTypography.titleTracking).lineSpacing(6) }
+    func appSectionStyle() -> some View { font(AppTypography.section()).tracking(AppTypography.sectionTracking) }
+    func appBodyStyle() -> some View { font(AppTypography.body()).tracking(AppTypography.bodyTracking).lineSpacing(3.5) }
+    func appCaptionStyle() -> some View { font(AppTypography.caption()).tracking(0.2) }
+}
+
+extension Color {
+    init(hex: UInt32, opacity: Double = 1) {
+        let r = Double((hex >> 16) & 0xFF) / 255
+        let g = Double((hex >> 8) & 0xFF) / 255
+        let b = Double(hex & 0xFF) / 255
+        self.init(.sRGB, red: r, green: g, blue: b, opacity: opacity)
+    }
+}
+
+enum AppFontRegistration {
+    static func register() {
+        let names = ["InterTight-Regular.ttf", "InterTight-Medium.ttf", "InterTight-SemiBold.ttf", "InterTight-Variable.ttf"]
+        for name in names {
+            if let fontsURL = Bundle.main.resourceURL?.appendingPathComponent("Fonts").appendingPathComponent(name),
+               FileManager.default.fileExists(atPath: fontsURL.path) {
+                CTFontManagerRegisterFontsForURL(fontsURL as CFURL, .process, nil)
+            }
+        }
+        if let fontsDir = Bundle.main.resourceURL?.appendingPathComponent("Fonts"),
+           let files = try? FileManager.default.contentsOfDirectory(at: fontsDir, includingPropertiesForKeys: nil) {
+            for url in files where url.pathExtension.lowercased() == "ttf" {
+                CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+            }
+        }
+    }
+}

@@ -213,27 +213,38 @@ struct ArticleListView: View {
             if !force && autoTranslateAttemptedIDs.contains(article.id) { continue }
             autoTranslateAttemptedIDs.insert(article.id)
 
-            // 标题
-            if article.translatedTitle == nil {
-                let title = article.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                if title.isEmpty {
-                    // skip
-                } else if ListLanguageDetect.isMostlyTarget(title, language: store.targetLanguage) {
-                    // 已是目标语言：写入原文作译文，避免下次再判
-                    skipMark.append((article.id, title, nil))
-                } else {
-                    jobs.append(ListTranslationJob(articleID: article.id, field: .title, text: title))
+            // 是否目标语言：优先看正文（≥40 字），否则回退标题+摘要
+            let bodyText = HTMLUtils.plainText(article.content)
+            let title = article.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let preview = HTMLUtils.plainText(article.summary)
+            let langSample: String = {
+                if bodyText.count >= 40 { return bodyText }
+                return [title, preview].filter { !$0.isEmpty }.joined(separator: "
+")
+            }()
+            let bodyIsTarget = !langSample.isEmpty
+                && ListLanguageDetect.isMostlyTarget(langSample, language: store.targetLanguage)
+
+            // 正文已是目标语言：标题/摘要直接标为「已对齐」，不发起翻译
+            if bodyIsTarget {
+                var tMark: String? = nil
+                var sMark: String? = nil
+                if article.translatedTitle == nil, !title.isEmpty { tMark = title }
+                if article.translatedSummary == nil, !preview.isEmpty { sMark = preview }
+                if tMark != nil || sMark != nil {
+                    skipMark.append((article.id, tMark, sMark))
                 }
+                continue
+            }
+
+            // 标题（列表展示用；是否需译已由正文语言判定）
+            if article.translatedTitle == nil, !title.isEmpty {
+                jobs.append(ListTranslationJob(articleID: article.id, field: .title, text: title))
             }
 
             // 摘要预览
-            let preview = HTMLUtils.plainText(article.summary)
-            if article.translatedSummary == nil && !preview.isEmpty {
-                if ListLanguageDetect.isMostlyTarget(preview, language: store.targetLanguage) {
-                    skipMark.append((article.id, nil, preview))
-                } else {
-                    jobs.append(ListTranslationJob(articleID: article.id, field: .summary, text: preview))
-                }
+            if article.translatedSummary == nil, !preview.isEmpty {
+                jobs.append(ListTranslationJob(articleID: article.id, field: .summary, text: preview))
             }
         }
 
@@ -243,7 +254,9 @@ struct ArticleListView: View {
         }
         guard !jobs.isEmpty else {
             if snapshot.contains(where: {
-                ($0.translatedTitle?.isEmpty == false) || ($0.translatedSummary?.isEmpty == false)
+                $0.hasTranslatedBody
+                    || ($0.translatedTitle?.isEmpty == false)
+                    || ($0.translatedSummary?.isEmpty == false)
             }) {
                 showAllTranslations = true
             }
@@ -266,23 +279,32 @@ struct ArticleListView: View {
         var jobs: [ListTranslationJob] = []
         jobs.reserveCapacity(snapshot.count * 2)
         for article in snapshot {
-            if article.translatedTitle == nil {
-                let title = article.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !title.isEmpty {
-                    if ListLanguageDetect.isMostlyTarget(title, language: store.targetLanguage) {
-                        store.applyListTranslations([(article.id, title, nil)])
-                    } else {
-                        jobs.append(ListTranslationJob(articleID: article.id, field: .title, text: title))
-                    }
-                }
-            }
+            let bodyText = HTMLUtils.plainText(article.content)
+            let title = article.title.trimmingCharacters(in: .whitespacesAndNewlines)
             let preview = HTMLUtils.plainText(article.summary)
-            if article.translatedSummary == nil && !preview.isEmpty {
-                if ListLanguageDetect.isMostlyTarget(preview, language: store.targetLanguage) {
-                    store.applyListTranslations([(article.id, nil, preview)])
-                } else {
-                    jobs.append(ListTranslationJob(articleID: article.id, field: .summary, text: preview))
+            let langSample: String = {
+                if bodyText.count >= 40 { return bodyText }
+                return [title, preview].filter { !$0.isEmpty }.joined(separator: "
+")
+            }()
+            let bodyIsTarget = !langSample.isEmpty
+                && ListLanguageDetect.isMostlyTarget(langSample, language: store.targetLanguage)
+
+            if bodyIsTarget {
+                var tMark: String? = nil
+                var sMark: String? = nil
+                if article.translatedTitle == nil, !title.isEmpty { tMark = title }
+                if article.translatedSummary == nil, !preview.isEmpty { sMark = preview }
+                if tMark != nil || sMark != nil {
+                    store.applyListTranslations([(article.id, tMark, sMark)])
                 }
+                continue
+            }
+            if article.translatedTitle == nil, !title.isEmpty {
+                jobs.append(ListTranslationJob(articleID: article.id, field: .title, text: title))
+            }
+            if article.translatedSummary == nil, !preview.isEmpty {
+                jobs.append(ListTranslationJob(articleID: article.id, field: .summary, text: preview))
             }
         }
         guard !jobs.isEmpty else { return }

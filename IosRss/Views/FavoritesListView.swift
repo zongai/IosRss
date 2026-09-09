@@ -14,7 +14,8 @@ struct FavoritesListView: View {
         NavigationStack {
             List {
                 ForEach(articles) { article in
-                    let showTranslation = (article.translatedTitle?.isEmpty == false)
+                    let showTranslation = article.hasTranslatedBody
+                        || (article.translatedTitle?.isEmpty == false)
                         || (article.translatedSummary?.isEmpty == false)
                     NavigationLink(value: article) {
                         ArticleRow(

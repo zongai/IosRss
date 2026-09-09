@@ -10,7 +10,7 @@ enum AppVersion {
     }
     /// 工程构建号，如 10（CURRENT_PROJECT_VERSION）
     static var build: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "28"
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "29"
     }
     /// CI 在编译前写入 run_number；本地为空字符串
     /// 勿改字面量格式，build.yml 依赖此行做 sed 替换
@@ -24,7 +24,7 @@ enum AppVersion {
         }
         return nil
     }
-    /// 展示：CI 为 v1.3-28-build43；本地为 v1.3-28
+    /// 展示：CI 为 v1.3-29-build43；本地为 v1.3-29
     static var display: String {
         if let g = githubBuild {
             return "v\(marketing)-\(build)-build\(g)"
@@ -135,6 +135,12 @@ struct Article: Identifiable, Codable, Hashable {
     var hasFullContent: Bool = false
     /// RSS/Atom `<comments>` 讨论页（如 HN item），优先于 link 抓评论
     var commentsURL: String? = nil
+
+    /// 是否已翻译：以正文译文为准（非仅标题/摘要）
+    var hasTranslatedBody: Bool {
+        guard let c = translatedContent?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+        return !c.isEmpty
+    }
 
     enum CodingKeys: String, CodingKey {
         case id, feedID, feedTitle, title, link, summary, content

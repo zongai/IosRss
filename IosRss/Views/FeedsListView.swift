@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct FeedsListView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     @State private var showAddFeed = false
     @State private var showOPMLMenu = false
     @State private var showOPMLImport = false
@@ -20,6 +21,15 @@ struct FeedsListView: View {
     @State private var renameFeedText = ""
 
     private static let allowedImportExtensions: Set<String> = ["opml", "xml", "rss", "atom", "txt"]
+
+    private var refreshProgressLabel: String {
+        let cur = store.refreshProgressCurrent
+        let tot = store.refreshProgressTotal
+        let name = store.refreshProgressTitle
+        if tot <= 0 { return "正在刷新…" }
+        if name.isEmpty { return "正在刷新 \(cur)/\(tot)" }
+        return "正在刷新 \(cur)/\(tot) · \(name)"
+    }
 
     var body: some View {
         NavigationStack {
@@ -157,7 +167,29 @@ struct FeedsListView: View {
                 }
             }
             .refreshable { await store.refreshAll() }
-            // 下拉刷新已自带系统 Progress，不再额外叠一层转圈
+            .safeAreaInset(edge: .top) {
+                if store.isRefreshingAll || (store.isLoading && store.refreshProgressTotal > 0) {
+                    VStack(spacing: 6) {
+                        ProgressView(
+                            value: Double(store.refreshProgressCurrent),
+                            total: Double(max(1, store.refreshProgressTotal))
+                        )
+                        .tint(theme.accent)
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text(refreshProgressLabel)
+                                .font(AppTypography.caption())
+                                .foregroundStyle(theme.muted)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                }
+            }
             .safeAreaInset(edge: .bottom) {
                 if let msg = store.errorMessage, !msg.isEmpty {
                     Text(msg)

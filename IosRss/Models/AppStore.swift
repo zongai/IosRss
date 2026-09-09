@@ -10,6 +10,10 @@ class AppStore {
     var isUngroupedCollapsed: Bool = false
     var selectedFeedID: UUID?
     var isLoading = false
+    var isRefreshingAll = false
+    var refreshProgressCurrent = 0
+    var refreshProgressTotal = 0
+    var refreshProgressTitle = ""
     var errorMessage: String?
 
     var fontSize: Double = 17
@@ -704,10 +708,25 @@ class AppStore {
     }
 
     func refreshAll() async {
+        let snapshot = feeds
+        guard !snapshot.isEmpty else { return }
+        isRefreshingAll = true
+        isLoading = true
+        refreshProgressTotal = snapshot.count
+        refreshProgressCurrent = 0
+        refreshProgressTitle = ""
+        defer {
+            isRefreshingAll = false
+            isLoading = false
+            refreshProgressCurrent = 0
+            refreshProgressTotal = 0
+            refreshProgressTitle = ""
+        }
         var failures: [String] = []
-        for feed in feeds {
-            if let err = await refreshFeedResult(feed.id) {
-                // 仅统计真正失败（有缓存降级也提示，但汇总时优先无缓存类）
+        for (i, feed) in snapshot.enumerated() {
+            refreshProgressCurrent = i + 1
+            refreshProgressTitle = feed.title.isEmpty ? "未命名源" : feed.title
+            if let err = await refreshFeedResult(feed.id, manageLoading: false) {
                 failures.append(err)
             }
         }

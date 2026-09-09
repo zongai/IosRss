@@ -197,8 +197,13 @@ struct ArticleListView: View {
         let live = store.feeds.first(where: { $0.id == feed.id })
         let feedEnabled = live?.autoTranslateEnabled ?? true
         guard feedEnabled else { return }
-        // 使用源内全部文章（不仅是当前可见未读），避免过滤导致跳过
-        let snapshot = store.articlesForFeed(feed.id)
+        // 仅翻译当前列表会显示的文章（已隐藏的已读条目跳过）
+        let snapshot = store.articlesForFeed(feed.id).filter { article in
+            if store.showReadArticles { return true }
+            return !article.isRead
+                || readingIDs.contains(article.id)
+                || openedArticleID == article.id
+        }
         var jobs: [ListTranslationJob] = []
         jobs.reserveCapacity(snapshot.count * 2)
         var skipMark: [(id: UUID, title: String?, summary: String?)] = []
@@ -221,7 +226,7 @@ struct ArticleListView: View {
             }
 
             // 摘要预览
-            let preview = article.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            let preview = HTMLUtils.plainText(article.summary)
             if article.translatedSummary == nil && !preview.isEmpty {
                 if ListLanguageDetect.isMostlyTarget(preview, language: store.targetLanguage) {
                     skipMark.append((article.id, nil, preview))
@@ -270,7 +275,7 @@ struct ArticleListView: View {
                     }
                 }
             }
-            let preview = article.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            let preview = HTMLUtils.plainText(article.summary)
             if article.translatedSummary == nil && !preview.isEmpty {
                 if ListLanguageDetect.isMostlyTarget(preview, language: store.targetLanguage) {
                     store.applyListTranslations([(article.id, nil, preview)])
@@ -427,13 +432,17 @@ struct ArticleRow: View {
     }
 
     var displayTitle: String {
-        if showTranslation, let t = live.translatedTitle { return t }
-        return live.title
+        let raw: String
+        if showTranslation, let t = live.translatedTitle { raw = t }
+        else { raw = live.title }
+        return HTMLUtils.plainText(raw)
     }
 
     var displaySummary: String {
-        if showTranslation, let t = live.translatedSummary { return t }
-        return live.summary
+        let raw: String
+        if showTranslation, let t = live.translatedSummary { raw = t }
+        else { raw = live.summary }
+        return HTMLUtils.plainText(raw)
     }
 
     var body: some View {

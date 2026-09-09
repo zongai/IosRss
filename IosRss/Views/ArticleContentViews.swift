@@ -185,7 +185,22 @@ enum ContentBlockParser {
             }
         }
 
-        working = working.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        // 去掉 script/style/注释与全部标签，避免界面出现 <div> 等字面量
+        if let re = try? NSRegularExpression(pattern: "<!--([\s\S]*?)-->", options: []) {
+            working = re.stringByReplacingMatches(in: working, range: NSRange(working.startIndex..., in: working), withTemplate: "")
+        }
+        if let re = try? NSRegularExpression(pattern: "<script[\s\S]*?</script>", options: .caseInsensitive) {
+            working = re.stringByReplacingMatches(in: working, range: NSRange(working.startIndex..., in: working), withTemplate: "")
+        }
+        if let re = try? NSRegularExpression(pattern: "<style[\s\S]*?</style>", options: .caseInsensitive) {
+            working = re.stringByReplacingMatches(in: working, range: NSRange(working.startIndex..., in: working), withTemplate: "")
+        }
+        if let re = try? NSRegularExpression(pattern: "<[^>]+>", options: [.dotMatchesLineSeparators]) {
+            working = re.stringByReplacingMatches(in: working, range: NSRange(working.startIndex..., in: working), withTemplate: "")
+        }
+        if let re = try? NSRegularExpression(pattern: "</?[A-Za-z][^<>\n]{0,80}", options: []) {
+            working = re.stringByReplacingMatches(in: working, range: NSRange(working.startIndex..., in: working), withTemplate: "")
+        }
         working = HTMLUtils.decodeEntities(working)
 
         let parts = working.components(separatedBy: "\n")

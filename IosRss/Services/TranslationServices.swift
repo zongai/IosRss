@@ -401,11 +401,35 @@ enum HTMLUtils {
         var result = html
         result = result.replacingOccurrences(of: "<![CDATA[", with: "")
         result = result.replacingOccurrences(of: "]]>", with: "")
+        if let re = try? NSRegularExpression(pattern: "<!--([\\s\\S]*?)-->", options: []) {
+            result = re.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+        if let re = try? NSRegularExpression(pattern: "<script[\\s\\S]*?</script>", options: .caseInsensitive) {
+            result = re.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+        if let re = try? NSRegularExpression(pattern: "<style[\\s\\S]*?</style>", options: .caseInsensitive) {
+            result = re.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
         result = result.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
-        result = result.replacingOccurrences(of: #"</p>|</div>|</li>|</h[1-6]>"#, with: "\n", options: .regularExpression)
-        result = result.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        result = result.replacingOccurrences(of: #"</p>|</div>|</li>|</tr>|</h[1-6]>"#, with: "\n", options: .regularExpression)
+        if let re = try? NSRegularExpression(pattern: "<[^>]+>", options: [.dotMatchesLineSeparators]) {
+            result = re.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+        // 半截未闭合标签（如裸露的 <div class=）
+        if let re = try? NSRegularExpression(pattern: "</?[A-Za-z][^<>\\n]{0,80}", options: []) {
+            result = re.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
         result = decodeEntities(result)
+        result = result.replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 列表/标题用：去标签并压缩空白
+    static func plainText(_ html: String) -> String {
+        stripTags(html)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     /// 提取 img 标签，用占位符替换，便于翻译纯文本后再还原图片

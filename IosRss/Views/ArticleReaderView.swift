@@ -6,6 +6,8 @@ struct ArticleReaderView: View {
     @Environment(\.theme) private var theme
     let article: Article
     var feedID: UUID? = nil
+    /// 收藏页进入：左右滑在收藏列表内换篇
+    var browseFavorites: Bool = false
 
     @State private var isTranslating = false
     @State private var isGeneratingSummary = false
@@ -35,6 +37,10 @@ struct ArticleReaderView: View {
     }
 
     private var feedArticles: [Article] {
+        if browseFavorites {
+            return store.favoriteArticles
+                .sorted { ($0.publishedDate ?? .distantPast) > ($1.publishedDate ?? .distantPast) }
+        }
         let fid = feedID ?? currentArticle.feedID
         return store.articlesForFeed(fid)
             .sorted { ($0.publishedDate ?? .distantPast) > ($1.publishedDate ?? .distantPast) }

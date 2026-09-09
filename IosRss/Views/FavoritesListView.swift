@@ -39,7 +39,7 @@ struct FavoritesListView: View {
             .navigationTitle("收藏")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: Article.self) { article in
-                ArticleReaderView(article: article)
+                ArticleReaderView(article: article, browseFavorites: true)
                     .onAppear {
                         readingIDs.insert(article.id)
                         store.markAsRead(article)

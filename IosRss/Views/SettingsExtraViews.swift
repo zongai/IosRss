@@ -57,6 +57,16 @@ struct TranslationSettingsView: View {
             footer: { Text("不填 API Key 时使用免费翻译接口，有请求频率限制") }
 
             Section {
+                freeEngineRow("MyMemory（免 Key）", selected: store.defaultTranslationEngine == .mymemory)
+                freeEngineRow("Lingva（免 Key）", selected: store.defaultTranslationEngine == .lingva)
+                freeEngineRow("LibreTranslate（免 Key）", selected: store.defaultTranslationEngine == .libre)
+            } header: {
+                Text("免注册免 Key")
+            } footer: {
+                Text("MyMemory / Lingva / LibreTranslate 均无需注册与 Key。公共实例可能限流，失败时可换 Google 或其它引擎。")
+            }
+
+            Section {
                 HStack {
                     Text("Microsoft 翻译").font(.system(size: 15, weight: .medium))
                     Spacer()

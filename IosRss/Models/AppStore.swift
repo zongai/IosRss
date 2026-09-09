@@ -1021,14 +1021,14 @@ class AppStore {
         }
     }
 
-    /// 解析实际并发度：显式参数 > 用户设置 > 引擎默认
+    /// 解析实际并发度：显式参数 > 用户设置 > 引擎默认（偏稳，避免限流导致大片失败）
     func resolvedTranslationConcurrency(for engine: TranslationEngine, override: Int? = nil) -> Int {
-        if let o = override, o > 0 { return min(8, o) }
-        if translationConcurrency > 0 { return min(8, translationConcurrency) }
+        if let o = override, o > 0 { return min(6, o) }
+        if translationConcurrency > 0 { return min(6, translationConcurrency) }
         switch engine {
-        case .ai: return 3
-        case .google: return 4
-        case .mymemory, .lingva, .libre: return 3
+        case .ai: return 2
+        case .google: return 3
+        case .mymemory, .lingva, .libre: return 2
         case .microsoft, .deepl: return 1
         }
     }
@@ -1044,9 +1044,8 @@ class AppStore {
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
             return await translateNativeBatch(texts, chunkSize: 40) { try await MicrosoftTranslate.translate(texts: $0, apiKey: key, targetLang: targetLanguage.microsoftCode) }
-        case .ai:
-            return await translateTextsWithAIProviders(texts, perProviderConcurrency: max(1, limit))
-        case .google, .mymemory, .lingva, .libre:
+        case .google, .mymemory, .lingva, .libre, .ai:
+            // 统一走 translateText（含 AI failover / 多 Key），不再跨 Provider 分片，避免质量与失败率变差
             return await translateConcurrently(texts, concurrency: limit)
         }
     }
@@ -1183,7 +1182,7 @@ class AppStore {
         let chunks = Self.splitTextIntoChunks(text, maxChars: maxChunkChars)
         guard !chunks.isEmpty else { return "" }
         if chunks.count == 1 { return try await translateText(chunks[0]) }
-        let chunkLimit = min(3, max(1, resolvedTranslationConcurrency(for: defaultTranslationEngine)))
+        let chunkLimit = min(2, max(1, resolvedTranslationConcurrency(for: defaultTranslationEngine)))
         return try await withThrowingTaskGroup(of: (Int, String).self) { group in
             var next = 0
             let spawn = min(chunkLimit, chunks.count)

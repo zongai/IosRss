@@ -48,7 +48,7 @@ struct TranslationSettingsView: View {
             } header: {
                 Text("并发")
             } footer: {
-                Text("控制同时发起的翻译请求数。选「自动」时：Google 4、免 Key 3、AI 3。AI 若配置了多个 Provider，会按 Provider 分片并行，总吞吐≈路数×Provider 数。过高可能触发限流。")
+                Text("控制同时发起的翻译请求数。自动偏稳：Google 3、免 Key 2、AI 2。AI 使用默认引擎并 failover，不跨 Provider 分片。过高易限流。")
             }
 
             Section {

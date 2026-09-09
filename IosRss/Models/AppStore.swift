@@ -354,8 +354,7 @@ class AppStore {
             aiKeys: includeSecrets ? Dictionary(uniqueKeysWithValues: aiProviders.compactMap { p -> (String, String)? in
                 let keys = loadAIKeys(for: p.id)
                 guard !keys.isEmpty else { return nil }
-                return (p.id.uuidString, keys.joined(separator: "
-"))
+                return (p.id.uuidString, keys.joined(separator: "\n"))
             }) : nil
         )
         return try JSONEncoder().encode(payload)
@@ -1204,8 +1203,7 @@ class AppStore {
                     group.addTask { (i, try await self.translateText(chunk)) }
                 }
             }
-            return ordered.joined(separator: "
-")
+            return ordered.joined(separator: "\n\n")
         }
     }
 

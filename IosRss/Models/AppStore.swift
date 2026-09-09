@@ -925,6 +925,9 @@ class AppStore {
         let lang = targetLanguage
         switch defaultTranslationEngine {
         case .google: return try await GoogleTranslate.translate(text: text, targetLang: lang.googleCode)
+        case .mymemory: return try await MyMemoryTranslate.translate(text: text, targetLang: lang.mymemoryCode)
+        case .lingva: return try await LingvaTranslate.translate(text: text, targetLang: lang.googleCode)
+        case .libre: return try await LibreTranslate.translate(text: text, targetLang: lang.googleCode)
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
             return try await MicrosoftTranslate.translate(text: text, apiKey: key, targetLang: lang.microsoftCode)
@@ -952,7 +955,7 @@ class AppStore {
     func translateTexts(_ texts: [String], concurrency: Int? = nil) async -> [String?] {
         guard !texts.isEmpty else { return [] }
         let engine = defaultTranslationEngine
-        let limit = concurrency ?? (engine == .ai ? 3 : (engine == .google ? 4 : 5))
+        let limit = concurrency ?? (engine == .ai ? 3 : (engine.isFreeNoKey ? 3 : 5))
         switch engine {
         case .deepl:
             let key = Keychain.load(key: "deepl_translate_key") ?? ""
@@ -960,7 +963,7 @@ class AppStore {
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
             return await translateNativeBatch(texts, chunkSize: 40) { try await MicrosoftTranslate.translate(texts: $0, apiKey: key, targetLang: targetLanguage.microsoftCode) }
-        case .google, .ai:
+        case .google, .mymemory, .lingva, .libre, .ai:
             return await translateConcurrently(texts, concurrency: limit)
         }
     }

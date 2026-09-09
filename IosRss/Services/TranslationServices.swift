@@ -114,6 +114,140 @@ enum GoogleTranslate {
     }
 }
 
+
+// MARK: - MyMemory (free, no key; daily quota per IP)
+
+enum MyMemoryTranslate {
+    static func translate(text: String, targetLang: String = "zh-CN") async throws -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        // MyMemory 单次建议 < 500 字符
+        let chunk = String(trimmed.prefix(450))
+        var comps = URLComponents(string: "https://api.mymemory.translated.net/get")!
+        comps.queryItems = [
+            URLQueryItem(name: "q", value: chunk),
+            URLQueryItem(name: "langpair", value: "Autodetect|\(targetLang)")
+        ]
+        guard let url = comps.url else { throw TranslationError.apiError("MyMemory URL 无效") }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw TranslationError.apiError("MyMemory 失败 (\(http.statusCode))")
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rd = json["responseData"] as? [String: Any],
+              let translated = rd["translatedText"] as? String else {
+            throw TranslationError.apiError("MyMemory 解析失败")
+        }
+        let out = translated.trimmingCharacters(in: .whitespacesAndNewlines)
+        if out.isEmpty { throw TranslationError.apiError("MyMemory 返回空译文") }
+        // 配额耗尽时接口可能原样返回原文或带 MYMEMORY WARNING
+        if out.uppercased().contains("MYMEMORY WARNING") {
+            throw TranslationError.apiError("MyMemory 额度可能已用尽")
+        }
+        return out
+    }
+}
+
+// MARK: - Lingva (public Google frontends, no key)
+
+enum LingvaTranslate {
+    /// 公共实例列表，失败时轮询
+    private static let hosts = [
+        "https://lingva.ml",
+        "https://lingva.garudalinux.org",
+        "https://translate.plausibility.cloud"
+    ]
+
+    static func translate(text: String, targetLang: String = "zh") async throws -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        // path: /api/v1/{source}/{target}/{query}
+        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmed
+        let tl: String = {
+            switch targetLang.lowercased() {
+            case "zh-cn", "zh": return "zh"
+            case "zh-tw": return "zh_HANT"
+            default: return targetLang.replacingOccurrences(of: "-", with: "_")
+            }
+        }()
+        var lastError: Error = TranslationError.apiError("Lingva 不可用")
+        for host in hosts {
+            guard let url = URL(string: "\(host)/api/v1/auto/\(tl)/\(encoded)") else { continue }
+            var request = URLRequest(url: url, timeoutInterval: 18)
+            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    continue
+                }
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let translation = json["translation"] as? String,
+                   !translation.isEmpty {
+                    return translation
+                }
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError
+    }
+}
+
+// MARK: - LibreTranslate (public instances, no key when available)
+
+enum LibreTranslate {
+    private static let endpoints = [
+        "https://libretranslate.com/translate",
+        "https://translate.argosopentech.com/translate",
+        "https://trans.zillyhuhn.com/translate"
+    ]
+
+    static func translate(text: String, targetLang: String = "zh") async throws -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let tl: String = {
+            switch targetLang.lowercased() {
+            case "zh-cn", "zh-hans", "zh": return "zh"
+            case "zh-tw", "zh-hant": return "zt"
+            default: return targetLang.split(separator: "-").first.map(String.init) ?? targetLang
+            }
+        }()
+        var lastError: Error = TranslationError.apiError("LibreTranslate 不可用")
+        for endpoint in endpoints {
+            guard let url = URL(string: endpoint) else { continue }
+            var request = URLRequest(url: url, timeoutInterval: 20)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+            let body: [String: Any] = [
+                "q": String(trimmed.prefix(5000)),
+                "source": "auto",
+                "target": tl,
+                "format": "text"
+            ]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { continue }
+                if !(200..<300).contains(http.statusCode) {
+                    // 许多公共实例会 400 要求 key
+                    continue
+                }
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let translated = json["translatedText"] as? String,
+                   !translated.isEmpty {
+                    return translated
+                }
+            } catch {
+                lastError = error
+            }
+        }
+        throw TranslationError.apiError("LibreTranslate 公共实例暂不可用（可能需要自建或 Key）")
+    }
+}
+
 // MARK: - Microsoft Translator
 
 enum MicrosoftTranslate {

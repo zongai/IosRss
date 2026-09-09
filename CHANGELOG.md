@@ -8,6 +8,9 @@
 
 ## [Unreleased]
 
+### Added
+- 免 Key 翻译：MyMemory / Lingva / LibreTranslate
+
 ### Changed
 - TTS 默认语速 1.2×
 
@@ -88,6 +91,11 @@
 ### Added
 - 订阅源**自动排序**：默认未读优先；可选名称 / 最近更新 / 手动拖拽（设置 → 订阅源排序）
 
+
+## [v1.3-26] — 2026-09-09
+
+### Added
+- 免 Key 翻译引擎
 
 ## [v1.3-25] — 2026-09-09
 

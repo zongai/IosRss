@@ -1,3 +1,5 @@
+import SwiftUI
+
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var cacheSizeText: String = "计算中…"

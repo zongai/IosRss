@@ -289,7 +289,8 @@ struct EditProviderView: View {
     @State private var name = ""
     @State private var baseURL = ""
     @State private var model = ""
-    @State private var apiKey = ""
+    @State private var apiKeys: [String] = []
+    @State private var newAPIKey = ""
     @State private var kind = "openai"
     @State private var isDefaultSummary = false
     @State private var isDefaultTranslation = false
@@ -317,12 +318,39 @@ struct EditProviderView: View {
                     }
                 }
                 Section {
-                    SecureField("API Key", text: $apiKey)
-                        .autocorrectionDisabled().textInputAutocapitalization(.never)
+                    if apiKeys.isEmpty {
+                        Text("尚未添加 Key").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(apiKeys.enumerated()), id: \.offset) { index, key in
+                            HStack {
+                                Text(maskKey(key))
+                                    .font(.system(size: 13, design: .monospaced))
+                                Spacer()
+                                Button(role: .destructive) {
+                                    apiKeys.remove(at: index)
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    HStack {
+                        SecureField("添加 API Key", text: $newAPIKey)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        Button("添加") {
+                            let k = newAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !k.isEmpty else { return }
+                            if !apiKeys.contains(k) { apiKeys.append(k) }
+                            newAPIKey = ""
+                        }
+                        .disabled(newAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
                 } header: {
-                    Text("API Key")
+                    Text("API Key（可多个）")
                 } footer: {
-                    Text("API Key 存于系统钥匙串（本机解锁后可用），不会写入订阅备份。Gemini 可在 Google AI Studio 获取 Key。")
+                    Text("可添加多个 Key，调用时自动轮询；某个失败会换下一个。存于系统钥匙串，不会写入普通备份。")
                 }
                 Section {
                     Button {
@@ -369,7 +397,7 @@ struct EditProviderView: View {
         baseURL = p.baseURL
         model = p.model
         kind = p.kind.isEmpty ? (p.name.lowercased().contains("gemini") ? "gemini" : "openai") : p.kind
-        apiKey = Keychain.load(key: "ai_key_\(p.id)") ?? ""
+        apiKeys = store.loadAIKeys(for: p.id)
         isDefaultSummary = store.defaultSummaryProviderID == p.id
         isDefaultTranslation = store.defaultTranslationProviderID == p.id
         isDefaultExplain = store.defaultExplainProviderID == p.id
@@ -385,9 +413,7 @@ struct EditProviderView: View {
     private func testCurrent() async {
         // 确保 Key 已写入（若表单有输入）
         let id = provider?.id ?? UUID()
-        if !apiKey.isEmpty {
-            Keychain.save(key: "ai_key_\(id)", value: apiKey)
-        }
+        store.saveAIKeys(for: id, keys: apiKeys)
         // 临时写入/更新 provider 列表中的连接信息以便 callAI 能解析
         let temp = AIProvider(
             id: id, name: name.isEmpty ? "Test" : name,
@@ -419,13 +445,19 @@ struct EditProviderView: View {
         }
     }
 
+    private func maskKey(_ key: String) -> String {
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard k.count > 8 else { return String(repeating: "•", count: max(4, k.count)) }
+        return String(k.prefix(4)) + "…" + String(k.suffix(4))
+    }
+
     private func save() {
         let id = provider?.id ?? UUID()
         let updated = AIProvider(
             id: id, name: name, baseURL: baseURL, model: model, kind: kind,
             isDefaultSummary: isDefaultSummary, isDefaultTranslation: isDefaultTranslation
         )
-        if !apiKey.isEmpty { Keychain.save(key: "ai_key_\(id)", value: apiKey) }
+        store.saveAIKeys(for: id, keys: apiKeys)
         if isDefaultSummary { store.defaultSummaryProviderID = id }
         if isDefaultTranslation { store.defaultTranslationProviderID = id }
         if isDefaultExplain {

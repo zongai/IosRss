@@ -352,9 +352,10 @@ class AppStore {
                 "deepl_translate_key": Keychain.load(key: "deepl_translate_key") ?? ""
             ].filter { !$0.value.isEmpty } : nil,
             aiKeys: includeSecrets ? Dictionary(uniqueKeysWithValues: aiProviders.compactMap { p -> (String, String)? in
-                let key = "ai_key_" + p.id.uuidString
-                guard let k = Keychain.load(key: key), !k.isEmpty else { return nil }
-                return (p.id.uuidString, k)
+                let keys = loadAIKeys(for: p.id)
+                guard !keys.isEmpty else { return nil }
+                return (p.id.uuidString, keys.joined(separator: "
+"))
             }) : nil
         )
         return try JSONEncoder().encode(payload)
@@ -403,7 +404,11 @@ class AppStore {
             Keychain.save(key: k, value: v)
         }
         for (idStr, v) in (payload.aiKeys ?? [:]) where !v.isEmpty {
-            Keychain.save(key: "ai_key_" + idStr, value: v)
+            guard let uuid = UUID(uuidString: idStr) else { continue }
+            let parts = v.components(separatedBy: CharacterSet.newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            saveAIKeys(for: uuid, keys: parts.isEmpty ? [v] : parts)
         }
         saveToStorage()
     }
@@ -414,17 +419,13 @@ class AppStore {
               let provider = aiProviders.first(where: { $0.id == id }) else {
             throw TranslationError.noProvider
         }
-        let key = Keychain.load(key: "ai_key_" + id.uuidString) ?? ""
-        guard !key.isEmpty else {
+        let keys = loadAIKeys(for: id)
+        guard !keys.isEmpty else {
             throw TranslationError.apiError("未配置 API Key")
         }
         let prompt = "You are a connectivity probe. Reply with exactly the two letters: OK"
-        let raw = try await callAI(prompt: prompt, provider: provider, apiKey: key, maxTokens: 32)
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if Self.looksLikeAIErrorResponse(text) {
-            throw TranslationError.apiError(text)
-        }
-        return provider.name + ": " + text
+        let text = try await callAIWithProviderKeys(provider: provider, prompt: prompt, maxTokens: 32)
+        return "\(provider.name) (\(keys.count) Key): " + text
     }
 
     var feedsByGroup: [(group: FeedGroup?, feeds: [RSSFeed])] {
@@ -886,6 +887,82 @@ class AppStore {
         return needles.contains { lower.contains($0) }
     }
 
+
+    // MARK: - AI Provider 多 Key
+
+    /// 读取某 Provider 的全部 Key（兼容旧版单 Key）
+    func loadAIKeys(for providerID: UUID) -> [String] {
+        let multiKey = "ai_keys_\(providerID.uuidString)"
+        if let raw = Keychain.load(key: multiKey), !raw.isEmpty,
+           let data = raw.data(using: .utf8),
+           let arr = try? JSONDecoder().decode([String].self, from: data) {
+            return arr.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        }
+        // 兼容旧单 Key
+        let legacy = Keychain.load(key: "ai_key_\(providerID.uuidString)") ?? ""
+        let one = legacy.trimmingCharacters(in: .whitespacesAndNewlines)
+        return one.isEmpty ? [] : [one]
+    }
+
+    func saveAIKeys(for providerID: UUID, keys: [String]) {
+        let cleaned = keys.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let multiKey = "ai_keys_\(providerID.uuidString)"
+        let legacyKey = "ai_key_\(providerID.uuidString)"
+        if cleaned.isEmpty {
+            Keychain.delete(key: multiKey)
+            Keychain.delete(key: legacyKey)
+            return
+        }
+        if let data = try? JSONEncoder().encode(cleaned), let raw = String(data: data, encoding: .utf8) {
+            Keychain.save(key: multiKey, value: raw)
+        }
+        // 同步首个 Key 到旧字段，兼容未升级逻辑
+        Keychain.save(key: legacyKey, value: cleaned[0])
+    }
+
+    /// 轮询取下一个 Key（负载均衡）；无 Key 返回 nil
+    private var aiKeyRoundRobin: [UUID: Int] = [:]
+
+    func nextAIKey(for providerID: UUID) -> String? {
+        let keys = loadAIKeys(for: providerID)
+        guard !keys.isEmpty else { return nil }
+        let start = aiKeyRoundRobin[providerID] ?? 0
+        let idx = start % keys.count
+        aiKeyRoundRobin[providerID] = idx + 1
+        return keys[idx]
+    }
+
+    /// 按顺序尝试该 Provider 的所有 Key
+    func callAIWithProviderKeys(
+        provider: AIProvider,
+        prompt: String,
+        maxTokens: Int
+    ) async throws -> String {
+        let keys = loadAIKeys(for: provider.id)
+        guard !keys.isEmpty else { throw TranslationError.apiError("未配置 API Key") }
+        // 从轮询位点开始，转一圈
+        let start = (aiKeyRoundRobin[provider.id] ?? 0) % keys.count
+        var lastError: Error = TranslationError.apiError("全部 Key 失败")
+        for offset in 0..<keys.count {
+            let idx = (start + offset) % keys.count
+            let key = keys[idx]
+            do {
+                let raw = try await callAI(prompt: prompt, provider: provider, apiKey: key, maxTokens: maxTokens)
+                let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if text.isEmpty || Self.looksLikeAIErrorResponse(text) {
+                    throw TranslationError.apiError(text.isEmpty ? "空响应" : text)
+                }
+                aiKeyRoundRobin[provider.id] = idx + 1
+                return text
+            } catch {
+                lastError = error
+                continue
+            }
+        }
+        throw lastError
+    }
+
+
     /// 依次尝试可用 AI Provider，全部失败再抛错
     func callAIWithFailover(
         preferredID: UUID?,
@@ -899,20 +976,11 @@ class AppStore {
         var lastError: Error = TranslationError.noProvider
         var triedAnyKey = false
         for provider in providers {
-            let key = Keychain.load(key: "ai_key_\(provider.id)") ?? ""
-            guard !key.isEmpty else { continue }
+            let keys = loadAIKeys(for: provider.id)
+            guard !keys.isEmpty else { continue }
             triedAnyKey = true
             do {
-                let raw = try await callAI(
-                    prompt: prompt,
-                    provider: provider,
-                    apiKey: key,
-                    maxTokens: maxTokens
-                )
-                let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                if text.isEmpty || Self.looksLikeAIErrorResponse(text) {
-                    throw TranslationError.apiError(text.isEmpty ? "空响应" : text)
-                }
+                let text = try await callAIWithProviderKeys(provider: provider, prompt: prompt, maxTokens: maxTokens)
                 return (text, provider)
             } catch {
                 lastError = error
@@ -988,8 +1056,7 @@ class AppStore {
     private func translateTextsWithAIProviders(_ texts: [String], perProviderConcurrency: Int) async -> [String?] {
         let preferred = defaultTranslationProviderID ?? defaultSummaryProviderID
         let providers = orderedAIProviders(preferredID: preferred, forText: texts.first ?? "").filter { p in
-            let key = Keychain.load(key: "ai_key_\(p.id)") ?? ""
-            return !key.isEmpty
+            !loadAIKeys(for: p.id).isEmpty
         }
         guard !providers.isEmpty else {
             return await translateConcurrently(texts, concurrency: perProviderConcurrency)
@@ -1058,14 +1125,7 @@ class AppStore {
             .replacingOccurrences(of: "{{lang}}", with: lang.promptLabel)
             .replacingOccurrences(of: "{{text}}", with: text)
         if !template.contains("{{text}}") { prompt += "\n\n" + text }
-        let key = Keychain.load(key: "ai_key_\(provider.id)") ?? ""
-        guard !key.isEmpty else { throw TranslationError.apiError("未配置 API Key") }
-        let raw = try await callAI(prompt: prompt, provider: provider, apiKey: key, maxTokens: 2048)
-        let result = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if result.isEmpty || Self.looksLikeAIErrorResponse(result) {
-            throw TranslationError.apiError(result.isEmpty ? "空响应" : result)
-        }
-        return result
+        return try await callAIWithProviderKeys(provider: provider, prompt: prompt, maxTokens: 2048)
     }
 
     private func translateNativeBatch(_ texts: [String], chunkSize: Int, call: ([String]) async throws -> [String]) async -> [String?] {

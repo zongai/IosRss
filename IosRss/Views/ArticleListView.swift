@@ -220,8 +220,7 @@ struct ArticleListView: View {
             let preview = HTMLUtils.plainText(article.summary)
             let langSample: String = {
                 if bodyText.count >= 40 { return bodyText }
-                return [title, preview].filter { !$0.isEmpty }.joined(separator: "
-")
+                return [title, preview].filter { !$0.isEmpty }.joined(separator: "\n")
             }()
             let bodyIsTarget = !langSample.isEmpty
                 && ListLanguageDetect.isMostlyTarget(langSample, language: store.targetLanguage)
@@ -285,8 +284,7 @@ struct ArticleListView: View {
             let preview = HTMLUtils.plainText(article.summary)
             let langSample: String = {
                 if bodyText.count >= 40 { return bodyText }
-                return [title, preview].filter { !$0.isEmpty }.joined(separator: "
-")
+                return [title, preview].filter { !$0.isEmpty }.joined(separator: "\n")
             }()
             let bodyIsTarget = !langSample.isEmpty
                 && ListLanguageDetect.isMostlyTarget(langSample, language: store.targetLanguage)

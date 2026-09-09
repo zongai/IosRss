@@ -47,7 +47,7 @@ class AppStore {
     /// Edge TTS 音色；空则按正文语言自动选择
     var ttsVoice: String = ""
     /// TTS 语速倍数，1.0 为正常（0.5～2.0）
-    var ttsRate: Double = 1.0
+    var ttsRate: Double = 1.2
     /// 阅读主题色板
     var colorTheme: ReadingTheme = .classicLight
     /// 外观：跟随系统 / 浅色 / 深色

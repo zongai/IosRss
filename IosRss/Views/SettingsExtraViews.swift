@@ -20,6 +20,13 @@ struct TranslationSettingsView: View {
                         Text(lang.displayName).tag(lang)
                     }
                 }
+            } header: {
+                Text("语言")
+            } footer: {
+                Text("翻译引擎将内容译为「翻译目标语言」；摘要/解释使用「AI 输出语言」。")
+            }
+
+            Section {
                 Picker("默认翻译引擎", selection: $store.defaultTranslationEngine) {
                     ForEach(TranslationEngine.allCases, id: \.self) { engine in
                         Text(engine.rawValue).tag(engine)

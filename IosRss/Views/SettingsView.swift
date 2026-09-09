@@ -1,5 +1,3 @@
-import SwiftUI
-
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var cacheSizeText: String = "计算中…"
@@ -15,8 +13,9 @@ struct SettingsView: View {
         @Bindable var store = store
         NavigationStack {
             Form {
+                // MARK: 阅读
                 Section {
-                    Picker("标题显示模式", selection: $store.titleDisplayMode) {
+                    Picker("标题显示", selection: $store.titleDisplayMode) {
                         ForEach(TitleDisplayMode.allCases, id: \.self) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
@@ -28,6 +27,14 @@ struct SettingsView: View {
                         }
                     }
                     .onChange(of: store.feedSortMode) { _, _ in store.persistSettings() }
+                } header: {
+                    Text("阅读")
+                } footer: {
+                    Text("控制列表标题语言、已读是否出现在订阅/文章列表，以及源的排序方式。")
+                }
+
+                // MARK: 外观
+                Section {
                     Picker("外观", selection: $store.appearanceMode) {
                         ForEach(AppearanceMode.allCases) { mode in
                             Text(mode.displayName).tag(mode)
@@ -35,6 +42,23 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.segmented)
                     .onChange(of: store.appearanceMode) { _, _ in store.persistSettings() }
+
+                    NavigationLink {
+                        Form {
+                            ThemePalettePicker(selection: $store.colorTheme)
+                                .onChange(of: store.colorTheme) { _, _ in store.persistSettings() }
+                        }
+                        .navigationTitle("阅读主题")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .appScreenBackground()
+                    } label: {
+                        HStack {
+                            Text("阅读主题")
+                            Spacer()
+                            Text(store.colorTheme.displayName)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
 
                     NavigationLink {
                         Form {
@@ -74,56 +98,42 @@ struct SettingsView: View {
                         }
                     }
 
-                    NavigationLink {
-                        Form {
-                            ThemePalettePicker(selection: $store.colorTheme)
-                                .onChange(of: store.colorTheme) { _, _ in store.persistSettings() }
-                        }
-                        .navigationTitle("阅读主题")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .appScreenBackground()
-                    } label: {
+                    NavigationLink(destination: FontSettingsView()) {
                         HStack {
-                            Text("阅读主题")
+                            Text("字号")
                             Spacer()
-                            Text(store.colorTheme.displayName)
+                            Text("分组 / 列表 / 阅读")
+                                .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
                 } header: {
-                    Text("阅读")
+                    Text("外观")
+                } footer: {
+                    Text("外观可跟随系统深色模式；主题与字体影响全局界面与阅读页。")
                 }
-                .onChange(of: store.titleDisplayMode) { _, _ in store.persistSettings() }
-                .onChange(of: store.showReadArticles) { _, _ in store.persistSettings() }
-                .onChange(of: store.colorTheme) { _, _ in store.persistSettings() }
 
+                // MARK: 翻译与 AI
                 Section {
-                    Picker("朗读音色", selection: $store.ttsVoice) {
-                        Text("自动（按语言）").tag("")
-                        ForEach(EdgeTTS.popularVoices, id: \.id) { v in
-                            Text(v.name).tag(v.id)
+                    NavigationLink(destination: TranslationSettingsView()) {
+                        HStack {
+                            Text("翻译")
+                            Spacer()
+                            Text(store.targetLanguage.displayName)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                } header: {
-                    Text("朗读")
-                } footer: {
-                    Text("使用 Microsoft Edge 在线语音，无需密钥。")
-                }
-                .onChange(of: store.ttsVoice) { _, _ in store.persistSettings() }
-
-                Section {
-                    NavigationLink(destination: FontSettingsView()) {
-                        Label("字号设置", systemImage: "textformat.size")
-                    }
-                    NavigationLink(destination: TranslationSettingsView()) {
-                        Label("翻译设置", systemImage: "translate")
-                    }
                     NavigationLink(destination: AISettingsView()) {
-                        Label("AI 设置", systemImage: "wand.and.stars")
+                        HStack {
+                            Text("AI")
+                            Spacer()
+                            Text("\(store.aiProviders.count) 个 Provider")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     NavigationLink(destination: ArticleBlacklistSettingsView()) {
                         HStack {
-                            Label("文章黑名单", systemImage: "eye.slash")
+                            Text("文章黑名单")
                             Spacer()
                             if !store.articleBlacklistTerms.isEmpty {
                                 Text("\(store.articleBlacklistTerms.count)")
@@ -132,41 +142,49 @@ struct SettingsView: View {
                         }
                     }
                 } header: {
-                    Text("功能")
+                    Text("翻译与 AI")
                 } footer: {
-                    Text("AI 黑名单在「AI 设置 → AI 黑名单」；文章黑名单自动将命中条目标为已读。")
+                    Text("翻译目标语言、引擎与 Key 在「翻译」；模型、Prompt、AI 黑名单在「AI」。文章黑名单命中后自动标已读。")
                 }
 
+                // MARK: 朗读
                 Section {
-                    HStack {
-                        Text("已读保留")
-                        Spacer()
-                        Text(store.readRetentionDays == 0 ? "不清理" : "\(store.readRetentionDays) 天")
-                            .foregroundStyle(.secondary)
-                        Stepper("", value: $store.readRetentionDays, in: 0...90, step: 1).labelsHidden()
-                    }
-                    HStack {
-                        Text("全文缓存")
-                        Spacer()
-                        Text(store.fullContentCacheDays == 0 ? "不清理" : "\(store.fullContentCacheDays) 天")
-                            .foregroundStyle(.secondary)
-                        Stepper("", value: $store.fullContentCacheDays, in: 0...180, step: 1).labelsHidden()
+                    Picker("默认音色", selection: $store.ttsVoice) {
+                        Text("自动（按语言）").tag("")
+                        ForEach(EdgeTTS.popularVoices, id: \.id) { v in
+                            Text(v.name).tag(v.id)
+                        }
                     }
                 } header: {
-                    Text("自动清理")
+                    Text("朗读")
                 } footer: {
-                    Text("已读保留：超过天数的非收藏已读条目会从列表移除。全文缓存：磁盘上的抓取正文超过天数后删除。设为 0 表示不自动清理。")
-                }
-                .onChange(of: store.readRetentionDays) { _, _ in
-                    store.persistSettings()
-                    store.purgeOldReadArticles()
-                }
-                .onChange(of: store.fullContentCacheDays) { _, _ in
-                    store.persistSettings()
-                    store.pruneFullContentCache()
+                    Text("使用 Microsoft Edge 在线语音，无需 API Key。阅读页工具栏可开始/停止朗读。")
                 }
 
+                // MARK: 数据与清理
                 Section {
+                    Stepper(value: $store.readRetentionDays, in: 0...365) {
+                        if store.readRetentionDays == 0 {
+                            Text("已读保留：关闭自动清理")
+                        } else {
+                            Text("已读保留 \(store.readRetentionDays) 天")
+                        }
+                    }
+                    .onChange(of: store.readRetentionDays) { _, _ in
+                        store.persistSettings()
+                        store.purgeOldReadArticles()
+                    }
+                    Stepper(value: $store.fullContentCacheDays, in: 0...365) {
+                        if store.fullContentCacheDays == 0 {
+                            Text("全文缓存：不按时间清理")
+                        } else {
+                            Text("全文缓存 \(store.fullContentCacheDays) 天")
+                        }
+                    }
+                    .onChange(of: store.fullContentCacheDays) { _, _ in
+                        store.persistSettings()
+                        store.pruneFullContentCache()
+                    }
                     HStack {
                         Label("内容缓存", systemImage: "internaldrive")
                         Spacer()
@@ -179,12 +197,13 @@ struct SettingsView: View {
                         Label("清除离线缓存", systemImage: "trash")
                     }
                 } header: {
-                    Text("离线")
+                    Text("数据与清理")
                 } footer: {
-                    Text("订阅列表、已读标记与源图标缓存始终保留。清除后仅删除文章全文、Feed 快照与正文图片缓存，不影响订阅与源图标。")
+                    Text("订阅列表、已读标记与源图标始终保留。清除缓存只删全文、Feed 快照与正文图片。")
                 }
                 .onAppear { cacheSizeText = store.cacheSizeDescription() }
 
+                // MARK: 备份
                 Section {
                     Toggle("导出时包含 API Key", isOn: $exportIncludeSecrets)
                     Button {
@@ -198,7 +217,7 @@ struct SettingsView: View {
                             settingsIOMessage = "导出失败：\(error.localizedDescription)"
                         }
                     } label: {
-                        Label("导出全部设置", systemImage: "square.and.arrow.up")
+                        Label("导出设置", systemImage: "square.and.arrow.up")
                     }
                     Button { showSettingsImport = true } label: {
                         Label("导入设置", systemImage: "square.and.arrow.down")
@@ -207,38 +226,33 @@ struct SettingsView: View {
                         Text(settingsIOMessage).font(.footnote).foregroundStyle(.secondary)
                     }
                 } header: {
-                    Text("设置备份")
+                    Text("备份")
                 } footer: {
-                    Text("默认不含 API Key。开启「导出时包含 API Key」后文件含敏感信息，请妥善保管。订阅源请用 OPML 单独导出。")
+                    Text("默认不含 API Key。订阅源请用 OPML 单独导出。")
                 }
 
-                Section("关于") {
-                    HStack {
-                        Text("默认翻译引擎")
-                        Spacer()
-                        Text(store.defaultTranslationEngine.rawValue).foregroundStyle(.secondary)
-                    }
-                    if let pid = store.defaultSummaryProviderID,
-                       let provider = store.aiProviders.first(where: { $0.id == pid }) {
-                        HStack {
-                            Text("默认摘要引擎")
-                            Spacer()
-                            Text(provider.name).foregroundStyle(.secondary)
-                        }
-                    }
-                    if let pid = store.defaultExplainProviderID,
-                       let provider = store.aiProviders.first(where: { $0.id == pid }) {
-                        HStack {
-                            Text("默认解释引擎")
-                            Spacer()
-                            Text(provider.name).foregroundStyle(.secondary)
-                        }
-                    }
+                // MARK: 关于
+                Section {
                     HStack {
                         Text("版本")
                         Spacer()
                         Text(AppVersion.display).foregroundStyle(.secondary)
                     }
+                    if let pid = store.defaultSummaryProviderID,
+                       let provider = store.aiProviders.first(where: { $0.id == pid }) {
+                        HStack {
+                            Text("默认摘要")
+                            Spacer()
+                            Text(provider.name).foregroundStyle(.secondary)
+                        }
+                    }
+                    HStack {
+                        Text("翻译引擎")
+                        Spacer()
+                        Text(store.defaultTranslationEngine.rawValue).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("关于")
                 }
             }
             .navigationTitle("设置")
@@ -276,9 +290,10 @@ struct SettingsView: View {
                 Text("将覆盖当前字号、主题、翻译与 AI 配置等。若文件含 API Key 也会写入。此操作不可撤销。")
             }
             .onDisappear { store.persistSettings() }
+            .onChange(of: store.showReadArticles) { _, _ in store.persistSettings() }
+            .onChange(of: store.titleDisplayMode) { _, _ in store.persistSettings() }
         }
     }
-
 }
 
 struct FontSettingsView: View {

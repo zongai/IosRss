@@ -200,8 +200,7 @@ enum ContentBlockParser {
         if let re = try? NSRegularExpression(pattern: #"<[^>]+>"#, options: [.dotMatchesLineSeparators]) {
             working = re.stringByReplacingMatches(in: working, range: NSRange(working.startIndex..., in: working), withTemplate: "")
         }
-        if let re = try? NSRegularExpression(pattern: #"</?[A-Za-z][^<>
-]{0,80}"#, options: []) {
+        if let re = try? NSRegularExpression(pattern: #"</?[A-Za-z][^<>]{0,80}"#, options: []) {
             working = re.stringByReplacingMatches(in: working, range: NSRange(working.startIndex..., in: working), withTemplate: "")
         }
         working = HTMLUtils.decodeEntities(working)

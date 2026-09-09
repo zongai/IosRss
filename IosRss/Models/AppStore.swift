@@ -46,6 +46,8 @@ class AppStore {
     var fullContentCacheDays: Int = 30
     /// Edge TTS 音色；空则按正文语言自动选择
     var ttsVoice: String = ""
+    /// TTS 语速倍数，1.0 为正常（0.5～2.0）
+    var ttsRate: Double = 1.0
     /// 阅读主题色板
     var colorTheme: ReadingTheme = .classicLight
     /// 外观：跟随系统 / 浅色 / 深色
@@ -299,6 +301,7 @@ class AppStore {
         var readRetentionDays: Int
         var fullContentCacheDays: Int
         var ttsVoice: String
+        var ttsRate: Double?
         var colorTheme: String
         var appearanceMode: String?
         var aiBlacklistTerms: [String]
@@ -331,6 +334,7 @@ class AppStore {
             readRetentionDays: readRetentionDays,
             fullContentCacheDays: fullContentCacheDays,
             ttsVoice: ttsVoice,
+            ttsRate: ttsRate,
             colorTheme: colorTheme.rawValue,
             appearanceMode: appearanceMode.rawValue,
             aiBlacklistTerms: aiBlacklistTerms,
@@ -372,6 +376,7 @@ class AppStore {
         readRetentionDays = payload.readRetentionDays
         fullContentCacheDays = payload.fullContentCacheDays
         ttsVoice = payload.ttsVoice
+        if let r = payload.ttsRate { ttsRate = min(2.0, max(0.5, r)) }
         if let th = ReadingTheme(rawValue: payload.colorTheme) {
             colorTheme = th
         } else {
@@ -1354,6 +1359,7 @@ class AppStore {
         UserDefaults.standard.set(readRetentionDays, forKey: "readRetentionDays")
         UserDefaults.standard.set(fullContentCacheDays, forKey: "fullContentCacheDays")
         UserDefaults.standard.set(ttsVoice, forKey: "ttsVoice")
+        UserDefaults.standard.set(ttsRate, forKey: "ttsRate")
         UserDefaults.standard.set(colorTheme.rawValue, forKey: "colorTheme")
         UserDefaults.standard.set(appearanceMode.rawValue, forKey: "appearanceMode")
         UserDefaults.standard.set(appFontFamily.rawValue, forKey: "appFontFamily")
@@ -1407,6 +1413,9 @@ class AppStore {
         readRetentionDays = UserDefaults.standard.object(forKey: "readRetentionDays") as? Int ?? 7
         fullContentCacheDays = UserDefaults.standard.object(forKey: "fullContentCacheDays") as? Int ?? 30
         ttsVoice = UserDefaults.standard.string(forKey: "ttsVoice") ?? ""
+        if UserDefaults.standard.object(forKey: "ttsRate") != nil {
+            ttsRate = min(2.0, max(0.5, UserDefaults.standard.double(forKey: "ttsRate")))
+        }
         if let raw = UserDefaults.standard.string(forKey: "colorTheme") {
             if let theme = ReadingTheme(rawValue: raw) {
                 colorTheme = theme

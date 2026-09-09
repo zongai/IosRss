@@ -87,6 +87,14 @@ enum EdgeTTS {
         return ListLanguageDetect.isMostlyChinese(text) ? defaultChineseVoice : defaultEnglishVoice
     }
 
+    /// 倍速 0.5～2.0 → SSML rate（如 +20% / -15%）
+    static func rateString(from multiplier: Double) -> String {
+        let clamped = min(2.0, max(0.5, multiplier))
+        let pct = Int(((clamped - 1.0) * 100.0).rounded())
+        if pct >= 0 { return "+\(pct)%" }
+        return "\(pct)%"
+    }
+
     // MARK: - Chunk synthesis via WebSocket
 
     private static func synthesizeChunk(
@@ -295,15 +303,15 @@ final class EdgeTTSPlayer: ObservableObject {
         isLoading = false
     }
 
-    func toggle(text: String, voice: String?) async {
+    func toggle(text: String, voice: String?, rate: Double = 1.0) async {
         if isPlaying || isLoading {
             stop()
             return
         }
-        await play(text: text, voice: voice)
+        await play(text: text, voice: voice, rate: rate)
     }
 
-    func play(text: String, voice: String?) async {
+    func play(text: String, voice: String?, rate: Double = 1.0) async {
         stop()
         let mySession = session
         isLoading = true
@@ -312,7 +320,8 @@ final class EdgeTTSPlayer: ObservableObject {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
             try AVAudioSession.sharedInstance().setActive(true)
             let resolved = EdgeTTS.preferredVoice(for: text, configured: voice)
-            let data = try await EdgeTTS.synthesize(text: text, voice: resolved) {
+            let rateStr = EdgeTTS.rateString(from: rate)
+            let data = try await EdgeTTS.synthesize(text: text, voice: resolved, rate: rateStr) {
                 mySession != self.session
             }
             guard mySession == session else { return }

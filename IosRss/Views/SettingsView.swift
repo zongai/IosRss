@@ -2,6 +2,13 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
+
+    private var ttsRateLabel: String {
+        let r = store.ttsRate
+        if abs(r - 1.0) < 0.001 { return "1.0× 正常" }
+        return String(format: "%.2f×", r)
+    }
+
     @State private var cacheSizeText: String = "计算中…"
     @State private var settingsExportURL: URL?
     @State private var showSettingsExport = false
@@ -157,10 +164,28 @@ struct SettingsView: View {
                             Text(v.name).tag(v.id)
                         }
                     }
+                    .onChange(of: store.ttsVoice) { _, _ in store.persistSettings() }
+
+                    HStack {
+                        Text("语速")
+                        Spacer()
+                        Text(ttsRateLabel)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    Slider(value: $store.ttsRate, in: 0.5...2.0, step: 0.05)
+                        .onChange(of: store.ttsRate) { _, _ in store.persistSettings() }
+                    HStack {
+                        Text("0.5×").font(.caption2).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("1.0×").font(.caption2).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("2.0×").font(.caption2).foregroundStyle(.secondary)
+                    }
                 } header: {
                     Text("朗读")
                 } footer: {
-                    Text("使用 Microsoft Edge 在线语音，无需 API Key。阅读页工具栏可开始/停止朗读。")
+                    Text("使用 Microsoft Edge 在线语音，无需 API Key。语速在合成时生效，切换后需重新点朗读。")
                 }
 
                 // MARK: 数据与清理

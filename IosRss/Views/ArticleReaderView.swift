@@ -245,7 +245,7 @@ struct ArticleReaderView: View {
                         let fallback = currentArticle.summary
                         let body = plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : plain
                         let text = displayTitle + "\n" + body
-                        await tts.toggle(text: text, voice: store.ttsVoice.isEmpty ? nil : store.ttsVoice)
+                        await tts.toggle(text: text, voice: store.ttsVoice.isEmpty ? nil : store.ttsVoice, rate: store.ttsRate)
                     }
                 } label: {
                     if tts.isLoading {

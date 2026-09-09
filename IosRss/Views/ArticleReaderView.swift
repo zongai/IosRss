@@ -51,11 +51,17 @@ struct ArticleReaderView: View {
     }
 
     private var needsTranslation: Bool {
-        let sample = HTMLUtils.stripTags(currentArticle.content)
-        let title = currentArticle.title
-        let text = (title + "\n" + sample).trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.isEmpty { return false }
-        return !ListLanguageDetect.isMostlyTarget(text, language: store.targetLanguage)
+        // 以正文为准：正文足够长时只看正文；否则才回退标题
+        let body = HTMLUtils.plainText(currentArticle.content)
+        let sample: String
+        if body.count >= 40 {
+            sample = body
+        } else {
+            sample = (currentArticle.title + "\n" + body).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if sample.isEmpty { return false }
+        if currentArticle.hasTranslatedBody { return false }
+        return !ListLanguageDetect.isMostlyTarget(sample, language: store.targetLanguage)
     }
 
 

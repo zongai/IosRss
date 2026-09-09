@@ -159,11 +159,7 @@ enum ContentBlockParser {
             }
             for (i, match) in matches.enumerated().reversed() {
                 if let fullRange = Range(match.range, in: working) {
-                    working.replaceSubrange(fullRange, with: "
-
-__IMG_\(i)__
-
-")
+                    working.replaceSubrange(fullRange, with: "\n\n__IMG_\(i)__\n\n")
                 }
             }
         }

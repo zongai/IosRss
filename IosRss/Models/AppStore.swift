@@ -1063,24 +1063,12 @@ class AppStore {
 
     static func migrateLegacyDefaultPrompts(translation: inout String, summary: inout String, explain: inout String) {
         func normalize(_ s: String) -> String {
-            s.replacingOccurrences(of: "
-", with: "
-")
+            s.replacingOccurrences(of: "\r\n", with: "\n")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        let legacyTranslation = "请将以下内容翻译成{{lang}}，只输出译文，不要解释：
-
-{{text}}"
-        let legacySummary = "请用3-5句话概括以下文章的核心内容，用{{lang}}回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：
-
-标题：{{title}}
-
-内容：{{content}}"
-        let legacyExplain = """
-请用简洁的{{lang}}解释下面这段文字（词义、专有名词、语境或背景）。只输出解释，不要标题，不要复述整段原文：
-
-{{text}}
-"""
+        let legacyTranslation = "请将以下内容翻译成{{lang}}，只输出译文，不要解释：\n\n{{text}}"
+        let legacySummary = "请用3-5句话概括以下文章的核心内容，用{{lang}}回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：\n\n标题：{{title}}\n\n内容：{{content}}"
+        let legacyExplain = "请用简洁的{{lang}}解释下面这段文字（词义、专有名词、语境或背景）。只输出解释，不要标题，不要复述整段原文：\n\n{{text}}"
         if normalize(translation) == normalize(legacyTranslation) || translation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             translation = defaultTranslationPrompt
         }
@@ -1093,14 +1081,12 @@ class AppStore {
     }
 
     static func cleanSummaryText(_ text: String) -> String {
-
         let patterns = [
             #"^(\d+[\.\)、:：]|[(（]\d+[)）])\s*"#,
             #"^[-•●▪◦]\s+"#
         ]
         let regexes = patterns.compactMap { try? NSRegularExpression(pattern: $0) }
-        return text.components(separatedBy: "
-").map { line -> String in
+        return text.components(separatedBy: "\n").map { line -> String in
             var s = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !s.isEmpty else { return "" }
             for regex in regexes {
@@ -1112,8 +1098,7 @@ class AppStore {
                 if s.hasPrefix(prefix) { return "" }
             }
             return s
-        }.filter { !$0.isEmpty }.joined(separator: "
-")
+        }.filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     func explainText(_ text: String) async throws -> String {

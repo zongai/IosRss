@@ -9,6 +9,9 @@
 ## [Unreleased]
 
 ### Fixed
+- 少数派全文（API）与图片 src/data-src 解析
+
+### Fixed
 - Foreign Policy 全文抓取（content-gated--main-article）
 
 ### Fixed
@@ -67,6 +70,11 @@
 ### Added
 - 订阅源**自动排序**：默认未读优先；可选名称 / 最近更新 / 手动拖拽（设置 → 订阅源排序）
 
+
+## [v1.3-19] — 2026-09-09
+
+### Fixed
+- sspai 全文与图片
 
 ## [v1.3-18] — 2026-09-09
 

@@ -145,19 +145,25 @@ enum ContentBlockParser {
             }
         }
 
-        let imgPattern = #"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*/?>"#
+        let imgPattern = #"<img\b[^>]*(?:src|data-src|data-original)=[\"']([^\"']+)[\"'][^>]*/?>"#
         var imageURLs: [String] = []
         if let regex = try? NSRegularExpression(pattern: imgPattern, options: .caseInsensitive) {
             let ns = working as NSString
             let matches = regex.matches(in: working, range: NSRange(location: 0, length: ns.length))
             for match in matches {
                 if match.numberOfRanges >= 2, let urlRange = Range(match.range(at: 1), in: working) {
-                    imageURLs.append(String(working[urlRange]))
+                    var u = String(working[urlRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if u.hasPrefix("//") { u = "https:" + u }
+                    if u.count > 8 { imageURLs.append(u) }
                 }
             }
             for (i, match) in matches.enumerated().reversed() {
                 if let fullRange = Range(match.range, in: working) {
-                    working.replaceSubrange(fullRange, with: "\n\n__IMG_\(i)__\n\n")
+                    working.replaceSubrange(fullRange, with: "
+
+__IMG_\(i)__
+
+")
                 }
             }
         }

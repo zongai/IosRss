@@ -38,6 +38,12 @@ enum ArticleContentFetcher {
             }
         }
 
+        // 少数派：优先官方 JSON API（正文含完整 img）
+        if let apiResult = await fetchSspaiAPI(pageURL: url) {
+            OfflineCache.saveArticleHTML(link: urlString, html: apiResult.contentHTML)
+            return apiResult
+        }
+
         var request = URLRequest(url: url, timeoutInterval: 25)
         request.setValue(
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
@@ -167,7 +173,62 @@ enum ArticleContentFetcher {
         var content: String
     }
 
+    /// 少数派公开 API：`/api/v1/articles/{id}`，body 为带图 HTML
+    private static func fetchSspaiAPI(pageURL: URL) async -> Result? {
+        let host = pageURL.host?.lowercased() ?? ""
+        guard host == "sspai.com" || host.hasSuffix(".sspai.com") else { return nil }
+        let parts = pageURL.path.split(separator: "/").map(String.init)
+        guard let pIdx = parts.firstIndex(of: "post"),
+              pIdx + 1 < parts.count,
+              parts[pIdx + 1].allSatisfy({ $0.isNumber }) else {
+            return nil // /prime/story/slug 无公开 id，走 HTML 提取
+        }
+        let articleID = parts[pIdx + 1]
+        guard let apiURL = URL(string: "https://sspai.com/api/v1/articles/\(articleID)") else { return nil }
+
+        var request = URLRequest(url: apiURL, timeoutInterval: 20)
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("https://sspai.com/", forHTTPHeaderField: "Referer")
+
+        let data: Data
+        do {
+            let (d, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
+            data = d
+        } catch {
+            return nil
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let body = json["body"] as? String, !body.isEmpty else {
+            return nil
+        }
+        var html = body
+        // 封面图
+        if let banner = json["banner"] as? String, !banner.isEmpty {
+            let bannerURL: String
+            if banner.hasPrefix("http") {
+                bannerURL = banner
+            } else {
+                bannerURL = "https://cdnfile.sspai.com/" + banner.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            }
+            if !html.localizedCaseInsensitiveContains(bannerURL) {
+                html = "<p><img src=\"\(bannerURL)\" /></p>\n" + html
+            }
+        }
+        // 规范化相对协议图片
+        html = html.replacingOccurrences(of: "src=\"//", with: "src=\"https://")
+        html = html.replacingOccurrences(of: "src='//", with: "src='https://")
+        let cleaned = cleanContentHTML(html, baseURL: pageURL)
+        let len = HTMLUtils.stripTags(cleaned).count
+        guard len >= 80 else { return nil }
+        let title = (json["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Result(title: title, contentHTML: cleaned, textLength: len)
+    }
+
     private static func extractArticle(from html: String, baseURL: URL) -> Extracted {
+
         var work = html
         let noiseTags = ["script", "style", "noscript", "svg", "iframe", "object", "embed", "form", "nav", "footer", "header", "aside"]
         for tag in noiseTags {
@@ -246,13 +307,20 @@ enum ArticleContentFetcher {
                 "article__body"
             ]
         } else if host == "foreignpolicy.com" || host.hasSuffix(".foreignpolicy.com") {
-            // 优先完整正文容器；content-ungated 多为导语截断
             selectors = [
                 "content-gated--main-article",
                 "content-gated",
                 "post-content-main",
                 "content-ungated",
                 "post-content"
+            ]
+        } else if host == "sspai.com" || host.hasSuffix(".sspai.com") {
+            selectors = [
+                "article__main__content",
+                "wangEditor-txt",
+                "prime__story__body",
+                "article-body",
+                "normal-article"
             ]
         } else {
             selectors = []
@@ -353,7 +421,8 @@ enum ArticleContentFetcher {
         for good in ["entry-content", "post-content", "article-content", "article_content",
                      "post_content", "single-content", "rich-content", "article-body", "post-body",
                      "article__body", "body-content", "paywall-content", "rich-text", "dropcap",
-                     "content-gated", "content-ungated", "post-content-main"] {
+                     "content-gated", "content-ungated", "post-content-main",
+                     "wangEditor", "article__main", "prime__story"] {
             if openAttrs.lowercased().contains(good) { score *= 2.5; break }
         }
         if openAttrs.lowercased().contains("class=\"article\"")

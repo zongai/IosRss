@@ -245,6 +245,15 @@ enum ArticleContentFetcher {
                 "rich-text__inner",
                 "article__body"
             ]
+        } else if host == "foreignpolicy.com" || host.hasSuffix(".foreignpolicy.com") {
+            // 优先完整正文容器；content-ungated 多为导语截断
+            selectors = [
+                "content-gated--main-article",
+                "content-gated",
+                "post-content-main",
+                "content-ungated",
+                "post-content"
+            ]
         } else {
             selectors = []
         }
@@ -290,7 +299,7 @@ enum ArticleContentFetcher {
 
     private static func extractByHeuristics(_ html: String) -> String? {
         // 平衡标签匹配，避免嵌套 div 被非贪婪正则截断（量子位等站点）
-        let openPattern = #"<(div|section|td|article)([^>]*(?:class|id)=[\"'][^\"']*(?:article|post|content|entry|story|body|main|text|rich|detail|dropcap|paywall)[^\"']*[\"'][^>]*)>"#
+        let openPattern = #"<(div|section|td|article)([^>]*(?:class|id)=[\"'][^\"']*(?:article|post|content|entry|story|body|main|text|rich|detail|dropcap|paywall|gated|ungated)[^\"']*[\"'][^>]*)>"#
         guard let regex = try? NSRegularExpression(pattern: openPattern, options: .caseInsensitive) else { return nil }
         let ns = html as NSString
         let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
@@ -343,7 +352,8 @@ enum ArticleContentFetcher {
         }
         for good in ["entry-content", "post-content", "article-content", "article_content",
                      "post_content", "single-content", "rich-content", "article-body", "post-body",
-                     "article__body", "body-content", "paywall-content", "rich-text", "dropcap"] {
+                     "article__body", "body-content", "paywall-content", "rich-text", "dropcap",
+                     "content-gated", "content-ungated", "post-content-main"] {
             if openAttrs.lowercased().contains(good) { score *= 2.5; break }
         }
         if openAttrs.lowercased().contains("class=\"article\"")

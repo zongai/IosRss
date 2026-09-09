@@ -1205,7 +1205,6 @@ class AppStore {
                 }
             }
             return ordered.joined(separator: "
-
 ")
         }
     }

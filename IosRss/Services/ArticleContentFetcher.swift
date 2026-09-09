@@ -177,9 +177,28 @@ enum ArticleContentFetcher {
 
         let title = extractTitle(from: html)
 
+        // 站点特化：在通用语义标签之前尝试（避免 <article> 只匹配到订阅墙短文）
+        if let site = extractByKnownSite(work, host: baseURL.host?.lowercased() ?? "") {
+            let cleaned = cleanContentHTML(site, baseURL: baseURL)
+            if HTMLUtils.stripTags(cleaned).count >= 200 {
+                return Extracted(title: title, content: cleaned)
+            }
+        }
+
         if let semantic = extractBySemanticTags(work) {
             let cleaned = cleanContentHTML(semantic, baseURL: baseURL)
-            if HTMLUtils.stripTags(cleaned).count >= 120 {
+            // 语义块若明显短于全文启发式，继续往下试
+            let semLen = HTMLUtils.stripTags(cleaned).count
+            if semLen >= 800 {
+                return Extracted(title: title, content: cleaned)
+            }
+            if let candidate = extractByHeuristics(work) {
+                let cand = cleanContentHTML(candidate, baseURL: baseURL)
+                if HTMLUtils.stripTags(cand).count > semLen + 200 {
+                    return Extracted(title: title, content: cand)
+                }
+            }
+            if semLen >= 120 {
                 return Extracted(title: title, content: cleaned)
             }
         }
@@ -215,7 +234,45 @@ enum ArticleContentFetcher {
         return nil
     }
 
+    /// 已知站点正文容器（Foreign Affairs 等）
+    private static func extractByKnownSite(_ html: String, host: String) -> String? {
+        let selectors: [String]
+        if host == "foreignaffairs.com" || host.hasSuffix(".foreignaffairs.com") {
+            selectors = [
+                "article__body-content",
+                "article-dropcap--inner",
+                "paywall-content",
+                "rich-text__inner",
+                "article__body"
+            ]
+        } else {
+            selectors = []
+        }
+        var best: String?
+        var bestLen = 0
+        for token in selectors {
+            let escaped = NSRegularExpression.escapedPattern(for: token)
+            let pattern = "<(div|section)([^>]*class=[\"'][^\"']*" + escaped + "[^\"']*[\"'][^>]*)>"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+            let ns = html as NSString
+            for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+                guard match.numberOfRanges >= 2,
+                      let tagRange = Range(match.range(at: 1), in: html),
+                      let fullOpen = Range(match.range, in: html) else { continue }
+                let tag = String(html[tagRange])
+                guard let block = extractBalancedFromOpen(html, openEnd: fullOpen.upperBound, tag: tag) else { continue }
+                let len = HTMLUtils.stripTags(block).count
+                if len > bestLen {
+                    bestLen = len
+                    best = block
+                }
+            }
+        }
+        return bestLen >= 200 ? best : nil
+    }
+
     private static func extractBySemanticTags(_ html: String) -> String? {
+
         for tag in ["article", "main"] {
             if let block = extractBalancedTagContent(html, tag: tag) {
                 let textLen = HTMLUtils.stripTags(block).count
@@ -233,7 +290,7 @@ enum ArticleContentFetcher {
 
     private static func extractByHeuristics(_ html: String) -> String? {
         // 平衡标签匹配，避免嵌套 div 被非贪婪正则截断（量子位等站点）
-        let openPattern = #"<(div|section|td|article)([^>]*(?:class|id)=[\"'][^\"']*(?:article|post|content|entry|story|body|main|text|rich|detail)[^\"']*[\"'][^>]*)>"#
+        let openPattern = #"<(div|section|td|article)([^>]*(?:class|id)=[\"'][^\"']*(?:article|post|content|entry|story|body|main|text|rich|detail|dropcap|paywall)[^\"']*[\"'][^>]*)>"#
         guard let regex = try? NSRegularExpression(pattern: openPattern, options: .caseInsensitive) else { return nil }
         let ns = html as NSString
         let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
@@ -285,7 +342,8 @@ enum ArticleContentFetcher {
             if lower.contains(bad) { score *= 0.4 }
         }
         for good in ["entry-content", "post-content", "article-content", "article_content",
-                     "post_content", "single-content", "rich-content", "article-body", "post-body"] {
+                     "post_content", "single-content", "rich-content", "article-body", "post-body",
+                     "article__body", "body-content", "paywall-content", "rich-text", "dropcap"] {
             if openAttrs.lowercased().contains(good) { score *= 2.5; break }
         }
         if openAttrs.lowercased().contains("class=\"article\"")

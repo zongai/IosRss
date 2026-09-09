@@ -2,7 +2,7 @@
 
 原生 SwiftUI 实现的 iOS / iPadOS RSS 阅读器。支持 RSS 与 Atom，内置全文抓取、多引擎翻译、AI 摘要 / 解释、Edge TTS 朗读、源分组、评论（Substack 等）与离线缓存。
 
-**版本**：本地调试 `v1.3-15`；CI 构建 `v1.3-15-build{N}`（`N` = GitHub Actions `run_number`）。
+**版本**：本地调试 `v1.3-16`；CI 构建 `v1.3-16-build{N}`（`N` = GitHub Actions `run_number`）。
 
 > **文档维护**：`README.md` 与 `CHANGELOG.md` 由维护者手动更新，**不由** GitHub Actions 自动改写。
 
@@ -93,8 +93,8 @@ IosRss/
 
 | 场景 | 显示 |
 |------|------|
-| 本地 Xcode | `v1.3-15` |
-| GitHub Actions | `v1.3-15-build{N}` |
+| 本地 Xcode | `v1.3-16` |
+| GitHub Actions | `v1.3-16-build{N}` |
 
 ## Changelog
 

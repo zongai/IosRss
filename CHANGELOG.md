@@ -8,6 +8,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Foreign Affairs 全文抓取（article__body-content / paywall-content）
+
 ### Added
 - 评论：Hacker News 通过 RSS `<comments>` + Algolia API
 
@@ -58,6 +61,11 @@
 ### Added
 - 订阅源**自动排序**：默认未读优先；可选名称 / 最近更新 / 手动拖拽（设置 → 订阅源排序）
 
+
+## [v1.3-16] — 2026-09-09
+
+### Fixed
+- FA 全文提取
 
 ## [v1.3-15] — 2026-09-09
 

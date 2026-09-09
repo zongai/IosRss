@@ -271,7 +271,8 @@ struct ArticleReaderView: View {
         .navigationDestination(isPresented: $showComments) {
             ArticleCommentsView(
                 articleTitle: currentArticle.title,
-                articleURL: currentArticle.link
+                articleURL: currentArticle.link,
+                commentsURL: currentArticle.commentsURL
             )
         }
         .onAppear {

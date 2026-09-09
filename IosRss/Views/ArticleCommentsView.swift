@@ -4,6 +4,7 @@ struct ArticleCommentsView: View {
     @Environment(AppStore.self) private var store
     let articleTitle: String
     let articleURL: String
+    var commentsURL: String? = nil
 
     @State private var comments: [WebComment] = []
     @State private var isLoading = true
@@ -94,7 +95,7 @@ struct ArticleCommentsView: View {
         showTranslated = false
         defer { isLoading = false }
         do {
-            comments = try await CommentFetcher.fetchComments(from: articleURL)
+            comments = try await CommentFetcher.fetchComments(from: articleURL, commentsURL: commentsURL)
         } catch {
             comments = []
             errorText = error.localizedDescription

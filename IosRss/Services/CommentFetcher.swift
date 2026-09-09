@@ -36,12 +36,27 @@ enum CommentFetcher {
         return URLSession(configuration: c)
     }()
 
-    /// 从文章链接抓取网页评论（Substack 公开 API + OpenWeb/Spot.IM SEO API）
-    static func fetchComments(from articleURL: String) async throws -> [WebComment] {
+    /// 抓取评论。优先 `commentsURL`（如 HN `<comments>`），否则用文章 link。
+    static func fetchComments(from articleURL: String, commentsURL: String? = nil) async throws -> [WebComment] {
+        // 1) 显式讨论页（Hacker News 等）
+        if let c = commentsURL?.trimmingCharacters(in: .whitespacesAndNewlines), !c.isEmpty,
+           let curl = NetworkURLPolicy.validate(c) {
+            if let hn = try await fetchHackerNewsComments(from: curl) {
+                return hn
+            }
+            // 其它讨论站：按页面类型再尝试
+            if let sub = try await fetchSubstackComments(pageURL: curl) { return sub }
+            if let ow = try await fetchOpenWebComments(pageURL: curl) { return ow }
+        }
+
         guard let url = NetworkURLPolicy.validate(articleURL), let host = url.host, !host.isEmpty else {
             throw CommentFetchError.postNotFound
         }
 
+        // 2) link 本身就是 HN item
+        if let hn = try await fetchHackerNewsComments(from: url) {
+            return hn
+        }
         if let comments = try await fetchSubstackComments(pageURL: url) {
             return comments
         }
@@ -52,24 +67,103 @@ enum CommentFetcher {
         throw CommentFetchError.unsupportedSite
     }
 
-    /// 添加/导入订阅时判断是否自动开启评论获取
     static func shouldAutoEnableComments(feedURL: String, sampleArticleLinks: [String] = []) -> Bool {
         let candidates = [feedURL] + sampleArticleLinks
         for raw in candidates {
             guard let url = NetworkURLPolicy.validate(raw), let host = url.host?.lowercased() else { continue }
-            if host == "substack.com" || host.hasSuffix(".substack.com") {
-                return true
-            }
-            if host == "engadget.com" || host.hasSuffix(".engadget.com") {
-                return true
-            }
-            // 文章路径含 /p/{slug}（Substack 自定义域名常见形态）
+            if host == "substack.com" || host.hasSuffix(".substack.com") { return true }
+            if host == "engadget.com" || host.hasSuffix(".engadget.com") { return true }
+            if host == "news.ycombinator.com" || host.hasSuffix(".ycombinator.com") { return true }
             let parts = url.path.lowercased().split(separator: "/").map(String.init)
             if let idx = parts.firstIndex(of: "p"), idx + 1 < parts.count, !parts[idx + 1].isEmpty {
                 return true
             }
         }
         return false
+    }
+
+    // MARK: - Hacker News
+
+    /// Algolia HN API：`https://hn.algolia.com/api/v1/items/{id}` 含嵌套 children
+    private static func fetchHackerNewsComments(from url: URL) async throws -> [WebComment]? {
+        guard let itemID = hackerNewsItemID(from: url) else { return nil }
+        guard let apiURL = URL(string: "https://hn.algolia.com/api/v1/items/\(itemID)") else {
+            return nil
+        }
+        let data: Data
+        do {
+            let (d, response) = try await session.data(from: apiURL)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw CommentFetchError.network("HN 评论接口失败")
+            }
+            data = d
+        } catch let e as CommentFetchError {
+            throw e
+        } catch {
+            throw CommentFetchError.network(error.localizedDescription)
+        }
+
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw CommentFetchError.noComments
+        }
+        let children = root["children"] as? [[String: Any]] ?? []
+        var result: [WebComment] = []
+        func walk(_ node: [String: Any], depth: Int) {
+            let type = (node["type"] as? String)?.lowercased() ?? "comment"
+            // 跳过已删除/空
+            let textRaw = (node["text"] as? String) ?? ""
+            let body = HTMLUtils.stripTags(HTMLUtils.decodeEntities(textRaw))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let author = ((node["author"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if type != "story", !body.isEmpty {
+                let id: String
+                if let n = node["id"] as? Int { id = String(n) }
+                else if let n = node["id"] as? NSNumber { id = n.stringValue }
+                else if let s = node["id"] as? String { id = s }
+                else { id = UUID().uuidString }
+                var date: Date?
+                if let ts = node["created_at_i"] as? Int {
+                    date = Date(timeIntervalSince1970: TimeInterval(ts))
+                } else if let ts = node["created_at_i"] as? NSNumber {
+                    date = Date(timeIntervalSince1970: ts.doubleValue)
+                } else if let ds = node["created_at"] as? String {
+                    date = ISO8601DateFormatter().date(from: ds)
+                }
+                result.append(WebComment(
+                    id: id,
+                    author: author.isEmpty ? "匿名" : author,
+                    body: body,
+                    date: date,
+                    depth: depth,
+                    translatedBody: nil
+                ))
+            }
+            if let kids = node["children"] as? [[String: Any]] {
+                for k in kids { walk(k, depth: depth + 1) }
+            }
+        }
+        for c in children { walk(c, depth: 0) }
+        if result.isEmpty { throw CommentFetchError.noComments }
+        return result
+    }
+
+    private static func hackerNewsItemID(from url: URL) -> String? {
+        let host = url.host?.lowercased() ?? ""
+        guard host == "news.ycombinator.com" || host.hasSuffix(".ycombinator.com") else { return nil }
+        // item?id=49615537
+        if let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems {
+            if let id = items.first(where: { $0.name == "id" })?.value, !id.isEmpty,
+               id.allSatisfy({ $0.isNumber }) {
+                return id
+            }
+        }
+        // /item/49615537
+        let parts = url.path.split(separator: "/").map(String.init)
+        if let idx = parts.firstIndex(of: "item"), idx + 1 < parts.count {
+            let id = parts[idx + 1]
+            if id.allSatisfy({ $0.isNumber }) { return id }
+        }
+        return nil
     }
 
     // MARK: - OpenWeb / Spot.IM（Engadget 等）

@@ -10,7 +10,7 @@ enum AppVersion {
     }
     /// 工程构建号，如 10（CURRENT_PROJECT_VERSION）
     static var build: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "14"
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "15"
     }
     /// CI 在编译前写入 run_number；本地为空字符串
     /// 勿改字面量格式，build.yml 依赖此行做 sed 替换
@@ -24,7 +24,7 @@ enum AppVersion {
         }
         return nil
     }
-    /// 展示：CI 为 v1.3-14-build43；本地为 v1.3-14
+    /// 展示：CI 为 v1.3-15-build43；本地为 v1.3-15
     static var display: String {
         if let g = githubBuild {
             return "v\(marketing)-\(build)-build\(g)"
@@ -133,11 +133,13 @@ struct Article: Identifiable, Codable, Hashable {
     var aiSummaryProvider: String?
     /// 是否已从原文页抓取过全文
     var hasFullContent: Bool = false
+    /// RSS/Atom `<comments>` 讨论页（如 HN item），优先于 link 抓评论
+    var commentsURL: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, feedID, feedTitle, title, link, summary, content
         case publishedDate, isRead, isFavorite, translatedTitle, translatedSummary, translatedContent
-        case aiSummary, aiSummaryProvider, hasFullContent
+        case aiSummary, aiSummaryProvider, hasFullContent, commentsURL
     }
 
     init(id: UUID = UUID(), feedID: UUID, feedTitle: String, title: String, link: String,
@@ -146,7 +148,8 @@ struct Article: Identifiable, Codable, Hashable {
          translatedTitle: String? = nil, translatedSummary: String? = nil,
          translatedContent: String? = nil, aiSummary: String? = nil,
          aiSummaryProvider: String? = nil,
-         hasFullContent: Bool = false) {
+         hasFullContent: Bool = false,
+         commentsURL: String? = nil) {
         self.id = id
         self.feedID = feedID
         self.feedTitle = feedTitle
@@ -163,6 +166,7 @@ struct Article: Identifiable, Codable, Hashable {
         self.aiSummary = aiSummary
         self.aiSummaryProvider = aiSummaryProvider
         self.hasFullContent = hasFullContent
+        self.commentsURL = commentsURL
     }
 
     init(from decoder: Decoder) throws {
@@ -183,6 +187,7 @@ struct Article: Identifiable, Codable, Hashable {
         aiSummary = try c.decodeIfPresent(String.self, forKey: .aiSummary)
         aiSummaryProvider = try c.decodeIfPresent(String.self, forKey: .aiSummaryProvider)
         hasFullContent = try c.decodeIfPresent(Bool.self, forKey: .hasFullContent) ?? false
+        commentsURL = try c.decodeIfPresent(String.self, forKey: .commentsURL)
     }
 
     func hash(into hasher: inout Hasher) { hasher.combine(id) }

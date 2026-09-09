@@ -200,10 +200,14 @@ enum FeedParser {
             let description = extractTag("description", from: block) ?? extractTag("summary", from: block) ?? ""
             let content = extractTag("content:encoded", from: block) ?? extractTag("content", from: block) ?? description
             let pubDate = extractTag("pubDate", from: block) ?? extractTag("published", from: block) ?? ""
+            let commentsRaw = extractTag("comments", from: block)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let commentsURL = commentsRaw.hasPrefix("http") ? commentsRaw : nil
             return Article(id: UUID(), feedID: feedID, feedTitle: feedTitle, title: stripHTML(title),
                 link: link.trimmingCharacters(in: .whitespacesAndNewlines),
                 summary: String(stripHTML(description).prefix(200)),
-                content: content.isEmpty ? description : content, publishedDate: parseDate(pubDate), isRead: false)
+                content: content.isEmpty ? description : content, publishedDate: parseDate(pubDate), isRead: false,
+                commentsURL: commentsURL)
         }
     }
     private static func parseAtom(_ xml: String, feedID: UUID, feedTitle: String) -> [Article] {

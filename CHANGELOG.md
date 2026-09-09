@@ -9,6 +9,9 @@
 ## [Unreleased]
 
 ### Added
+- 评论：Hacker News 通过 RSS `<comments>` + Algolia API
+
+### Added
 - 评论：支持 OpenWeb/Spot.IM（Engadget 等）公开 SEO 接口
 
 ### Fixed
@@ -55,6 +58,11 @@
 ### Added
 - 订阅源**自动排序**：默认未读优先；可选名称 / 最近更新 / 手动拖拽（设置 → 订阅源排序）
 
+
+## [v1.3-15] — 2026-09-09
+
+### Added
+- HN 评论（comments 标签，非外链）
 
 ## [v1.3-14] — 2026-09-09
 

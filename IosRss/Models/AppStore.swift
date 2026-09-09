@@ -617,11 +617,23 @@ class AppStore {
 
     private func applyParsedFeed(data: Data, feedID: UUID, idx: Int, urlStr: String) {
         let parsed = FeedParser.parse(data: data, feedID: feedID, feedTitle: feeds[idx].title)
-        let existingKeys = Set(feeds[idx].articles.map { Self.canonicalLink($0.link) })
+        var existingByLink: [String: Int] = [:]
+        for (i, a) in feeds[idx].articles.enumerated() {
+            let key = Self.canonicalLink(a.link)
+            if !key.isEmpty { existingByLink[key] = i }
+        }
         var newArticles: [Article] = []
         for var article in parsed {
             let key = Self.canonicalLink(article.link)
-            if key.isEmpty || existingKeys.contains(key) { continue }
+            if key.isEmpty { continue }
+            if let ei = existingByLink[key] {
+                // 刷新时补全 commentsURL（HN 等）
+                if let c = article.commentsURL, !c.isEmpty,
+                   feeds[idx].articles[ei].commentsURL == nil {
+                    feeds[idx].articles[ei].commentsURL = c
+                }
+                continue
+            }
             if readArticleLinks.contains(key) { article.isRead = true }
             if let html = OfflineCache.loadArticleHTML(link: article.link), !html.isEmpty {
                 article.content = html

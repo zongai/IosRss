@@ -191,6 +191,9 @@ struct ArticleReaderView: View {
             if currentID == nil { currentID = article.id }
             store.markAsRead(currentArticle)
         }
+        .task(id: currentArticle.id) {
+            await autoTranslateBodyIfNeeded()
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { store.toggleFavorite(currentArticle) } label: {
@@ -330,7 +333,38 @@ struct ArticleReaderView: View {
         isFetchingFull = false
     }
 
+    /// 源开启自动翻译时：打开阅读页自动译正文（已有译文则直接显示）
+    private func autoTranslateBodyIfNeeded() async {
+        let feed = store.feeds.first(where: { $0.id == currentArticle.feedID })
+        guard feed?.autoTranslateEnabled == true else { return }
+        // 已在显示译文或正在翻译
+        if showTranslated || isTranslating { return }
+
+        // 标题若未译且不像目标语言，一并处理（toggleTranslation 内也会做）
+        if let cached = currentArticle.translatedContent, !cached.isEmpty {
+            translatedContent = cached
+            showTranslated = true
+            return
+        }
+
+        let sample = HTMLUtils.plainText(currentArticle.content)
+        if sample.count >= 40, ListLanguageDetect.isMostlyTarget(sample, language: store.targetLanguage) {
+            // 正文已是目标语言：不显示翻译按钮态，也不请求
+            return
+        }
+        // 内容过短则只译标题
+        if sample.count < 20 {
+            if currentArticle.translatedTitle == nil {
+                await translateTitleIfNeeded()
+            }
+            return
+        }
+
+        await toggleTranslation()
+    }
+
     private func toggleTranslation() async {
+
         if showTranslated {
             showTranslated = false
             translationError = nil

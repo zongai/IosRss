@@ -9,6 +9,9 @@
 ## [Unreleased]
 
 ### Fixed
+- 开启自动翻译的源：进入列表/阅读页自动译未译内容
+
+### Fixed
 - Foreign Affairs 全文抓取（article__body-content / paywall-content）
 
 ### Added
@@ -61,6 +64,11 @@
 ### Added
 - 订阅源**自动排序**：默认未读优先；可选名称 / 最近更新 / 手动拖拽（设置 → 订阅源排序）
 
+
+## [v1.3-17] — 2026-09-09
+
+### Fixed
+- 源级自动翻译触发
 
 ## [v1.3-16] — 2026-09-09
 

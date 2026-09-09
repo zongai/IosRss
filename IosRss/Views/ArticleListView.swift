@@ -176,7 +176,8 @@ struct ArticleListView: View {
             if hasCachedTranslation {
                 showAllTranslations = true
             }
-            await autoTranslatePending(force: false)
+            // 开启自动翻译的源：进入列表即翻译未译条目
+            await autoTranslatePending(force: true)
         }
         .onChange(of: articles.count) { _, _ in
             Task { await autoTranslatePending(force: false) }
@@ -195,7 +196,7 @@ struct ArticleListView: View {
     private func autoTranslatePending(force: Bool) async {
         guard !isTranslatingAll else { return }
         let live = store.feeds.first(where: { $0.id == feed.id })
-        let feedEnabled = live?.autoTranslateEnabled ?? true
+        let feedEnabled = live?.autoTranslateEnabled ?? false
         guard feedEnabled else { return }
         // 仅翻译当前列表会显示的文章（已隐藏的已读条目跳过）
         let snapshot = store.articlesForFeed(feed.id).filter { article in

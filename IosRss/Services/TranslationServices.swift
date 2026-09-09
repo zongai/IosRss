@@ -1,5 +1,18 @@
 import Foundation
 
+/// 翻译专用 URLSession：提高同主机并发连接，减少排队
+enum TranslationHTTP {
+    static let session: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 18
+        cfg.timeoutIntervalForResource = 45
+        cfg.httpMaximumConnectionsPerHost = 10
+        cfg.waitsForConnectivity = true
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: cfg)
+    }()
+}
+
 enum TranslationError: LocalizedError {
     case noProvider
     case apiError(String)
@@ -51,7 +64,7 @@ enum DeepLTranslate {
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await TranslationHTTP.session.data(for: request)
 
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
@@ -76,40 +89,49 @@ enum DeepLTranslate {
 // MARK: - Google Translate (free unofficial endpoint)
 
 enum GoogleTranslate {
+    /// 使用 POST 避免超长 URL，并复用高并发 Session
     static func translate(text: String, targetLang: String = "zh") async throws -> String {
-        let escaped = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? text
-        let urlStr = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=\(targetLang)&dt=t&q=\(escaped)"
-        guard let url = URL(string: urlStr) else {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        guard let url = URL(string: "https://translate.googleapis.com/translate_a/single") else {
             throw TranslationError.apiError("无效的URL")
         }
-
         var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded;charset=UTF-8", forHTTPHeaderField: "Content-Type")
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 15
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        var body = URLComponents()
+        body.queryItems = [
+            URLQueryItem(name: "client", value: "gtx"),
+            URLQueryItem(name: "sl", value: "auto"),
+            URLQueryItem(name: "tl", value: targetLang),
+            URLQueryItem(name: "dt", value: "t"),
+            URLQueryItem(name: "q", value: trimmed)
+        ]
+        request.httpBody = body.percentEncodedQuery?.data(using: .utf8)
 
+        let (data, response) = try await TranslationHTTP.session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
             throw TranslationError.apiError("Google 翻译请求失败 (状态码 \(http.statusCode)): \(raw)")
         }
-
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
               let firstElement = json.first as? [Any] else {
             let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? "空响应"
             throw TranslationError.apiError("解析响应失败: \(raw)")
         }
-
         let result = firstElement.compactMap { segment -> String? in
             guard let segArray = segment as? [Any],
                   let text = segArray.first as? String else { return nil }
             return text
         }.joined()
-
         if result.isEmpty {
-            let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
-            throw TranslationError.apiError("解析响应失败，原始返回: \(raw)")
+            throw TranslationError.apiError("Google 返回空译文")
         }
-
         return result
     }
 }
@@ -269,7 +291,7 @@ enum MicrosoftTranslate {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
         request.httpBody = try JSONEncoder().encode(texts.map { ["Text": $0] })
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await TranslationHTTP.session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
             throw TranslationError.apiError("Microsoft Translator 错误 \(http.statusCode): \(msg.prefix(200))")

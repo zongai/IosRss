@@ -4,7 +4,8 @@ struct TranslationSettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var googleKey = Keychain.load(key: "google_translate_key") ?? ""
     @State private var microsoftKey = Keychain.load(key: "microsoft_translate_key") ?? ""
-    @State private var deeplKey = Keychain.load(key: "deepl_translate_key") ?? ""
+    @State private var deeplKeys: [String] = []
+    @State private var newDeepLKey = ""
 
     var body: some View {
         @Bindable var store = store
@@ -104,15 +105,41 @@ struct TranslationSettingsView: View {
                         Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.primary)
                     }
                 }
-                TextField("DeepL API Key", text: $deeplKey)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .onChange(of: deeplKey) { _, new in
-                        if new.isEmpty { Keychain.delete(key: "deepl_translate_key") }
-                        else { Keychain.save(key: "deepl_translate_key", value: new) }
+                if deeplKeys.isEmpty {
+                    Text("尚未添加 Key").foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(deeplKeys.enumerated()), id: \.offset) { index, key in
+                        HStack {
+                            Text(maskSecret(key))
+                                .font(.system(size: 13, design: .monospaced))
+                            Spacer()
+                            Button(role: .destructive) {
+                                deeplKeys.remove(at: index)
+                                store.saveDeepLKeys(deeplKeys)
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-            } header: { Text("DeepL") }
-            footer: { Text("免费版 Key 以 \":fx\" 结尾，会自动使用免费端点；付费版 Key 使用正式端点") }
+                }
+                HStack {
+                    SecureField("添加 DeepL API Key", text: $newDeepLKey)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    Button("添加") {
+                        let k = newDeepLKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !k.isEmpty else { return }
+                        if !deeplKeys.contains(k) {
+                            deeplKeys.append(k)
+                            store.saveDeepLKeys(deeplKeys)
+                        }
+                        newDeepLKey = ""
+                    }
+                    .disabled(newDeepLKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            } header: { Text("DeepL（多 Key）") }
+            footer: { Text("可添加多个 Key；配额用尽时自动换下一把，全部失败回退 Google。免费版 Key 以 :fx 结尾。") }
 
             Section {
                 HStack {
@@ -138,8 +165,15 @@ struct TranslationSettingsView: View {
         .onDisappear { store.persistSettings() }
         .onChange(of: store.defaultTranslationEngine) { _, _ in store.persistSettings() }
         .onChange(of: store.translationConcurrency) { _, _ in store.persistSettings() }
+        .onAppear { deeplKeys = store.loadDeepLKeys() }
         .onChange(of: store.targetLanguage) { _, _ in store.persistSettings() }
         .onChange(of: store.aiOutputLanguage) { _, _ in store.persistSettings() }
+    }
+
+    private func maskSecret(_ key: String) -> String {
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard k.count > 8 else { return String(repeating: "•", count: max(4, k.count)) }
+        return String(k.prefix(3)) + "…" + String(k.suffix(4))
     }
 
     @ViewBuilder

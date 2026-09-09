@@ -349,7 +349,7 @@ class AppStore {
             translationKeys: includeSecrets ? [
                 "google_translate_key": Keychain.load(key: "google_translate_key") ?? "",
                 "microsoft_translate_key": Keychain.load(key: "microsoft_translate_key") ?? "",
-                "deepl_translate_key": Keychain.load(key: "deepl_translate_key") ?? ""
+                "deepl_translate_key": loadDeepLKeys().joined(separator: "\n")
             ].filter { !$0.value.isEmpty } : nil,
             aiKeys: includeSecrets ? Dictionary(uniqueKeysWithValues: aiProviders.compactMap { p -> (String, String)? in
                 let keys = loadAIKeys(for: p.id)
@@ -400,7 +400,14 @@ class AppStore {
         aiBlacklistFallbackProviderID = payload.aiBlacklistFallbackProviderID
         if !payload.aiProviders.isEmpty { aiProviders = payload.aiProviders }
         for (k, v) in (payload.translationKeys ?? [:]) where !v.isEmpty {
-            Keychain.save(key: k, value: v)
+            if k == "deepl_translate_key" {
+                let parts = v.components(separatedBy: CharacterSet.newlines)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                saveDeepLKeys(parts.isEmpty ? [v] : parts)
+            } else {
+                Keychain.save(key: k, value: v)
+            }
         }
         for (idStr, v) in (payload.aiKeys ?? [:]) where !v.isEmpty {
             guard let uuid = UUID(uuidString: idStr) else { continue }
@@ -919,7 +926,104 @@ class AppStore {
         Keychain.save(key: legacyKey, value: cleaned[0])
     }
 
-    /// 轮询取下一个 Key（负载均衡）；无 Key 返回 nil
+    
+    // MARK: - DeepL 多 Key
+
+    func loadDeepLKeys() -> [String] {
+        let multiKey = "deepl_translate_keys"
+        if let raw = Keychain.load(key: multiKey), !raw.isEmpty,
+           let data = raw.data(using: .utf8),
+           let arr = try? JSONDecoder().decode([String].self, from: data) {
+            return arr.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        }
+        let legacy = Keychain.load(key: "deepl_translate_key") ?? ""
+        let one = legacy.trimmingCharacters(in: .whitespacesAndNewlines)
+        return one.isEmpty ? [] : [one]
+    }
+
+    func saveDeepLKeys(_ keys: [String]) {
+        let cleaned = keys.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let multiKey = "deepl_translate_keys"
+        if cleaned.isEmpty {
+            Keychain.delete(key: multiKey)
+            Keychain.delete(key: "deepl_translate_key")
+            return
+        }
+        if let data = try? JSONEncoder().encode(cleaned), let raw = String(data: data, encoding: .utf8) {
+            Keychain.save(key: multiKey, value: raw)
+        }
+        Keychain.save(key: "deepl_translate_key", value: cleaned[0])
+    }
+
+    private var deeplKeyRoundRobin: Int = 0
+
+    /// DeepL：多 Key 轮询；配额/鉴权失败换 Key；全部失败可回退其它引擎
+    func translateWithDeepL(_ text: String, targetLang: String) async throws -> String {
+        let keys = loadDeepLKeys()
+        guard !keys.isEmpty else { throw TranslationError.apiError("未配置 DeepL API Key") }
+        let start = deeplKeyRoundRobin % keys.count
+        var lastError: Error = TranslationError.apiError("DeepL 全部 Key 不可用")
+        for offset in 0..<keys.count {
+            let idx = (start + offset) % keys.count
+            let key = keys[idx]
+            do {
+                let out = try await DeepLTranslate.translate(text: text, apiKey: key, targetLang: targetLang)
+                deeplKeyRoundRobin = idx + 1
+                return out
+            } catch {
+                lastError = error
+                if Self.isQuotaOrAuthError(error) { continue }
+                // 非配额类错误也尝试下一把 Key（网络抖动）
+                continue
+            }
+        }
+        // 全部 Key 失败 → 回退 Google（免 Key）再试一次
+        do {
+            return try await GoogleTranslate.translate(text: text, targetLang: targetLanguage.googleCode)
+        } catch {
+            throw lastError
+        }
+    }
+
+    func translateTextsWithDeepL(_ texts: [String], targetLang: String) async -> [String?] {
+        let keys = loadDeepLKeys()
+        guard !keys.isEmpty else {
+            return Array(repeating: nil, count: texts.count)
+        }
+        // 按 Key 轮询分批并行，提高吞吐
+        return await translateNativeBatchParallel(texts, chunkSize: 30, parallelism: min(3, max(1, keys.count))) { chunk in
+            // 每批选用下一把 Key
+            let key = self.loadDeepLKeys().isEmpty ? "" : {
+                let ks = self.loadDeepLKeys()
+                let i = self.deeplKeyRoundRobin % ks.count
+                self.deeplKeyRoundRobin = i + 1
+                return ks[i]
+            }()
+            do {
+                return try await DeepLTranslate.translate(texts: chunk, apiKey: key, targetLang: targetLang)
+            } catch {
+                if Self.isQuotaOrAuthError(error) {
+                    // 换 Key 重试整批
+                    for k in self.loadDeepLKeys() where k != key {
+                        if let r = try? await DeepLTranslate.translate(texts: chunk, apiKey: k, targetLang: targetLang) {
+                            return r
+                        }
+                    }
+                }
+                throw error
+            }
+        }
+    }
+
+    static func isQuotaOrAuthError(_ error: Error) -> Bool {
+        let msg = error.localizedDescription.lowercased()
+        for token in ["456", "quota", "limit", "403", "401", "429", "exceed", "额度", "配额", "授权", "forbidden", "unauthorized"] {
+            if msg.contains(token) { return true }
+        }
+        return false
+    }
+
+/// 轮询取下一个 Key（负载均衡）；无 Key 返回 nil
     private var aiKeyRoundRobin: [UUID: Int] = [:]
 
     func nextAIKey(for providerID: UUID) -> String? {
@@ -1001,8 +1105,7 @@ class AppStore {
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
             return try await MicrosoftTranslate.translate(text: text, apiKey: key, targetLang: lang.microsoftCode)
         case .deepl:
-            let key = Keychain.load(key: "deepl_translate_key") ?? ""
-            return try await DeepLTranslate.translate(text: text, apiKey: key, targetLang: lang.deeplCode)
+            return try await translateWithDeepL(text, targetLang: lang.deeplCode)
         case .ai:
             let preferred = defaultTranslationProviderID ?? defaultSummaryProviderID
             let template = translationPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1027,9 +1130,10 @@ class AppStore {
         if translationConcurrency > 0 { return min(8, translationConcurrency) }
         switch engine {
         case .ai: return 4
-        case .google: return 6
+        case .google: return 8
         case .mymemory, .lingva, .libre: return 4
-        case .microsoft, .deepl: return 1
+        case .microsoft: return 3
+        case .deepl: return 3
         }
     }
 
@@ -1039,11 +1143,12 @@ class AppStore {
         let limit = resolvedTranslationConcurrency(for: engine, override: concurrency)
         switch engine {
         case .deepl:
-            let key = Keychain.load(key: "deepl_translate_key") ?? ""
-            return await translateNativeBatch(texts, chunkSize: 40) { try await DeepLTranslate.translate(texts: $0, apiKey: key, targetLang: targetLanguage.deeplCode) }
+            return await translateTextsWithDeepL(texts, targetLang: targetLanguage.deeplCode)
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
-            return await translateNativeBatch(texts, chunkSize: 40) { try await MicrosoftTranslate.translate(texts: $0, apiKey: key, targetLang: targetLanguage.microsoftCode) }
+            return await translateNativeBatchParallel(texts, chunkSize: 25, parallelism: 3) {
+                try await MicrosoftTranslate.translate(texts: $0, apiKey: key, targetLang: targetLanguage.microsoftCode)
+            }
         case .google, .mymemory, .lingva, .libre, .ai:
             // 统一走 translateText（含 AI failover / 多 Key），不再跨 Provider 分片，避免质量与失败率变差
             return await translateConcurrently(texts, concurrency: limit)
@@ -1124,6 +1229,48 @@ class AppStore {
             .replacingOccurrences(of: "{{text}}", with: text)
         if !template.contains("{{text}}") { prompt += "\n\n" + text }
         return try await callAIWithProviderKeys(provider: provider, prompt: prompt, maxTokens: 2048)
+    }
+
+    /// 多批并行（用于 Microsoft / DeepL 批量 API）
+    private func translateNativeBatchParallel(
+        _ texts: [String],
+        chunkSize: Int,
+        parallelism: Int,
+        call: @escaping ([String]) async throws -> [String]
+    ) async -> [String?] {
+        let chunks: [[String]] = texts.chunked(into: max(1, chunkSize))
+        var results = Array<String?>(repeating: nil, count: texts.count)
+        await withTaskGroup(of: (Int, [String?]).self) { group in
+            var next = 0
+            let spawn = min(max(parallelism, 1), chunks.count)
+            func submit(_ chunkIndex: Int) {
+                let chunk = chunks[chunkIndex]
+                group.addTask {
+                    let translated = try? await call(chunk)
+                    let mapped: [String?] = (translated ?? []).map { $0.isEmpty ? nil : $0 }
+                    // pad
+                    var row = mapped
+                    while row.count < chunk.count { row.append(nil) }
+                    return (chunkIndex, Array(row.prefix(chunk.count)))
+                }
+            }
+            while next < spawn {
+                submit(next); next += 1
+            }
+            for await (chunkIndex, row) in group {
+                let base = chunkIndex * max(1, chunkSize)
+                // recompute base from chunk sizes - safer by scanning
+                var offset = 0
+                for i in 0..<chunkIndex { offset += chunks[i].count }
+                for (j, val) in row.enumerated() where offset + j < results.count {
+                    results[offset + j] = val
+                }
+                if next < chunks.count {
+                    submit(next); next += 1
+                }
+            }
+        }
+        return results
     }
 
     private func translateNativeBatch(_ texts: [String], chunkSize: Int, call: ([String]) async throws -> [String]) async -> [String?] {

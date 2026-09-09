@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+### Added
+- DeepL 多 Key + 配额切换/回退 Google
+### Improved
+- Google POST + 高并发 Session；Microsoft 批量并行
+
 ### Fixed
 - 提高默认并发并加大列表批次，避免串行拖慢
 
@@ -106,6 +111,11 @@
 ### Added
 - 订阅源**自动排序**：默认未读优先；可选名称 / 最近更新 / 手动拖拽（设置 → 订阅源排序）
 
+
+## [v1.3-32] — 2026-09-10
+
+### Added
+- DeepL 多 Key
 
 ## [v1.3-31] — 2026-09-09
 

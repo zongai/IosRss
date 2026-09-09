@@ -55,13 +55,47 @@ class AppStore {
     /// AI 摘要/解释等输出语言
     var aiOutputLanguage: AppLanguage = .zhHans
 
-    static let defaultTranslationPrompt = "请将以下内容翻译成{{lang}}，只输出译文，不要解释：\n\n{{text}}"
-    static let defaultSummaryPrompt = "请用3-5句话概括以下文章的核心内容，用{{lang}}回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：\n\n标题：{{title}}\n\n内容：{{content}}"
-    static let defaultExplainPrompt = """
-请用简洁的{{lang}}解释下面这段文字（词义、专有名词、语境或背景）。只输出解释，不要标题，不要复述整段原文：
+    static let defaultTranslationPrompt = """
+你是专业译者。将下面内容翻译成{{lang}}。
+
+要求：
+- 只输出译文，不要前言、注释、双语对照或「译文如下」之类说明
+- 忠实原意，专有名词可保留原文或通用译法
+- 保持段落与换行；不要添加原文没有的标题或列表序号
+- 若原文含 [[IMG_数字]] 等占位符，原样保留
 
 {{text}}
 """
+
+    static let defaultSummaryPrompt = """
+你是资讯编辑。用{{lang}}概括下面文章，帮助读者快速抓住要点。
+
+要求：
+- 输出 3～5 条要点，每条单独一行
+- 不要使用 1. 2. 3.、-、• 等序号或项目符号
+- 不要标题、不要「总结如下」等套话
+- 优先写事实与结论，少写修辞；有争议观点时注明是谁的看法
+- 总长控制在约 120～220 字（或等量信息）
+
+标题：{{title}}
+
+正文：
+{{content}}
+"""
+
+    static let defaultExplainPrompt = """
+你是知识助手。用简洁的{{lang}}解释用户选中的文字。
+
+要求：
+- 只输出解释本身：词义、专有名词、背景或在语境中的含义
+- 2～6 句为宜，可分段；不要标题，不要复述整段原文
+- 不确定时说明不确定，不要编造
+- 不要推荐产品或扩展无关话题
+
+选中文字：
+{{text}}
+"""
+
 
     private var readArticleLinks: Set<String> = []
 
@@ -1027,16 +1061,59 @@ class AppStore {
         return (Self.cleanSummaryText(raw), provider.name)
     }
 
+    static func migrateLegacyDefaultPrompts(translation: inout String, summary: inout String, explain: inout String) {
+        func normalize(_ s: String) -> String {
+            s.replacingOccurrences(of: "
+", with: "
+")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let legacyTranslation = "请将以下内容翻译成{{lang}}，只输出译文，不要解释：
+
+{{text}}"
+        let legacySummary = "请用3-5句话概括以下文章的核心内容，用{{lang}}回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：
+
+标题：{{title}}
+
+内容：{{content}}"
+        let legacyExplain = """
+请用简洁的{{lang}}解释下面这段文字（词义、专有名词、语境或背景）。只输出解释，不要标题，不要复述整段原文：
+
+{{text}}
+"""
+        if normalize(translation) == normalize(legacyTranslation) || translation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            translation = defaultTranslationPrompt
+        }
+        if normalize(summary) == normalize(legacySummary) || summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            summary = defaultSummaryPrompt
+        }
+        if normalize(explain) == normalize(legacyExplain) || explain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            explain = defaultExplainPrompt
+        }
+    }
+
     static func cleanSummaryText(_ text: String) -> String {
-        let pattern = #"^(\d+[\.\)、:：]|[(（]\d+[)）])\s*"#
-        let regex = try? NSRegularExpression(pattern: pattern)
-        return text.components(separatedBy: "\n").map { line -> String in
-            var s = line.trimmingCharacters(in: .whitespaces)
-            guard !s.isEmpty, let regex else { return s }
-            let range = NSRange(s.startIndex..<s.endIndex, in: s)
-            s = regex.stringByReplacingMatches(in: s, options: [], range: range, withTemplate: "")
-            return s.trimmingCharacters(in: .whitespaces)
-        }.filter { !$0.isEmpty }.joined(separator: "\n")
+
+        let patterns = [
+            #"^(\d+[\.\)、:：]|[(（]\d+[)）])\s*"#,
+            #"^[-•●▪◦]\s+"#
+        ]
+        let regexes = patterns.compactMap { try? NSRegularExpression(pattern: $0) }
+        return text.components(separatedBy: "
+").map { line -> String in
+            var s = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !s.isEmpty else { return "" }
+            for regex in regexes {
+                let range = NSRange(s.startIndex..<s.endIndex, in: s)
+                s = regex.stringByReplacingMatches(in: s, options: [], range: range, withTemplate: "")
+                s = s.trimmingCharacters(in: .whitespaces)
+            }
+            for prefix in ["总结如下", "摘要如下", "要点如下", "译文如下", "如下：", "如下:"] {
+                if s.hasPrefix(prefix) { return "" }
+            }
+            return s
+        }.filter { !$0.isEmpty }.joined(separator: "
+")
     }
 
     func explainText(_ text: String) async throws -> String {
@@ -1282,6 +1359,12 @@ class AppStore {
         if let p = UserDefaults.standard.string(forKey: "translationPrompt") { translationPrompt = p }
         if let p = UserDefaults.standard.string(forKey: "summaryPrompt") { summaryPrompt = p }
         if let p = UserDefaults.standard.string(forKey: "explainPrompt") { explainPrompt = p }
+        // 旧版默认 Prompt 自动升级到优化版（用户自定义的不改）
+        Self.migrateLegacyDefaultPrompts(
+            translation: &translationPrompt,
+            summary: &summaryPrompt,
+            explain: &explainPrompt
+        )
         readRetentionDays = UserDefaults.standard.object(forKey: "readRetentionDays") as? Int ?? 7
         fullContentCacheDays = UserDefaults.standard.object(forKey: "fullContentCacheDays") as? Int ?? 30
         ttsVoice = UserDefaults.standard.string(forKey: "ttsVoice") ?? ""

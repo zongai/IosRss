@@ -61,13 +61,6 @@ struct ArticleReaderView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: ReaderScrollOffsetKey.self,
-                        value: geo.frame(in: .named("readerScroll")).minY
-                    )
-                }
-                .frame(height: 0)
                 VStack(alignment: .leading, spacing: 8) {
                     Text(displayTitle)
                         .font(AppTypography.font(size: store.readerTitleFontSize, weight: .semibold))
@@ -157,34 +150,30 @@ struct ArticleReaderView: View {
             }
         }
         .background(Color(.systemBackground))
-        .coordinateSpace(name: "readerScroll")
-        .onPreferenceChange(ReaderScrollOffsetKey.self) { y in
-            let delta = y - lastScrollY
-            // 内容上移（y 变小）= 向下滑动 → 隐藏；反向显示
-            if abs(delta) < 2 {
-                lastScrollY = y
-                return
-            }
-            if delta < -8, y < -20 {
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y
+        } action: { oldY, newY in
+            let delta = newY - oldY
+            // 向下滑（offset 增大）隐藏；向上滑或接近顶部显示
+            if newY > 28, delta > 1.5 {
                 if showChrome {
-                    withAnimation(.easeInOut(duration: 0.22)) { showChrome = false }
+                    withAnimation(.easeInOut(duration: 0.2)) { showChrome = false }
                 }
-            } else if delta > 6 {
+            } else if delta < -1.5 || newY < 12 {
                 if !showChrome {
-                    withAnimation(.easeInOut(duration: 0.22)) { showChrome = true }
+                    withAnimation(.easeInOut(duration: 0.2)) { showChrome = true }
                 }
             }
-            // 接近顶部始终显示
-            if y > -10, !showChrome {
-                withAnimation(.easeInOut(duration: 0.22)) { showChrome = true }
-            }
-            lastScrollY = y
+            lastScrollY = newY
         }
         .navigationTitle("")
         .appScreenBackground()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(showChrome ? .visible : .hidden, for: .navigationBar)
         .toolbar(showChrome ? .visible : .hidden, for: .tabBar)
+        .toolbarBackground(showChrome ? .automatic : .hidden, for: .navigationBar)
+        .toolbarBackground(showChrome ? .automatic : .hidden, for: .tabBar)
+        .animation(.easeInOut(duration: 0.2), value: showChrome)
         // 换篇：仅识别明显水平滑动，避免干扰纵向滚动与工具栏显隐
         .simultaneousGesture(
             DragGesture(minimumDistance: 50)
@@ -449,14 +438,5 @@ struct ArticleReaderView: View {
             summaryError = error.localizedDescription
         }
         isGeneratingSummary = false
-    }
-}
-
-
-
-private struct ReaderScrollOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }

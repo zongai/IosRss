@@ -529,11 +529,19 @@ class AppStore {
     }
 
     func refreshFeed(_ feedID: UUID) async {
-        guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
+        _ = await refreshFeedResult(feedID)
+    }
+
+    /// 刷新单个源；返回失败说明（已含源名），成功返回 nil
+    @discardableResult
+    func refreshFeedResult(_ feedID: UUID) async -> String? {
+        guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return nil }
+        let feedTitle = feeds[idx].title.isEmpty ? "未命名源" : feeds[idx].title
         let urlStr = feeds[idx].url
         guard var url = NetworkURLPolicy.validate(urlStr) else {
-            errorMessage = "不允许的地址（仅支持公网 http/https）"
-            return
+            let msg = "「\(feedTitle)」：不允许的地址（仅支持公网 http/https）"
+            errorMessage = msg
+            return msg
         }
         isLoading = true
         defer { isLoading = false }
@@ -541,9 +549,9 @@ class AppStore {
             let data = try await Self.fetchFeedData(from: url)
             OfflineCache.saveFeedXML(url: urlStr, data: data)
             applyParsedFeed(data: data, feedID: feedID, idx: idx, urlStr: urlStr)
-            if errorMessage != nil { errorMessage = nil }
+            return nil
         } catch {
-            // http 失败时尝试 https（部分源证书/重定向仅在 https 可用）
+            // http 失败时尝试 https
             if url.scheme?.lowercased() == "http",
                var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
                 comps.scheme = "https"
@@ -552,22 +560,24 @@ class AppStore {
                         let data = try await Self.fetchFeedData(from: httpsURL)
                         OfflineCache.saveFeedXML(url: urlStr, data: data)
                         applyParsedFeed(data: data, feedID: feedID, idx: idx, urlStr: urlStr)
-                        // 记住可用的 https
                         if idx < feeds.count, feeds[idx].id == feedID {
                             feeds[idx].url = httpsURL.absoluteString
                             saveToStorage()
                         }
-                        errorMessage = nil
-                        return
+                        return nil
                     } catch { /* fall through */ }
                 }
             }
             if let cached = OfflineCache.loadFeedXML(url: urlStr) {
                 applyParsedFeed(data: cached, feedID: feedID, idx: idx, urlStr: urlStr)
-                errorMessage = "网络异常，已使用本地缓存"
+                let msg = "「\(feedTitle)」：网络异常，已使用本地缓存"
+                errorMessage = msg
+                return msg
             } else {
                 let tip = Self.friendlyNetworkError(error)
-                errorMessage = "刷新失败：\(tip)"
+                let msg = "「\(feedTitle)」：\(tip)"
+                errorMessage = msg
+                return msg
             }
         }
     }
@@ -647,7 +657,29 @@ class AppStore {
         saveToStorage()
     }
 
-    func refreshAll() async { for feed in feeds { await refreshFeed(feed.id) } }
+    func refreshAll() async {
+        var failures: [String] = []
+        for feed in feeds {
+            if let err = await refreshFeedResult(feed.id) {
+                // 仅统计真正失败（有缓存降级也提示，但汇总时优先无缓存类）
+                failures.append(err)
+            }
+        }
+        if failures.isEmpty {
+            errorMessage = nil
+        } else if failures.count == 1 {
+            errorMessage = failures[0]
+        } else {
+            // 从「源名」：中提取源名做摘要
+            let names: [String] = failures.compactMap { line in
+                guard line.hasPrefix("「"), let end = line.firstIndex(of: "」") else { return nil }
+                return String(line[line.index(after: line.startIndex)..<end])
+            }
+            let shown = names.prefix(3).map { "「\($0)」" }.joined(separator: "、")
+            let extra = names.count > 3 ? " 等\(names.count) 个源" : ""
+            errorMessage = "\(shown)\(extra) 刷新异常（共 \(failures.count) 条）"
+        }
+    }
 
     func containsBlacklistedTerm(_ text: String) -> Bool {
         let haystack = text.lowercased()

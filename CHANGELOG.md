@@ -8,6 +8,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- 刷新失败时提示具体源名称
+
 ### Changed
 - 阅读配色升级为 6 套 ReadingTheme（Classic / Sepia / Night / Midnight / Forest / High Contrast）
 
@@ -43,6 +46,11 @@
 ### Added
 - 订阅源**自动排序**：默认未读优先；可选名称 / 最近更新 / 手动拖拽（设置 → 订阅源排序）
 
+
+## [v1.3-11] — 2026-09-09
+
+### Fixed
+- 刷新错误标明源名
 
 ## [v1.3-10] — 2026-09-09
 

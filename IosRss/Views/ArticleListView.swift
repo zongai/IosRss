@@ -17,7 +17,8 @@ struct ArticleListView: View {
     @State private var autoTranslateAttemptedIDs: Set<UUID> = []
 
     /// 列表翻译每批条数（标题 + 预览各算一条任务）
-    private let translationBatchSize = 6
+    /// 仅用于进度刷新粒度；实际并发由 AppStore.translateTexts 控制
+    private let translationBatchSize = 24
 
     private var articles: [Article] {
         // 显式依赖 openedArticleID / readingIDs，保证返回后重新过滤
@@ -316,6 +317,8 @@ struct ArticleListView: View {
         translationDone = 0
         translationTotal = jobs.count
 
+        // 整表一次交给底层并发池，避免「小批串行等待」把并发抵消掉
+        // 仍按 batch 切片只为分段刷新进度与列表
         for batch in jobs.chunked(into: translationBatchSize) {
             let results = await store.translateTexts(batch.map(\.text))
             var updates: [(id: UUID, title: String?, summary: String?)] = []
@@ -333,7 +336,6 @@ struct ArticleListView: View {
             if !updates.isEmpty {
                 store.applyListTranslations(updates)
             }
-            await Task.yield()
         }
 
         isTranslatingAll = false

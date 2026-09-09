@@ -41,14 +41,14 @@ struct TranslationSettingsView: View {
             Section {
                 Picker("并发度", selection: $store.translationConcurrency) {
                     Text("自动（推荐）").tag(0)
-                    ForEach(1...6, id: \.self) { n in
+                    ForEach(1...8, id: \.self) { n in
                         Text("\(n) 路").tag(n)
                     }
                 }
             } header: {
                 Text("并发")
             } footer: {
-                Text("控制同时发起的翻译请求数。自动偏稳：Google 3、免 Key 2、AI 2。AI 使用默认引擎并 failover，不跨 Provider 分片。过高易限流。")
+                Text("同时请求数。自动：Google 6、免 Key 4、AI 4。列表整批并发。过高可能限流。")
             }
 
             Section {

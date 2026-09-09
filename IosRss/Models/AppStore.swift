@@ -1023,12 +1023,12 @@ class AppStore {
 
     /// 解析实际并发度：显式参数 > 用户设置 > 引擎默认（偏稳，避免限流导致大片失败）
     func resolvedTranslationConcurrency(for engine: TranslationEngine, override: Int? = nil) -> Int {
-        if let o = override, o > 0 { return min(6, o) }
-        if translationConcurrency > 0 { return min(6, translationConcurrency) }
+        if let o = override, o > 0 { return min(8, o) }
+        if translationConcurrency > 0 { return min(8, translationConcurrency) }
         switch engine {
-        case .ai: return 2
-        case .google: return 3
-        case .mymemory, .lingva, .libre: return 2
+        case .ai: return 4
+        case .google: return 6
+        case .mymemory, .lingva, .libre: return 4
         case .microsoft, .deepl: return 1
         }
     }

@@ -39,6 +39,19 @@ struct TranslationSettingsView: View {
             }
 
             Section {
+                Picker("并发度", selection: $store.translationConcurrency) {
+                    Text("自动（推荐）").tag(0)
+                    ForEach(1...6, id: \.self) { n in
+                        Text("\(n) 路").tag(n)
+                    }
+                }
+            } header: {
+                Text("并发")
+            } footer: {
+                Text("控制同时发起的翻译请求数。选「自动」时：Google 4、免 Key 3、AI 3。AI 若配置了多个 Provider，会按 Provider 分片并行，总吞吐≈路数×Provider 数。过高可能触发限流。")
+            }
+
+            Section {
                 HStack {
                     Text("Google 翻译").font(.system(size: 15, weight: .medium))
                     Spacer()
@@ -124,6 +137,7 @@ struct TranslationSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear { store.persistSettings() }
         .onChange(of: store.defaultTranslationEngine) { _, _ in store.persistSettings() }
+        .onChange(of: store.translationConcurrency) { _, _ in store.persistSettings() }
         .onChange(of: store.targetLanguage) { _, _ in store.persistSettings() }
         .onChange(of: store.aiOutputLanguage) { _, _ in store.persistSettings() }
     }

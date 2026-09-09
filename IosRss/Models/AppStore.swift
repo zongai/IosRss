@@ -58,6 +58,8 @@ class AppStore {
     var feedSortMode: FeedSortMode = .unreadThenTitle
     /// 翻译目标语言
     var targetLanguage: AppLanguage = .zhHans
+    /// 翻译并发度：0=自动（按引擎），1～8 为固定并发；AI 多 Provider 时还会跨 Provider 分片
+    var translationConcurrency: Int = 0
     /// AI 摘要/解释等输出语言
     var aiOutputLanguage: AppLanguage = .zhHans
 
@@ -952,10 +954,22 @@ class AppStore {
         }
     }
 
+    /// 解析实际并发度：显式参数 > 用户设置 > 引擎默认
+    func resolvedTranslationConcurrency(for engine: TranslationEngine, override: Int? = nil) -> Int {
+        if let o = override, o > 0 { return min(8, o) }
+        if translationConcurrency > 0 { return min(8, translationConcurrency) }
+        switch engine {
+        case .ai: return 3
+        case .google: return 4
+        case .mymemory, .lingva, .libre: return 3
+        case .microsoft, .deepl: return 1
+        }
+    }
+
     func translateTexts(_ texts: [String], concurrency: Int? = nil) async -> [String?] {
         guard !texts.isEmpty else { return [] }
         let engine = defaultTranslationEngine
-        let limit = concurrency ?? (engine == .ai ? 3 : (engine.isFreeNoKey ? 3 : 5))
+        let limit = resolvedTranslationConcurrency(for: engine, override: concurrency)
         switch engine {
         case .deepl:
             let key = Keychain.load(key: "deepl_translate_key") ?? ""
@@ -963,9 +977,95 @@ class AppStore {
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
             return await translateNativeBatch(texts, chunkSize: 40) { try await MicrosoftTranslate.translate(texts: $0, apiKey: key, targetLang: targetLanguage.microsoftCode) }
-        case .google, .mymemory, .lingva, .libre, .ai:
+        case .ai:
+            return await translateTextsWithAIProviders(texts, perProviderConcurrency: max(1, limit))
+        case .google, .mymemory, .lingva, .libre:
             return await translateConcurrently(texts, concurrency: limit)
         }
+    }
+
+    /// AI 多 Provider：轮询分片，每 Provider 独立并发，总吞吐 ≈ Provider数 × 每路并发
+    private func translateTextsWithAIProviders(_ texts: [String], perProviderConcurrency: Int) async -> [String?] {
+        let preferred = defaultTranslationProviderID ?? defaultSummaryProviderID
+        let providers = orderedAIProviders(preferredID: preferred, forText: texts.first ?? "").filter { p in
+            let key = Keychain.load(key: "ai_key_\(p.id)") ?? ""
+            return !key.isEmpty
+        }
+        guard !providers.isEmpty else {
+            return await translateConcurrently(texts, concurrency: perProviderConcurrency)
+        }
+        if providers.count == 1 {
+            return await translateConcurrently(texts, concurrency: perProviderConcurrency)
+        }
+        // 分片：index % n → provider
+        var buckets: [[(Int, String)]] = Array(repeating: [], count: providers.count)
+        for (i, text) in texts.enumerated() {
+            buckets[i % providers.count].append((i, text))
+        }
+        var results = Array<String?>(repeating: nil, count: texts.count)
+        await withTaskGroup(of: [(Int, String?)].self) { group in
+            for (pIdx, provider) in providers.enumerated() {
+                let jobs = buckets[pIdx]
+                guard !jobs.isEmpty else { continue }
+                group.addTask {
+                    await self.translateBucket(jobs, provider: provider, concurrency: perProviderConcurrency)
+                }
+            }
+            for await part in group {
+                for (idx, val) in part { results[idx] = val }
+            }
+        }
+        return results
+    }
+
+    private func translateBucket(_ jobs: [(Int, String)], provider: AIProvider, concurrency: Int) async -> [(Int, String?)] {
+        var out: [(Int, String?)] = []
+        out.reserveCapacity(jobs.count)
+        await withTaskGroup(of: (Int, String?).self) { group in
+            var next = 0
+            let spawn = min(max(concurrency, 1), jobs.count)
+            while next < spawn {
+                let (idx, text) = jobs[next]
+                next += 1
+                group.addTask {
+                    let r = try? await self.translateTextWithProvider(text, provider: provider)
+                    let trimmed = r?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return (idx, (trimmed?.isEmpty == false) ? trimmed : nil)
+                }
+            }
+            for await item in group {
+                out.append(item)
+                if next < jobs.count {
+                    let (idx, text) = jobs[next]
+                    next += 1
+                    group.addTask {
+                        let r = try? await self.translateTextWithProvider(text, provider: provider)
+                        let trimmed = r?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        return (idx, (trimmed?.isEmpty == false) ? trimmed : nil)
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /// 指定 Provider 翻译（不做 failover，供多路分片使用）
+    private func translateTextWithProvider(_ text: String, provider: AIProvider) async throws -> String {
+        let lang = targetLanguage
+        let template = translationPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? AppStore.defaultTranslationPrompt : translationPrompt
+        var prompt = template
+            .replacingOccurrences(of: "{{lang}}", with: lang.promptLabel)
+            .replacingOccurrences(of: "{{text}}", with: text)
+        if !template.contains("{{text}}") { prompt += "\n\n" + text }
+        let key = Keychain.load(key: "ai_key_\(provider.id)") ?? ""
+        guard !key.isEmpty else { throw TranslationError.apiError("未配置 API Key") }
+        let raw = try await callAI(prompt: prompt, provider: provider, apiKey: key, maxTokens: 2048)
+        let result = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if result.isEmpty || Self.looksLikeAIErrorResponse(result) {
+            throw TranslationError.apiError(result.isEmpty ? "空响应" : result)
+        }
+        return result
     }
 
     private func translateNativeBatch(_ texts: [String], chunkSize: Int, call: ([String]) async throws -> [String]) async -> [String?] {
@@ -1024,13 +1124,29 @@ class AppStore {
         let chunks = Self.splitTextIntoChunks(text, maxChars: maxChunkChars)
         guard !chunks.isEmpty else { return "" }
         if chunks.count == 1 { return try await translateText(chunks[0]) }
+        let chunkLimit = min(3, max(1, resolvedTranslationConcurrency(for: defaultTranslationEngine)))
         return try await withThrowingTaskGroup(of: (Int, String).self) { group in
-            for (index, chunk) in chunks.enumerated() {
+            var next = 0
+            let spawn = min(chunkLimit, chunks.count)
+            while next < spawn {
+                let index = next
+                let chunk = chunks[index]
+                next += 1
                 group.addTask { (index, try await self.translateText(chunk)) }
             }
             var ordered = Array(repeating: "", count: chunks.count)
-            for try await (index, result) in group { ordered[index] = result }
-            return ordered.joined(separator: "\n\n")
+            for try await (index, result) in group {
+                ordered[index] = result
+                if next < chunks.count {
+                    let i = next
+                    let chunk = chunks[i]
+                    next += 1
+                    group.addTask { (i, try await self.translateText(chunk)) }
+                }
+            }
+            return ordered.joined(separator: "
+
+")
         }
     }
 
@@ -1368,6 +1484,7 @@ class AppStore {
         UserDefaults.standard.set(appFontFamily.rawValue, forKey: "appFontFamily")
         UserDefaults.standard.set(feedSortMode.rawValue, forKey: "feedSortMode")
         UserDefaults.standard.set(targetLanguage.rawValue, forKey: "targetLanguage")
+        UserDefaults.standard.set(translationConcurrency, forKey: "translationConcurrency")
         UserDefaults.standard.set(aiOutputLanguage.rawValue, forKey: "aiOutputLanguage")
         if let data = try? JSONEncoder().encode(aiProviders) { UserDefaults.standard.set(data, forKey: "aiProviders") }
         if let id = defaultSummaryProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultSummaryProviderID") }
@@ -1449,6 +1566,9 @@ class AppStore {
         if let raw = UserDefaults.standard.string(forKey: "targetLanguage"),
            let lang = AppLanguage(rawValue: raw) {
             targetLanguage = lang
+        }
+        if UserDefaults.standard.object(forKey: "translationConcurrency") != nil {
+            translationConcurrency = min(8, max(0, UserDefaults.standard.integer(forKey: "translationConcurrency")))
         }
         if let raw = UserDefaults.standard.string(forKey: "aiOutputLanguage"),
            let lang = AppLanguage(rawValue: raw) {

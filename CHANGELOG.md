@@ -9,6 +9,9 @@
 ## [Unreleased]
 
 ### Added
+- 翻译并发可配置；AI 多 Provider 分片并行
+
+### Added
 - 免 Key 翻译：MyMemory / Lingva / LibreTranslate
 
 ### Changed
@@ -91,6 +94,11 @@
 ### Added
 - 订阅源**自动排序**：默认未读优先；可选名称 / 最近更新 / 手动拖拽（设置 → 订阅源排序）
 
+
+## [v1.3-27] — 2026-09-09
+
+### Added
+- 翻译并发与多 Provider 并行
 
 ## [v1.3-26] — 2026-09-09
 

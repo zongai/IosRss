@@ -169,27 +169,33 @@ struct FeedsListView: View {
             .refreshable { await store.refreshAll() }
             .safeAreaInset(edge: .top) {
                 if store.isRefreshingAll || (store.isLoading && store.refreshProgressTotal > 0) {
-                    VStack(spacing: 6) {
+                    VStack(alignment: .leading, spacing: 8) {
                         ProgressView(
                             value: Double(store.refreshProgressCurrent),
                             total: Double(max(1, store.refreshProgressTotal))
                         )
+                        .progressViewStyle(.linear)
                         .tint(theme.accent)
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.mini)
-                            Text(refreshProgressLabel)
-                                .font(AppTypography.caption())
-                                .foregroundStyle(theme.muted)
-                                .lineLimit(1)
-                            Spacer(minLength: 0)
-                        }
+                        .animation(.easeInOut(duration: 0.32), value: store.refreshProgressCurrent)
+                        .animation(.easeInOut(duration: 0.32), value: store.refreshProgressTotal)
+
+                        Text(refreshProgressLabel)
+                            .font(AppTypography.caption())
+                            .foregroundStyle(theme.muted)
+                            .lineLimit(1)
+                            .contentTransition(.numericText())
+                            .animation(.easeInOut(duration: 0.25), value: store.refreshProgressCurrent)
+                            .animation(.easeInOut(duration: 0.25), value: store.refreshProgressTitle)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.ultraThinMaterial)
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
+            .animation(.easeInOut(duration: 0.35), value: store.isRefreshingAll)
+            .animation(.easeInOut(duration: 0.35), value: store.isLoading)
             .safeAreaInset(edge: .bottom) {
                 if let msg = store.errorMessage, !msg.isEmpty {
                     Text(msg)

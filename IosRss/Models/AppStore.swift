@@ -572,7 +572,7 @@ class AppStore {
 
     /// 刷新单个源；返回失败说明（已含源名），成功返回 nil
     @discardableResult
-    func refreshFeedResult(_ feedID: UUID) async -> String? {
+    func refreshFeedResult(_ feedID: UUID, manageLoading: Bool = true) async -> String? {
         guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return nil }
         let feedTitle = feeds[idx].title.isEmpty ? "未命名源" : feeds[idx].title
         let urlStr = feeds[idx].url
@@ -581,8 +581,32 @@ class AppStore {
             errorMessage = msg
             return msg
         }
-        isLoading = true
-        defer { isLoading = false }
+        if manageLoading {
+            withAnimation(.easeInOut(duration: 0.28)) {
+                isLoading = true
+                if !isRefreshingAll {
+                    refreshProgressTotal = 1
+                    refreshProgressCurrent = 1
+                    refreshProgressTitle = feedTitle
+                }
+            }
+        }
+        defer {
+            if manageLoading, !isRefreshingAll {
+                Task { @MainActor in
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        refreshProgressTitle = "完成"
+                    }
+                    try? await Task.sleep(nanoseconds: 280_000_000)
+                    withAnimation(.easeInOut(duration: 0.35)) {
+                        isLoading = false
+                        refreshProgressCurrent = 0
+                        refreshProgressTotal = 0
+                        refreshProgressTitle = ""
+                    }
+                }
+            }
+        }
         do {
             let data = try await Self.fetchFeedData(from: url)
             OfflineCache.saveFeedXML(url: urlStr, data: data)
@@ -710,25 +734,36 @@ class AppStore {
     func refreshAll() async {
         let snapshot = feeds
         guard !snapshot.isEmpty else { return }
-        isRefreshingAll = true
-        isLoading = true
-        refreshProgressTotal = snapshot.count
-        refreshProgressCurrent = 0
-        refreshProgressTitle = ""
-        defer {
+        withAnimation(.easeInOut(duration: 0.28)) {
+            isRefreshingAll = true
+            isLoading = true
+            refreshProgressTotal = snapshot.count
+            refreshProgressCurrent = 0
+            refreshProgressTitle = "准备中…"
+        }
+        var failures: [String] = []
+        for (i, feed) in snapshot.enumerated() {
+            let title = feed.title.isEmpty ? "未命名源" : feed.title
+            withAnimation(.easeInOut(duration: 0.32)) {
+                refreshProgressCurrent = i + 1
+                refreshProgressTitle = title
+            }
+            if let err = await refreshFeedResult(feed.id, manageLoading: false) {
+                failures.append(err)
+            }
+        }
+        // 收尾：先走到 100%，再淡出，避免进度条突然消失
+        withAnimation(.easeInOut(duration: 0.28)) {
+            refreshProgressCurrent = snapshot.count
+            refreshProgressTitle = "完成"
+        }
+        try? await Task.sleep(nanoseconds: 320_000_000)
+        withAnimation(.easeInOut(duration: 0.35)) {
             isRefreshingAll = false
             isLoading = false
             refreshProgressCurrent = 0
             refreshProgressTotal = 0
             refreshProgressTitle = ""
-        }
-        var failures: [String] = []
-        for (i, feed) in snapshot.enumerated() {
-            refreshProgressCurrent = i + 1
-            refreshProgressTitle = feed.title.isEmpty ? "未命名源" : feed.title
-            if let err = await refreshFeedResult(feed.id, manageLoading: false) {
-                failures.append(err)
-            }
         }
         if failures.isEmpty {
             errorMessage = nil

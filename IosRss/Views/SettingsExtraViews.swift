@@ -127,6 +127,17 @@ struct TranslationSettingsView: View {
         .onChange(of: store.targetLanguage) { _, _ in store.persistSettings() }
         .onChange(of: store.aiOutputLanguage) { _, _ in store.persistSettings() }
     }
+
+    @ViewBuilder
+    private func freeEngineRow(_ title: String, selected: Bool) -> some View {
+        HStack {
+            Text(title).font(.system(size: 15, weight: .medium))
+            Spacer()
+            if selected {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.primary)
+            }
+        }
+    }
 }
 
 

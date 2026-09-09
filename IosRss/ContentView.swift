@@ -5,7 +5,7 @@ struct ContentView: View {
     @Environment(\.colorScheme) private var systemColorScheme
 
     var body: some View {
-        let resolvedTheme = AppColorTheme.resolved(
+        let resolvedTheme = ReadingTheme.resolved(
             selected: store.colorTheme,
             appearance: store.appearanceMode,
             systemScheme: systemColorScheme
@@ -25,6 +25,7 @@ struct ContentView: View {
         .tint(tokens.accent)
         .environment(store)
         .environment(\.theme, tokens)
+        .environment(\.readingTheme, resolvedTheme.colors)
         .preferredColorScheme(store.appearanceMode.preferredColorScheme)
     }
 }

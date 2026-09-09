@@ -43,7 +43,7 @@ class AppStore {
     /// Edge TTS 音色；空则按正文语言自动选择
     var ttsVoice: String = ""
     /// 阅读主题色板
-    var colorTheme: AppColorTheme = .azure
+    var colorTheme: ReadingTheme = .classicLight
     /// 外观：跟随系统 / 浅色 / 深色
     var appearanceMode: AppearanceMode = .system
     /// 界面与阅读字体
@@ -334,7 +334,18 @@ class AppStore {
         readRetentionDays = payload.readRetentionDays
         fullContentCacheDays = payload.fullContentCacheDays
         ttsVoice = payload.ttsVoice
-        if let th = AppColorTheme(rawValue: payload.colorTheme) { colorTheme = th }
+        if let th = ReadingTheme(rawValue: payload.colorTheme) {
+            colorTheme = th
+        } else {
+            switch payload.colorTheme {
+            case "azure": colorTheme = .classicLight
+            case "sepia": colorTheme = .sepiaPaper
+            case "midnight": colorTheme = .midnightBlue
+            case "forest": colorTheme = .forestSage
+            case "graphite": colorTheme = .nightDark
+            default: break
+            }
+        }
         if let raw = payload.appearanceMode, let mode = AppearanceMode(rawValue: raw) { appearanceMode = mode }
         aiBlacklistTerms = payload.aiBlacklistTerms
         articleBlacklistTerms = payload.articleBlacklistTerms
@@ -1230,8 +1241,21 @@ class AppStore {
         readRetentionDays = UserDefaults.standard.object(forKey: "readRetentionDays") as? Int ?? 7
         fullContentCacheDays = UserDefaults.standard.object(forKey: "fullContentCacheDays") as? Int ?? 30
         ttsVoice = UserDefaults.standard.string(forKey: "ttsVoice") ?? ""
-        if let raw = UserDefaults.standard.string(forKey: "colorTheme"),
-           let theme = AppColorTheme(rawValue: raw) { colorTheme = theme }
+        if let raw = UserDefaults.standard.string(forKey: "colorTheme") {
+            if let theme = ReadingTheme(rawValue: raw) {
+                colorTheme = theme
+            } else {
+                // 迁移旧 AppColorTheme 原始值
+                switch raw {
+                case "azure": colorTheme = .classicLight
+                case "sepia": colorTheme = .sepiaPaper
+                case "midnight": colorTheme = .midnightBlue
+                case "forest": colorTheme = .forestSage
+                case "graphite": colorTheme = .nightDark
+                default: break
+                }
+            }
+        }
         if let raw = UserDefaults.standard.string(forKey: "appearanceMode"),
            let mode = AppearanceMode(rawValue: raw) { appearanceMode = mode }
         if let raw = UserDefaults.standard.string(forKey: "appFontFamily"),

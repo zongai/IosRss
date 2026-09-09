@@ -8,6 +8,9 @@
 
 ## [Unreleased]
 
+### Changed
+- 阅读配色升级为 6 套 ReadingTheme（Classic / Sepia / Night / Midnight / Forest / High Contrast）
+
 ### Fixed
 - 刷新 HTTP 源时 ATS 拦截导致失败；允许明文传输并在失败时尝试 HTTPS
 - 订阅页下拉刷新与自定义 Progress 叠成两个转圈
@@ -40,6 +43,11 @@
 ### Added
 - 订阅源**自动排序**：默认未读优先；可选名称 / 最近更新 / 手动拖拽（设置 → 订阅源排序）
 
+
+## [v1.3-10] — 2026-09-09
+
+### Changed
+- ReadingTheme 六套阅读配色 + Environment 注入
 
 ## [v1.3-9] — 2026-09-09
 

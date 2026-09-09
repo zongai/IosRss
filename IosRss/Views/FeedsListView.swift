@@ -157,14 +157,7 @@ struct FeedsListView: View {
                 }
             }
             .refreshable { await store.refreshAll() }
-            .overlay(alignment: .top) {
-                if store.isLoading {
-                    ProgressView()
-                        .padding(8)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .padding(.top, 8)
-                }
-            }
+            // 下拉刷新已自带系统 Progress，不再额外叠一层转圈
             .safeAreaInset(edge: .bottom) {
                 if let msg = store.errorMessage, !msg.isEmpty {
                     Text(msg)

@@ -520,24 +520,78 @@ class AppStore {
     func refreshFeed(_ feedID: UUID) async {
         guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
         let urlStr = feeds[idx].url
-        guard let url = NetworkURLPolicy.validate(urlStr) else {
+        guard var url = NetworkURLPolicy.validate(urlStr) else {
             errorMessage = "不允许的地址（仅支持公网 http/https）"
             return
         }
         isLoading = true
         defer { isLoading = false }
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let data = try await Self.fetchFeedData(from: url)
             OfflineCache.saveFeedXML(url: urlStr, data: data)
             applyParsedFeed(data: data, feedID: feedID, idx: idx, urlStr: urlStr)
+            if errorMessage != nil { errorMessage = nil }
         } catch {
+            // http 失败时尝试 https（部分源证书/重定向仅在 https 可用）
+            if url.scheme?.lowercased() == "http",
+               var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                comps.scheme = "https"
+                if let httpsURL = comps.url, NetworkURLPolicy.isAllowed(httpsURL) {
+                    do {
+                        let data = try await Self.fetchFeedData(from: httpsURL)
+                        OfflineCache.saveFeedXML(url: urlStr, data: data)
+                        applyParsedFeed(data: data, feedID: feedID, idx: idx, urlStr: urlStr)
+                        // 记住可用的 https
+                        if idx < feeds.count, feeds[idx].id == feedID {
+                            feeds[idx].url = httpsURL.absoluteString
+                            saveToStorage()
+                        }
+                        errorMessage = nil
+                        return
+                    } catch { /* fall through */ }
+                }
+            }
             if let cached = OfflineCache.loadFeedXML(url: urlStr) {
                 applyParsedFeed(data: cached, feedID: feedID, idx: idx, urlStr: urlStr)
-                errorMessage = "网络不可用，已使用本地缓存"
+                errorMessage = "网络异常，已使用本地缓存"
             } else {
-                errorMessage = "网络不可用，且无本地缓存：\(error.localizedDescription)"
+                let tip = Self.friendlyNetworkError(error)
+                errorMessage = "刷新失败：\(tip)"
             }
         }
+    }
+
+    private static func fetchFeedData(from url: URL) async throws -> Data {
+        var request = URLRequest(url: url, timeoutInterval: 25)
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw URLError(.badServerResponse)
+        }
+        return data
+    }
+
+    private static func friendlyNetworkError(_ error: Error) -> String {
+        let ns = error as NSError
+        let text = error.localizedDescription
+        if text.localizedCaseInsensitiveContains("App Transport Security")
+            || text.localizedCaseInsensitiveContains("secure connection") {
+            return "该源使用了不安全的 HTTP。请确认系统允许，或改用 HTTPS 地址。"
+        }
+        if ns.domain == NSURLErrorDomain {
+            switch ns.code {
+            case NSURLErrorNotConnectedToInternet: return "设备未连接网络"
+            case NSURLErrorTimedOut: return "连接超时"
+            case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed: return "无法解析主机"
+            case NSURLErrorAppTransportSecurityRequiresSecureConnection: return "需要 HTTPS 连接（ATS）"
+            default: break
+            }
+        }
+        return text
     }
 
     private func applyParsedFeed(data: Data, feedID: UUID, idx: Int, urlStr: String) {

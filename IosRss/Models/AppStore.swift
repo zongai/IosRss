@@ -1146,8 +1146,9 @@ class AppStore {
             return await translateTextsWithDeepL(texts, targetLang: targetLanguage.deeplCode)
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
+            let msLang = targetLanguage.microsoftCode
             return await translateNativeBatchParallel(texts, chunkSize: 25, parallelism: 3) {
-                try await MicrosoftTranslate.translate(texts: $0, apiKey: key, targetLang: targetLanguage.microsoftCode)
+                try await MicrosoftTranslate.translate(texts: $0, apiKey: key, targetLang: msLang)
             }
         case .google, .mymemory, .lingva, .libre, .ai:
             // 统一走 translateText（含 AI failover / 多 Key），不再跨 Provider 分片，避免质量与失败率变差

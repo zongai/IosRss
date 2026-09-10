@@ -500,7 +500,7 @@ class AppStore {
             lines.append(ok > 0 ? "结果：\(ok)/\(keys.count) 可用" : "结果：全部不可用")
             if ok == 0 { throw TranslationError.apiError(lines.joined(separator: "\n")) }
             return lines.joined(separator: "\n")
-        case .mymemory:case .mymemory:
+        case .mymemory:
             do {
                 let out = try await MyMemoryTranslate.translate(text: sample, targetLang: targetLanguage.mymemoryCode)
                 let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -545,7 +545,7 @@ class AppStore {
             lines.append(ok > 0 ? "结果：\(ok)/\(keys.count) 可用" : "结果：全部不可用")
             if ok == 0 { throw TranslationError.apiError(lines.joined(separator: "\n")) }
             return lines.joined(separator: "\n")
-        case .deepl:case .deepl:
+        case .deepl:
             let keys = loadDeepLKeys()
             guard !keys.isEmpty else {
                 throw TranslationError.apiError("DeepL：未配置 API Key")

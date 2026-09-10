@@ -509,7 +509,7 @@ class AppStore {
             } catch {
                 throw TranslationError.apiError("Lingva：不可用 — \(error.localizedDescription)")
             }
-        case .microsoft:case .microsoft:
+        case .microsoft:
             let key = (Keychain.load(key: "microsoft_translate_key") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !key.isEmpty else {
                 throw TranslationError.apiError("Microsoft：未配置 API Key")

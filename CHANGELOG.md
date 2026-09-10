@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+## [v1.3-45] — 2026-09-11
+### Changed
+- Google 翻译改回纯免 Key（client=gtx GET/POST），移除多 Key / 官方 API；默认串行以降低限流
+
+
 ## [v1.3-44] — 2026-09-10
 ### Improved
 - 刷新加速：最多 8 源并行拉取；专用 URLSession；超时缩短；批量落盘（刷新过程中不每源写磁盘）

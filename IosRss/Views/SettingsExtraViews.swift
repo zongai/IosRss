@@ -2,8 +2,6 @@ import SwiftUI
 
 struct TranslationSettingsView: View {
     @Environment(AppStore.self) private var store
-    @State private var googleKeys: [String] = []
-    @State private var newGoogleKey = ""
     @State private var microsoftKeys: [String] = []
     @State private var newMicrosoftKey = ""
     @State private var deeplKeys: [String] = []
@@ -12,7 +10,6 @@ struct TranslationSettingsView: View {
     @State private var testMessage: String?
     @State private var testIsError = false
     /// 各引擎 Key 行旁的可用性：index -> true/false
-    @State private var googleKeyOK: [Int: Bool] = [:]
     @State private var microsoftKeyOK: [Int: Bool] = [:]
     @State private var deeplKeyOK: [Int: Bool] = [:]
 
@@ -64,33 +61,10 @@ struct TranslationSettingsView: View {
             // Google
             Section {
                 engineHeader("Google 翻译", selected: store.defaultTranslationEngine == .google)
-                ForEach(Array(googleKeys.enumerated()), id: \.offset) { idx, key in
-                    HStack {
-                        Text(maskSecret(key)).font(.system(.body, design: .monospaced))
-                        keyStatusBadge(googleKeyOK[idx])
-                        Spacer()
-                        Button(role: .destructive) {
-                            googleKeys.remove(at: idx)
-                            store.saveGoogleKeys(googleKeys)
-                            googleKeyOK.removeValue(forKey: idx)
-                        } label: { Image(systemName: "trash") }
-                    }
-                }
-                HStack {
-                    TextField("添加 Google API Key（可选）", text: $newGoogleKey)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                    Button("添加") {
-                        let k = newGoogleKey.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !k.isEmpty else { return }
-                        googleKeys.append(k)
-                        store.saveGoogleKeys(googleKeys)
-                        newGoogleKey = ""
-                    }
-                }
                 testButton(for: .google)
-            } header: { Text("Google（多 Key）") }
-            footer: { Text("可不填 Key（免费接口易 429）。多个官方 Key 失败时自动切换；全失败再试免 Key。") }
+            } header: { Text("Google（免 Key）") }
+            footer: { Text("使用免费接口 client=gtx，无需 API Key。并发固定为串行，降低 429 限流。") }
+
 
             // Microsoft
             Section {
@@ -201,7 +175,6 @@ struct TranslationSettingsView: View {
         .onChange(of: store.microsoftTranslateRegion) { _, _ in store.persistSettings() }
         .onChange(of: store.lingvaCustomBase) { _, _ in store.persistSettings() }
         .onAppear {
-            googleKeys = store.loadGoogleKeys()
             microsoftKeys = store.loadMicrosoftKeys()
             deeplKeys = store.loadDeepLKeys()
         }
@@ -262,34 +235,20 @@ struct TranslationSettingsView: View {
         testMessage = nil
         testIsError = false
         defer { testingEngine = nil }
-        store.saveGoogleKeys(googleKeys)
         store.saveMicrosoftKeys(microsoftKeys)
         store.saveDeepLKeys(deeplKeys)
         store.persistSettings()
 
-        // 多 Key 引擎：逐个测并在 Key 行旁标记
         switch engine {
         case .google:
-            googleKeyOK = [:]
-            if googleKeys.isEmpty {
-                do {
-                    let msg = try await store.testTranslationEngine(.google)
-                    testMessage = msg
-                    testIsError = false
-                } catch {
-                    testMessage = error.localizedDescription
-                    testIsError = true
-                }
-                return
+            do {
+                let msg = try await store.testTranslationEngine(.google)
+                testMessage = msg
+                testIsError = false
+            } catch {
+                testMessage = error.localizedDescription
+                testIsError = true
             }
-            var okCount = 0
-            for (i, key) in googleKeys.enumerated() {
-                let ok = await store.probeGoogleKey(key)
-                googleKeyOK[i] = ok
-                if ok { okCount += 1 }
-            }
-            testMessage = "Google：\(okCount)/\(googleKeys.count) 个 Key 可用"
-            testIsError = okCount == 0
             return
         case .microsoft:
             microsoftKeyOK = [:]

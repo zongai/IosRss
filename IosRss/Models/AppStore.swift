@@ -426,18 +426,15 @@ class AppStore {
 
     /// 单 Key 连通性探测（用于设置页 Key 行旁标记）
     func probeGoogleKey(_ key: String) async -> Bool {
-        let sample = "Hello"
+        // 兼容旧调用；Google 已固定无 Key
         do {
-            let out = try await GoogleTranslate.translate(
-                text: sample,
-                targetLang: targetLanguage.googleCode,
-                apiKey: key
-            )
+            let out = try await GoogleTranslate.translate(text: "Hello", targetLang: targetLanguage.googleCode)
             return !out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         } catch {
             return false
         }
     }
+
 
     func probeMicrosoftKey(_ key: String) async -> Bool {
         do {
@@ -523,36 +520,15 @@ class AppStore {
         let sample = "Hello, world."
         switch eng {
         case .google:
-            let keys = loadGoogleKeys()
-            if keys.isEmpty {
-                do {
-                    let out = try await GoogleTranslate.translate(text: sample, targetLang: targetLanguage.googleCode, apiKey: nil)
-                    let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !preview.isEmpty else { throw TranslationError.apiError("返回空译文") }
-                    return "Google：免 Key 模式可用\n试译：\(preview.prefix(60))"
-                } catch {
-                    throw TranslationError.apiError("Google 免 Key 模式不可用 — \(error.localizedDescription)")
-                }
+            do {
+                let out = try await GoogleTranslate.translate(text: sample, targetLang: targetLanguage.googleCode)
+                let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !preview.isEmpty else { throw TranslationError.apiError("返回空译文") }
+                return "Google（免 Key）：可用
+试译：\(preview.prefix(60))"
+            } catch {
+                throw TranslationError.apiError("Google（免 Key）：不可用 — \(error.localizedDescription)")
             }
-            var lines: [String] = ["Google：共 \(keys.count) 个 Key"]
-            var ok = 0
-            for (i, key) in keys.enumerated() {
-                let label = "Key\(i + 1) (\(maskKeyForTest(key)))"
-                do {
-                    let out = try await GoogleTranslate.translate(text: sample, targetLang: targetLanguage.googleCode, apiKey: key)
-                    if out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        lines.append("• \(label)：不可用（空译文）")
-                    } else {
-                        ok += 1
-                        lines.append("• \(label)：可用")
-                    }
-                } catch {
-                    lines.append("• \(label)：不可用 — \(error.localizedDescription)")
-                }
-            }
-            lines.append(ok > 0 ? "结果：\(ok)/\(keys.count) 可用" : "结果：全部不可用")
-            if ok == 0 { throw TranslationError.apiError(lines.joined(separator: "\n")) }
-            return lines.joined(separator: "\n")
         case .mymemory:
             do {
                 let out = try await MyMemoryTranslate.translate(text: sample, targetLang: targetLanguage.mymemoryCode)
@@ -1239,33 +1215,10 @@ class AppStore {
         Keychain.save(key: legacyKey, value: cleaned[0])
     }
 
-    /// Google：多 Key 时轮询；失败自动换 Key 再试
     func translateWithGoogle(_ text: String, targetLang: String) async throws -> String {
-        let keys = loadGoogleKeys()
-        if keys.isEmpty {
-            return try await GoogleTranslate.translate(text: text, targetLang: targetLang, apiKey: nil)
-        }
-        let start = googleKeyRoundRobin % keys.count
-        var lastError: Error = TranslationError.apiError("Google 全部 Key 不可用")
-        for offset in 0..<keys.count {
-            let idx = (start + offset) % keys.count
-            let key = keys[idx]
-            do {
-                let out = try await GoogleTranslate.translate(text: text, targetLang: targetLang, apiKey: key)
-                googleKeyRoundRobin = idx + 1
-                return out
-            } catch {
-                lastError = error
-                continue
-            }
-        }
-        // 官方 Key 全失败 → 再试一次免 Key
-        do {
-            return try await GoogleTranslate.translate(text: text, targetLang: targetLang, apiKey: nil)
-        } catch {
-            throw lastError
-        }
+        try await GoogleTranslate.translate(text: text, targetLang: targetLang)
     }
+
 
     /// Microsoft：多 Key 轮询 + 失败切换
     func translateWithMicrosoft(_ text: String, targetLang: String) async throws -> String {
@@ -1314,8 +1267,7 @@ class AppStore {
         }
         // 全部 Key 失败 → 回退 Google（免 Key）再试一次
         do {
-            let gKey = Keychain.load(key: "google_translate_key") ?? ""
-            return try await GoogleTranslate.translate(text: text, targetLang: targetLanguage.googleCode, apiKey: gKey.isEmpty ? nil : gKey)
+            return try await GoogleTranslate.translate(text: text, targetLang: targetLanguage.googleCode)
         } catch {
             throw lastError
         }
@@ -1470,7 +1422,7 @@ class AppStore {
         if translationConcurrency > 0 { return min(8, translationConcurrency) }
         switch engine {
         case .ai: return 4
-        case .google: return 3
+        case .google: return 1
         case .mymemory, .lingva: return 3
         case .microsoft: return 3
         case .deepl: return 3

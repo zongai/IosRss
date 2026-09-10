@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+## [v1.3-46] — 2026-09-11
+### Improved
+- 兼容 AI 思考模型：忽略 reasoning 字段与 Gemini thought parts；剥离 `<think>` 等标签，界面不展示思考过程
+
+
 ## [v1.3-45] — 2026-09-11
 ### Changed
 - Google 翻译改回纯免 Key（client=gtx GET/POST），移除多 Key / 官方 API；默认串行以降低限流

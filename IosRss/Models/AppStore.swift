@@ -1339,7 +1339,7 @@ class AppStore {
             let key = keys[idx]
             do {
                 let raw = try await callAI(prompt: prompt, provider: provider, apiKey: key, maxTokens: maxTokens)
-                let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                let text = AIResponseSanitizer.stripThinking(raw)
                 if text.isEmpty || Self.looksLikeAIErrorResponse(text) {
                     throw TranslationError.apiError(text.isEmpty ? "空响应" : text)
                 }

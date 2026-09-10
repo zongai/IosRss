@@ -456,10 +456,11 @@ func callOpenAICompatible(prompt: String, provider: AIProvider, apiKey: String, 
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+    // 思考模型可能占用较多 completion token；略提高上限，最终只展示正文
     let body: [String: Any] = [
         "model": provider.model,
         "messages": [["role": "user", "content": prompt]],
-        "max_tokens": maxTokens
+        "max_tokens": max(maxTokens, 800)
     ]
     request.httpBody = try? JSONSerialization.data(withJSONObject: body)
     let (data, response) = try await URLSession.shared.data(for: request)
@@ -467,16 +468,25 @@ func callOpenAICompatible(prompt: String, provider: AIProvider, apiKey: String, 
         let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
         throw TranslationError.apiError("API 错误 \(http.statusCode): \(msg.prefix(200))")
     }
-    struct Choice: Decodable {
-        struct Message: Decodable { let content: String }
-        let message: Message
+    // 兼容：content / reasoning_content / reasoning；只取最终回答
+    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let choices = json["choices"] as? [[String: Any]],
+       let message = choices.first?["message"] as? [String: Any] {
+        let content = (message["content"] as? String) ?? ""
+        // 忽略 reasoning_content / reasoning / reasoning_text 等思考字段
+        let cleaned = AIResponseSanitizer.stripThinking(content)
+        if !cleaned.isEmpty {
+            return cleaned
+        }
+        // 少数接口把最终答案放在其它字段
+        for key in ["output_text", "result", "answer"] {
+            if let alt = message[key] as? String {
+                let c = AIResponseSanitizer.stripThinking(alt)
+                if !c.isEmpty { return c }
+            }
+        }
     }
-    struct Resp: Decodable { let choices: [Choice] }
-    guard let resp = try? JSONDecoder().decode(Resp.self, from: data),
-          let content = resp.choices.first?.message.content else {
-        throw TranslationError.apiError("解析 AI 响应失败")
-    }
-    return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    throw TranslationError.apiError("解析 AI 响应失败")
 }
 
 func callGemini(prompt: String, provider: AIProvider, apiKey: String) async throws -> String {
@@ -490,10 +500,15 @@ func callGemini(prompt: String, provider: AIProvider, apiKey: String) async thro
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-    let body: [String: Any] = [
+    // thought 类模型：请求不把思考过程混进可见文本（若接口支持）
+    var body: [String: Any] = [
         "contents": [
             ["parts": [["text": prompt]]]
         ]
+    ]
+    // Gemini 2.5 thinking：generationConfig 可选
+    body["generationConfig"] = [
+        "maxOutputTokens": 2048
     ]
     request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
@@ -504,18 +519,80 @@ func callGemini(prompt: String, provider: AIProvider, apiKey: String) async thro
         throw TranslationError.apiError("Gemini API 错误 \(http.statusCode): \(msg.prefix(200))")
     }
 
-    struct Part: Decodable { let text: String }
-    struct Content: Decodable { let parts: [Part] }
-    struct Candidate: Decodable { let content: Content }
-    struct Resp: Decodable { let candidates: [Candidate] }
-
-    guard let resp = try? JSONDecoder().decode(Resp.self, from: data),
-          let text = resp.candidates.first?.content.parts.first?.text else {
-        let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
-        throw TranslationError.apiError("解析 Gemini 响应失败: \(raw)")
+    // 解析 parts：跳过 thought / 仅拼接可见 text
+    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let candidates = json["candidates"] as? [[String: Any]],
+       let content = candidates.first?["content"] as? [String: Any],
+       let parts = content["parts"] as? [[String: Any]] {
+        var texts: [String] = []
+        for part in parts {
+            // thought: true 的 part 为思考过程，跳过
+            if let thought = part["thought"] as? Bool, thought { continue }
+            if let text = part["text"] as? String, !text.isEmpty {
+                texts.append(text)
+            }
+        }
+        let joined = texts.joined()
+        let cleaned = AIResponseSanitizer.stripThinking(joined)
+        if !cleaned.isEmpty {
+            return cleaned
+        }
     }
+    let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
+    throw TranslationError.apiError("解析 Gemini 响应失败: \(raw)")
+}
 
-    return text.trimmingCharacters(in: .whitespacesAndNewlines)
+/// 过滤思考模型输出中的推理过程，只保留最终回答
+enum AIResponseSanitizer {
+    static func stripThinking(_ text: String) -> String {
+        var result = text
+
+        // 常见标签块：<think> <thinking> <reasoning> <reflection> <thought>
+        let tagPatterns = [
+            #"<think>[\s\S]*?</think>"#,
+            #"<thinking>[\s\S]*?</thinking>"#,
+            #"<reasoning>[\s\S]*?</reasoning>"#,
+            #"<reflection>[\s\S]*?</reflection>"#,
+            #"<thought>[\s\S]*?</thought>"#,
+            #"<redacted_reasoning>[\s\S]*?</redacted_reasoning>"#,
+        ]
+        for pattern in tagPatterns {
+            if let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                let range = NSRange(result.startIndex..., in: result)
+                result = re.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+            }
+        }
+
+        // 未闭合的 <think>… 直接截到标签前
+        if let re = try? NSRegularExpression(pattern: #"<think>[\s\S]*"#, options: [.caseInsensitive]) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = re.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
+
+        // 中文标记
+        let cnPatterns = [
+            #"【思考】[\s\S]*?【/思考】"#,
+            #"【推理】[\s\S]*?【/推理】"#,
+            #"（思考过程：[\s\S]*?）"#,
+        ]
+        for pattern in cnPatterns {
+            if let re = try? NSRegularExpression(pattern: pattern, options: []) {
+                let range = NSRange(result.startIndex..., in: result)
+                result = re.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+            }
+        }
+
+        // 去掉开头的 “Thinking / 思考过程” 段落（到空行或文末）
+        if let re = try? NSRegularExpression(
+            pattern: #"(?im)^#{1,3}\s*(thinking|reasoning|thought process|思考过程|推理过程)\s*$[\s\S]*?(?=^#{1,3}\s|\Z)"#,
+            options: []
+        ) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = re.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
+
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 // MARK: - HTML Utilities (entities + strip)

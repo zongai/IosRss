@@ -158,17 +158,55 @@ enum GoogleTranslate {
         throw TranslationError.apiError("Google 免费接口限流 (429)。请降低并发、稍后再试，或在设置中填写 Google Cloud Translation API Key / 换用 DeepL·Microsoft·MyMemory。")
     }
 
+    /// 无 Key：GET https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=…&dt=t&q=…
+    /// 文本过长时改用同参数的 POST，避免 URL 超限
     private static func translateFreeOnce(text: String, targetLang: String) async throws -> String {
+        // 对齐常用目标码（zh → zh-CN）
+        let tl: String = {
+            switch targetLang.lowercased() {
+            case "zh", "zh-hans": return "zh-CN"
+            case "zh-hant": return "zh-TW"
+            default: return targetLang
+            }
+        }()
+
+        if text.utf8.count < 1800 {
+            do {
+                return try await translateFreeGET(text: text, targetLang: tl)
+            } catch {
+                // GET 失败再试 POST
+                return try await translateFreePOST(text: text, targetLang: tl)
+            }
+        }
+        return try await translateFreePOST(text: text, targetLang: tl)
+    }
+
+    private static func translateFreeGET(text: String, targetLang: String) async throws -> String {
+        var comps = URLComponents(string: "https://translate.googleapis.com/translate_a/single")!
+        comps.queryItems = [
+            URLQueryItem(name: "client", value: "gtx"),
+            URLQueryItem(name: "sl", value: "auto"),
+            URLQueryItem(name: "tl", value: targetLang),
+            URLQueryItem(name: "dt", value: "t"),
+            URLQueryItem(name: "q", value: text)
+        ]
+        guard let url = comps.url else { throw TranslationError.apiError("无效的 Google URL") }
+        var request = URLRequest(url: url, timeoutInterval: 15)
+        request.httpMethod = "GET"
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return try await parseFreeResponse(request)
+    }
+
+    private static func translateFreePOST(text: String, targetLang: String) async throws -> String {
         guard let url = URL(string: "https://translate.googleapis.com/translate_a/single") else {
             throw TranslationError.apiError("无效的URL")
         }
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: url, timeoutInterval: 15)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded;charset=UTF-8", forHTTPHeaderField: "Content-Type")
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 15
-
         var body = URLComponents()
         body.queryItems = [
             URLQueryItem(name: "client", value: "gtx"),
@@ -178,17 +216,19 @@ enum GoogleTranslate {
             URLQueryItem(name: "q", value: text)
         ]
         request.httpBody = body.percentEncodedQuery?.data(using: .utf8)
+        return try await parseFreeResponse(request)
+    }
 
+    private static func parseFreeResponse(_ request: URLRequest) async throws -> String {
         let (data, response) = try await TranslationHTTP.session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             if http.statusCode == 429 {
                 throw TranslationError.apiError("Google 429")
             }
-            // 不把整页 HTML 塞进错误
             throw TranslationError.apiError("Google 翻译请求失败 (状态码 \(http.statusCode))")
         }
-        // 有时 200 仍返回 HTML 拦截页
-        if let raw = String(data: data, encoding: .utf8), raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("<!") {
+        if let raw = String(data: data, encoding: .utf8),
+           raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("<!") {
             throw TranslationError.apiError("Google 429")
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [Any],

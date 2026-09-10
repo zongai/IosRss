@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+## [v1.3-43] — 2026-09-10
+### Changed
+- Google 无 Key：优先使用 GET `translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=…&dt=t&q=…`（长文本回退 POST）
+
+
 ## [v1.3-42] — 2026-09-10
 ### Improved
 - 测试 Key 可用性时在每个 Key 行旁直接显示「可用 / 不可用」标记（Google / Microsoft / DeepL / AI）

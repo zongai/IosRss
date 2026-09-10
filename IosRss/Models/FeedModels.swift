@@ -24,7 +24,7 @@ enum AppVersion {
         }
         return nil
     }
-    /// 展示：CI 为 v1.3-32-build43；本地为 v1.3-32
+    /// 展示：CI 为 v1.3-35-buildN；本地为 v1.3-35
     static var display: String {
         if let g = githubBuild {
             return "v\(marketing)-\(build)-build\(g)"

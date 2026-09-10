@@ -129,7 +129,7 @@ struct TranslationSettingsView: View {
                     .keyboardType(.URL)
                 testButton(for: .lingva)
             } header: { Text("Lingva") }
-            footer: { Text("REST v1：GET /api/v1/{source}/{target}/{query} 与 POST /api/v1/{source}/{target}。可填自建实例，如 https://lingva.example.com") }
+            footer: { Text("公共实例：plausibility.cloud / lunar.icu / projectsegfau.lt / garudalinux.org。也可填自定义实例根地址。") }
 
 
             // AI

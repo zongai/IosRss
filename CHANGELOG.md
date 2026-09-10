@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+## [v1.3-39] — 2026-09-10
+### Changed
+- Lingva 公共实例改为：translate.plausibility.cloud、lingva.lunar.icu、translate.projectsegfau.lt、lingva.garudalinux.org
+
+
 ## [v1.3-38] — 2026-09-10
 ### Added
 - 恢复 Lingva 翻译：支持 REST v1 GET 与 POST；公共实例轮询 + 可选自定义实例

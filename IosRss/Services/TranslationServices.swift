@@ -249,11 +249,10 @@ enum MyMemoryTranslate {
 enum LingvaTranslate {
     /// 公共实例；可在设置中指定自定义根地址
     private static let defaultHosts = [
-        "https://lingva.ml",
-        "https://lingva.lunar.icu",
         "https://translate.plausibility.cloud",
-        "https://lingva.garudalinux.org",
-        "https://translate.projectsegfau.lt"
+        "https://lingva.lunar.icu",
+        "https://translate.projectsegfau.lt",
+        "https://lingva.garudalinux.org"
     ]
 
     static func resolveHosts(customBase: String?) -> [String] {

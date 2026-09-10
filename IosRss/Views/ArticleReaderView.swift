@@ -71,7 +71,9 @@ struct ArticleReaderView: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
+            Color.clear.frame(height: 0).id("readerTop")
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(displayTitle)
@@ -303,6 +305,20 @@ struct ArticleReaderView: View {
                 Task { await fetchFullContent(silent: true) }
             }
         }
+        .onChange(of: activeID) { _, _ in
+            // 左滑/右滑换篇后回到文章开头
+            translationError = nil
+            summaryError = nil
+            fullContentError = nil
+            fullContentHint = nil
+            translationProgress = nil
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo("readerTop", anchor: .top)
+                }
+            }
+        }
+        } // ScrollViewReader
     }
 
     private var fullContentAllowed: Bool {
@@ -442,25 +458,32 @@ struct ArticleReaderView: View {
     private func goNextArticle() {
         guard let idx = currentIndex, idx + 1 < feedArticles.count else { return }
         let next = feedArticles[idx + 1]
-        currentID = next.id
-        showTranslated = false
-        translatedContent = nil
-        aiSummary = next.aiSummary
-        aiSummaryProvider = next.aiSummaryProvider
-        store.markAsRead(next)
-        withAnimation(.snappy(duration: 0.2)) { showChrome = true }
+        switchToArticle(next)
     }
 
     private func goPrevArticle() {
         guard let idx = currentIndex, idx > 0 else { return }
         let prev = feedArticles[idx - 1]
-        currentID = prev.id
+        switchToArticle(prev)
+    }
+
+    private func switchToArticle(_ next: Article) {
+        currentID = next.id
         showTranslated = false
         translatedContent = nil
-        aiSummary = prev.aiSummary
-        aiSummaryProvider = prev.aiSummaryProvider
-        store.markAsRead(prev)
+        aiSummary = next.aiSummary
+        aiSummaryProvider = next.aiSummaryProvider
+        translationError = nil
+        summaryError = nil
+        fullContentError = nil
+        fullContentHint = nil
+        translationProgress = nil
+        isTranslating = false
+        isGeneratingSummary = false
+        isFetchingFull = false
+        store.markAsRead(next)
         withAnimation(.snappy(duration: 0.2)) { showChrome = true }
+        // 滚动到顶部由 onChange(of: activeID) + ScrollViewReader 处理
     }
 
     private func generateSummary() async {

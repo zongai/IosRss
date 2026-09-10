@@ -2,8 +2,10 @@ import SwiftUI
 
 struct TranslationSettingsView: View {
     @Environment(AppStore.self) private var store
-    @State private var googleKey = Keychain.load(key: "google_translate_key") ?? ""
-    @State private var microsoftKey = Keychain.load(key: "microsoft_translate_key") ?? ""
+    @State private var googleKeys: [String] = []
+    @State private var newGoogleKey = ""
+    @State private var microsoftKeys: [String] = []
+    @State private var newMicrosoftKey = ""
     @State private var deeplKeys: [String] = []
     @State private var newDeepLKey = ""
     @State private var testingEngine: TranslationEngine?
@@ -58,31 +60,63 @@ struct TranslationSettingsView: View {
             // Google
             Section {
                 engineHeader("Google 翻译", selected: store.defaultTranslationEngine == .google)
-                TextField("API Key（可选，免费模式可不填）", text: $googleKey)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .onChange(of: googleKey) { _, v in
-                        Keychain.save(key: "google_translate_key", value: v.trimmingCharacters(in: .whitespacesAndNewlines))
+                ForEach(Array(googleKeys.enumerated()), id: \.offset) { idx, key in
+                    HStack {
+                        Text(maskSecret(key)).font(.system(.body, design: .monospaced))
+                        Spacer()
+                        Button(role: .destructive) {
+                            googleKeys.remove(at: idx)
+                            store.saveGoogleKeys(googleKeys)
+                        } label: { Image(systemName: "trash") }
                     }
+                }
+                HStack {
+                    TextField("添加 Google API Key（可选）", text: $newGoogleKey)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    Button("添加") {
+                        let k = newGoogleKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !k.isEmpty else { return }
+                        googleKeys.append(k)
+                        store.saveGoogleKeys(googleKeys)
+                        newGoogleKey = ""
+                    }
+                }
                 testButton(for: .google)
-            } header: { Text("Google") }
-            footer: { Text("不填 Key 用免费接口（易 429 限流，默认低并发并自动重试）。填写 Google Cloud Translation API Key 更稳定。") }
+            } header: { Text("Google（多 Key）") }
+            footer: { Text("可不填 Key（免费接口易 429）。多个官方 Key 失败时自动切换；全失败再试免 Key。") }
 
             // Microsoft
             Section {
                 engineHeader("Microsoft 翻译", selected: store.defaultTranslationEngine == .microsoft)
-                TextField("API Key（必填）", text: $microsoftKey)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .onChange(of: microsoftKey) { _, v in
-                        Keychain.save(key: "microsoft_translate_key", value: v.trimmingCharacters(in: .whitespacesAndNewlines))
+                ForEach(Array(microsoftKeys.enumerated()), id: \.offset) { idx, key in
+                    HStack {
+                        Text(maskSecret(key)).font(.system(.body, design: .monospaced))
+                        Spacer()
+                        Button(role: .destructive) {
+                            microsoftKeys.remove(at: idx)
+                            store.saveMicrosoftKeys(microsoftKeys)
+                        } label: { Image(systemName: "trash") }
                     }
+                }
+                HStack {
+                    TextField("添加 Microsoft API Key", text: $newMicrosoftKey)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    Button("添加") {
+                        let k = newMicrosoftKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !k.isEmpty else { return }
+                        microsoftKeys.append(k)
+                        store.saveMicrosoftKeys(microsoftKeys)
+                        newMicrosoftKey = ""
+                    }
+                }
                 TextField("资源区域（如 eastasia / eastus / global）", text: $store.microsoftTranslateRegion)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                 testButton(for: .microsoft)
-            } header: { Text("Microsoft") }
-            footer: { Text("401 时请填写 Azure 门户中该资源的「位置/区域」。多服务资源必须填区域；全球资源可填 global。") }
+            } header: { Text("Microsoft（多 Key）") }
+            footer: { Text("失败或 401 时自动切换下一把 Key。区域需与 Azure 资源位置一致。") }
 
             // DeepL
             Section {
@@ -156,7 +190,11 @@ struct TranslationSettingsView: View {
         .onChange(of: store.translationConcurrency) { _, _ in store.persistSettings() }
         .onChange(of: store.microsoftTranslateRegion) { _, _ in store.persistSettings() }
         .onChange(of: store.lingvaCustomBase) { _, _ in store.persistSettings() }
-        .onAppear { deeplKeys = store.loadDeepLKeys() }
+        .onAppear {
+            googleKeys = store.loadGoogleKeys()
+            microsoftKeys = store.loadMicrosoftKeys()
+            deeplKeys = store.loadDeepLKeys()
+        }
         .onChange(of: store.targetLanguage) { _, _ in store.persistSettings() }
         .onChange(of: store.aiOutputLanguage) { _, _ in store.persistSettings() }
     }
@@ -203,8 +241,8 @@ struct TranslationSettingsView: View {
         defer { testingEngine = nil }
         do {
             // 先保存当前输入的 Key
-            Keychain.save(key: "google_translate_key", value: googleKey.trimmingCharacters(in: .whitespacesAndNewlines))
-            Keychain.save(key: "microsoft_translate_key", value: microsoftKey.trimmingCharacters(in: .whitespacesAndNewlines))
+            store.saveGoogleKeys(googleKeys)
+            store.saveMicrosoftKeys(microsoftKeys)
             store.saveDeepLKeys(deeplKeys)
             store.persistSettings()
             let msg = try await store.testTranslationEngine(engine)

@@ -8,6 +8,13 @@
 
 ## [Unreleased]
 
+## [v1.3-41] — 2026-09-10
+### Fixed
+- 左右滑换篇后滚动回到文章开头
+### Improved
+- DeepL / Google / Microsoft：多 Key 失败时自动切换下一把（Google 全失败可回退免 Key）
+
+
 ## [v1.3-40] — 2026-09-10
 ### Changed
 - Lingva 公共实例重新加入 lingva.ml

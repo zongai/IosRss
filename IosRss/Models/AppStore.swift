@@ -351,8 +351,8 @@ class AppStore {
             aiBlacklistFallbackProviderID: aiBlacklistFallbackProviderID,
             aiProviders: aiProviders,
             translationKeys: includeSecrets ? [
-                "google_translate_key": Keychain.load(key: "google_translate_key") ?? "",
-                "microsoft_translate_key": Keychain.load(key: "microsoft_translate_key") ?? "",
+                "google_translate_key": loadGoogleKeys().joined(separator: "\n"),
+                "microsoft_translate_key": loadMicrosoftKeys().joined(separator: "\n"),
                 "deepl_translate_key": loadDeepLKeys().joined(separator: "\n")
             ].filter { !$0.value.isEmpty } : nil,
             aiKeys: includeSecrets ? Dictionary(uniqueKeysWithValues: aiProviders.compactMap { p -> (String, String)? in
@@ -470,23 +470,37 @@ class AppStore {
         let sample = "Hello, world."
         switch eng {
         case .google:
-            let key = (Keychain.load(key: "google_translate_key") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            do {
-                let gKey = (Keychain.load(key: "google_translate_key") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let out = try await GoogleTranslate.translate(text: sample, targetLang: targetLanguage.googleCode, apiKey: gKey.isEmpty ? nil : gKey)
-                let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !preview.isEmpty else { throw TranslationError.apiError("返回空译文") }
-                if key.isEmpty {
+            let keys = loadGoogleKeys()
+            if keys.isEmpty {
+                do {
+                    let out = try await GoogleTranslate.translate(text: sample, targetLang: targetLanguage.googleCode, apiKey: nil)
+                    let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !preview.isEmpty else { throw TranslationError.apiError("返回空译文") }
                     return "Google：免 Key 模式可用\n试译：\(preview.prefix(60))"
-                }
-                return "Google Key (\(maskKeyForTest(key)))：可用\n试译：\(preview.prefix(60))"
-            } catch {
-                if key.isEmpty {
+                } catch {
                     throw TranslationError.apiError("Google 免 Key 模式不可用 — \(error.localizedDescription)")
                 }
-                throw TranslationError.apiError("Google Key (\(maskKeyForTest(key)))：不可用 — \(error.localizedDescription)")
             }
-        case .mymemory:
+            var lines: [String] = ["Google：共 \(keys.count) 个 Key"]
+            var ok = 0
+            for (i, key) in keys.enumerated() {
+                let label = "Key\(i + 1) (\(maskKeyForTest(key)))"
+                do {
+                    let out = try await GoogleTranslate.translate(text: sample, targetLang: targetLanguage.googleCode, apiKey: key)
+                    if out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        lines.append("• \(label)：不可用（空译文）")
+                    } else {
+                        ok += 1
+                        lines.append("• \(label)：可用")
+                    }
+                } catch {
+                    lines.append("• \(label)：不可用 — \(error.localizedDescription)")
+                }
+            }
+            lines.append(ok > 0 ? "结果：\(ok)/\(keys.count) 可用" : "结果：全部不可用")
+            if ok == 0 { throw TranslationError.apiError(lines.joined(separator: "\n")) }
+            return lines.joined(separator: "\n")
+        case .mymemory:case .mymemory:
             do {
                 let out = try await MyMemoryTranslate.translate(text: sample, targetLang: targetLanguage.mymemoryCode)
                 let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -510,24 +524,28 @@ class AppStore {
                 throw TranslationError.apiError("Lingva：不可用 — \(error.localizedDescription)")
             }
         case .microsoft:
-            let key = (Keychain.load(key: "microsoft_translate_key") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.isEmpty else {
-                throw TranslationError.apiError("Microsoft：未配置 API Key")
+            let keys = loadMicrosoftKeys()
+            guard !keys.isEmpty else { throw TranslationError.apiError("Microsoft：未配置 API Key") }
+            var lines: [String] = ["Microsoft：共 \(keys.count) 个 Key · 区域 \(microsoftTranslateRegion.isEmpty ? "global" : microsoftTranslateRegion)"]
+            var ok = 0
+            for (i, key) in keys.enumerated() {
+                let label = "Key\(i + 1) (\(maskKeyForTest(key)))"
+                do {
+                    let out = try await MicrosoftTranslate.translate(text: sample, apiKey: key, region: microsoftTranslateRegion, targetLang: targetLanguage.microsoftCode)
+                    if out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        lines.append("• \(label)：不可用（空译文）")
+                    } else {
+                        ok += 1
+                        lines.append("• \(label)：可用")
+                    }
+                } catch {
+                    lines.append("• \(label)：不可用 — \(error.localizedDescription)")
+                }
             }
-            do {
-                let out = try await MicrosoftTranslate.translate(
-                    text: sample,
-                    apiKey: key,
-                    region: microsoftTranslateRegion,
-                    targetLang: targetLanguage.microsoftCode
-                )
-                let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !preview.isEmpty else { throw TranslationError.apiError("返回空译文") }
-                return "Microsoft Key (\(maskKeyForTest(key)))：可用\n区域：\(microsoftTranslateRegion.isEmpty ? "global" : microsoftTranslateRegion)\n试译：\(preview.prefix(60))"
-            } catch {
-                throw TranslationError.apiError("Microsoft Key (\(maskKeyForTest(key)))：不可用 — \(error.localizedDescription)")
-            }
-        case .deepl:
+            lines.append(ok > 0 ? "结果：\(ok)/\(keys.count) 可用" : "结果：全部不可用")
+            if ok == 0 { throw TranslationError.apiError(lines.joined(separator: "\n")) }
+            return lines.joined(separator: "\n")
+        case .deepl:case .deepl:
             let keys = loadDeepLKeys()
             guard !keys.isEmpty else {
                 throw TranslationError.apiError("DeepL：未配置 API Key")
@@ -1083,6 +1101,101 @@ class AppStore {
         Keychain.save(key: "deepl_translate_key", value: cleaned[0])
     }
 
+    // MARK: - Google / Microsoft 多 Key
+
+    private var googleKeyRoundRobin: Int = 0
+    private var microsoftKeyRoundRobin: Int = 0
+
+    func loadGoogleKeys() -> [String] {
+        loadMultiKeys(multiKey: "google_translate_keys", legacyKey: "google_translate_key")
+    }
+
+    func saveGoogleKeys(_ keys: [String]) {
+        saveMultiKeys(keys, multiKey: "google_translate_keys", legacyKey: "google_translate_key")
+    }
+
+    func loadMicrosoftKeys() -> [String] {
+        loadMultiKeys(multiKey: "microsoft_translate_keys", legacyKey: "microsoft_translate_key")
+    }
+
+    func saveMicrosoftKeys(_ keys: [String]) {
+        saveMultiKeys(keys, multiKey: "microsoft_translate_keys", legacyKey: "microsoft_translate_key")
+    }
+
+    private func loadMultiKeys(multiKey: String, legacyKey: String) -> [String] {
+        if let raw = Keychain.load(key: multiKey), !raw.isEmpty,
+           let data = raw.data(using: .utf8),
+           let arr = try? JSONDecoder().decode([String].self, from: data) {
+            return arr.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        }
+        let legacy = (Keychain.load(key: legacyKey) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return legacy.isEmpty ? [] : [legacy]
+    }
+
+    private func saveMultiKeys(_ keys: [String], multiKey: String, legacyKey: String) {
+        let cleaned = keys.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if cleaned.isEmpty {
+            Keychain.delete(key: multiKey)
+            Keychain.delete(key: legacyKey)
+            return
+        }
+        if let data = try? JSONEncoder().encode(cleaned), let raw = String(data: data, encoding: .utf8) {
+            Keychain.save(key: multiKey, value: raw)
+        }
+        Keychain.save(key: legacyKey, value: cleaned[0])
+    }
+
+    /// Google：多 Key 时轮询；失败自动换 Key 再试
+    func translateWithGoogle(_ text: String, targetLang: String) async throws -> String {
+        let keys = loadGoogleKeys()
+        if keys.isEmpty {
+            return try await GoogleTranslate.translate(text: text, targetLang: targetLang, apiKey: nil)
+        }
+        let start = googleKeyRoundRobin % keys.count
+        var lastError: Error = TranslationError.apiError("Google 全部 Key 不可用")
+        for offset in 0..<keys.count {
+            let idx = (start + offset) % keys.count
+            let key = keys[idx]
+            do {
+                let out = try await GoogleTranslate.translate(text: text, targetLang: targetLang, apiKey: key)
+                googleKeyRoundRobin = idx + 1
+                return out
+            } catch {
+                lastError = error
+                continue
+            }
+        }
+        // 官方 Key 全失败 → 再试一次免 Key
+        do {
+            return try await GoogleTranslate.translate(text: text, targetLang: targetLang, apiKey: nil)
+        } catch {
+            throw lastError
+        }
+    }
+
+    /// Microsoft：多 Key 轮询 + 失败切换
+    func translateWithMicrosoft(_ text: String, targetLang: String) async throws -> String {
+        let keys = loadMicrosoftKeys()
+        guard !keys.isEmpty else { throw TranslationError.apiError("未配置 Microsoft API Key") }
+        let region = microsoftTranslateRegion
+        let start = microsoftKeyRoundRobin % keys.count
+        var lastError: Error = TranslationError.apiError("Microsoft 全部 Key 不可用")
+        for offset in 0..<keys.count {
+            let idx = (start + offset) % keys.count
+            let key = keys[idx]
+            do {
+                let out = try await MicrosoftTranslate.translate(text: text, apiKey: key, region: region, targetLang: targetLang)
+                microsoftKeyRoundRobin = idx + 1
+                return out
+            } catch {
+                lastError = error
+                continue
+            }
+        }
+        throw lastError
+    }
+
+
     private var deeplKeyRoundRobin: Int = 0
 
     /// DeepL：多 Key 轮询；配额/鉴权失败换 Key；全部失败可回退其它引擎
@@ -1227,8 +1340,7 @@ class AppStore {
         let lang = targetLanguage
         switch defaultTranslationEngine {
         case .google:
-            let gKey = Keychain.load(key: "google_translate_key") ?? ""
-            return try await GoogleTranslate.translate(text: text, targetLang: lang.googleCode, apiKey: gKey.isEmpty ? nil : gKey)
+            return try await translateWithGoogle(text, targetLang: lang.googleCode)
         case .mymemory: return try await MyMemoryTranslate.translate(text: text, targetLang: lang.mymemoryCode)
         case .lingva:
             return try await LingvaTranslate.translate(
@@ -1237,13 +1349,7 @@ class AppStore {
                 customBase: lingvaCustomBase.isEmpty ? nil : lingvaCustomBase
             )
         case .microsoft:
-            let key = Keychain.load(key: "microsoft_translate_key") ?? ""
-            return try await MicrosoftTranslate.translate(
-                text: text,
-                apiKey: key,
-                region: microsoftTranslateRegion,
-                targetLang: lang.microsoftCode
-            )
+            return try await translateWithMicrosoft(text, targetLang: lang.microsoftCode)
         case .deepl:
             return try await translateWithDeepL(text, targetLang: lang.deeplCode)
         case .ai:
@@ -1285,11 +1391,27 @@ class AppStore {
         case .deepl:
             return await translateTextsWithDeepL(texts, targetLang: targetLanguage.deeplCode)
         case .microsoft:
-            let key = Keychain.load(key: "microsoft_translate_key") ?? ""
             let msLang = targetLanguage.microsoftCode
             let msRegion = microsoftTranslateRegion
-            return await translateNativeBatchParallel(texts, chunkSize: 25, parallelism: 3) {
-                try await MicrosoftTranslate.translate(texts: $0, apiKey: key, region: msRegion, targetLang: msLang)
+            let keys = loadMicrosoftKeys()
+            return await translateNativeBatchParallel(texts, chunkSize: 25, parallelism: min(3, max(1, keys.count))) { chunk in
+                let ks = self.loadMicrosoftKeys()
+                guard !ks.isEmpty else { throw TranslationError.apiError("未配置 Microsoft API Key") }
+                let start = self.microsoftKeyRoundRobin % ks.count
+                var last: Error = TranslationError.apiError("Microsoft 全部 Key 失败")
+                for offset in 0..<ks.count {
+                    let idx = (start + offset) % ks.count
+                    let key = ks[idx]
+                    do {
+                        let r = try await MicrosoftTranslate.translate(texts: chunk, apiKey: key, region: msRegion, targetLang: msLang)
+                        self.microsoftKeyRoundRobin = idx + 1
+                        return r
+                    } catch {
+                        last = error
+                        continue
+                    }
+                }
+                throw last
             }
         case .google, .mymemory, .lingva, .ai:
             // 统一走 translateText（含 AI failover / 多 Key），不再跨 Provider 分片，避免质量与失败率变差

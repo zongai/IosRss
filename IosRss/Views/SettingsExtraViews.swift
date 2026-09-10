@@ -11,6 +11,10 @@ struct TranslationSettingsView: View {
     @State private var testingEngine: TranslationEngine?
     @State private var testMessage: String?
     @State private var testIsError = false
+    /// 各引擎 Key 行旁的可用性：index -> true/false
+    @State private var googleKeyOK: [Int: Bool] = [:]
+    @State private var microsoftKeyOK: [Int: Bool] = [:]
+    @State private var deeplKeyOK: [Int: Bool] = [:]
 
     var body: some View {
         @Bindable var store = store
@@ -63,10 +67,12 @@ struct TranslationSettingsView: View {
                 ForEach(Array(googleKeys.enumerated()), id: \.offset) { idx, key in
                     HStack {
                         Text(maskSecret(key)).font(.system(.body, design: .monospaced))
+                        keyStatusBadge(googleKeyOK[idx])
                         Spacer()
                         Button(role: .destructive) {
                             googleKeys.remove(at: idx)
                             store.saveGoogleKeys(googleKeys)
+                            googleKeyOK.removeValue(forKey: idx)
                         } label: { Image(systemName: "trash") }
                     }
                 }
@@ -92,10 +98,12 @@ struct TranslationSettingsView: View {
                 ForEach(Array(microsoftKeys.enumerated()), id: \.offset) { idx, key in
                     HStack {
                         Text(maskSecret(key)).font(.system(.body, design: .monospaced))
+                        keyStatusBadge(microsoftKeyOK[idx])
                         Spacer()
                         Button(role: .destructive) {
                             microsoftKeys.remove(at: idx)
                             store.saveMicrosoftKeys(microsoftKeys)
+                            microsoftKeyOK.removeValue(forKey: idx)
                         } label: { Image(systemName: "trash") }
                     }
                 }
@@ -124,10 +132,12 @@ struct TranslationSettingsView: View {
                 ForEach(Array(deeplKeys.enumerated()), id: \.offset) { idx, key in
                     HStack {
                         Text(maskSecret(key)).font(.system(.body, design: .monospaced))
+                        keyStatusBadge(deeplKeyOK[idx])
                         Spacer()
                         Button(role: .destructive) {
                             deeplKeys.remove(at: idx)
                             store.saveDeepLKeys(deeplKeys)
+                            deeplKeyOK.removeValue(forKey: idx)
                         } label: { Image(systemName: "trash") }
                     }
                 }
@@ -206,6 +216,19 @@ struct TranslationSettingsView: View {
     }
 
     @ViewBuilder
+    private func keyStatusBadge(_ ok: Bool?) -> some View {
+        if let ok {
+            Text(ok ? "可用" : "不可用")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(ok ? Color.green : Color.red)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background((ok ? Color.green : Color.red).opacity(0.12))
+                .clipShape(Capsule())
+        }
+    }
+
+    @ViewBuilder
     private func engineHeader(_ title: String, selected: Bool) -> some View {
         HStack {
             Text(title).font(.system(size: 15, weight: .medium))
@@ -239,12 +262,72 @@ struct TranslationSettingsView: View {
         testMessage = nil
         testIsError = false
         defer { testingEngine = nil }
+        store.saveGoogleKeys(googleKeys)
+        store.saveMicrosoftKeys(microsoftKeys)
+        store.saveDeepLKeys(deeplKeys)
+        store.persistSettings()
+
+        // 多 Key 引擎：逐个测并在 Key 行旁标记
+        switch engine {
+        case .google:
+            googleKeyOK = [:]
+            if googleKeys.isEmpty {
+                do {
+                    let msg = try await store.testTranslationEngine(.google)
+                    testMessage = msg
+                    testIsError = false
+                } catch {
+                    testMessage = error.localizedDescription
+                    testIsError = true
+                }
+                return
+            }
+            var okCount = 0
+            for (i, key) in googleKeys.enumerated() {
+                let ok = await store.probeGoogleKey(key)
+                googleKeyOK[i] = ok
+                if ok { okCount += 1 }
+            }
+            testMessage = "Google：\(okCount)/\(googleKeys.count) 个 Key 可用"
+            testIsError = okCount == 0
+            return
+        case .microsoft:
+            microsoftKeyOK = [:]
+            guard !microsoftKeys.isEmpty else {
+                testMessage = "Microsoft：未配置 API Key"
+                testIsError = true
+                return
+            }
+            var okCount = 0
+            for (i, key) in microsoftKeys.enumerated() {
+                let ok = await store.probeMicrosoftKey(key)
+                microsoftKeyOK[i] = ok
+                if ok { okCount += 1 }
+            }
+            testMessage = "Microsoft：\(okCount)/\(microsoftKeys.count) 个 Key 可用"
+            testIsError = okCount == 0
+            return
+        case .deepl:
+            deeplKeyOK = [:]
+            guard !deeplKeys.isEmpty else {
+                testMessage = "DeepL：未配置 API Key"
+                testIsError = true
+                return
+            }
+            var okCount = 0
+            for (i, key) in deeplKeys.enumerated() {
+                let ok = await store.probeDeepLKey(key)
+                deeplKeyOK[i] = ok
+                if ok { okCount += 1 }
+            }
+            testMessage = "DeepL：\(okCount)/\(deeplKeys.count) 个 Key 可用"
+            testIsError = okCount == 0
+            return
+        default:
+            break
+        }
+
         do {
-            // 先保存当前输入的 Key
-            store.saveGoogleKeys(googleKeys)
-            store.saveMicrosoftKeys(microsoftKeys)
-            store.saveDeepLKeys(deeplKeys)
-            store.persistSettings()
             let msg = try await store.testTranslationEngine(engine)
             testMessage = msg
             testIsError = false

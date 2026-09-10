@@ -286,6 +286,7 @@ struct EditProviderView: View {
 
     @State private var isTesting = false
     @State private var testResult: String?
+    @State private var keyOK: [Int: Bool] = [:]
     @State private var name = ""
     @State private var baseURL = ""
     @State private var model = ""
@@ -325,9 +326,19 @@ struct EditProviderView: View {
                             HStack {
                                 Text(maskKey(key))
                                     .font(.system(size: 13, design: .monospaced))
+                                if let ok = keyOK[index] {
+                                    Text(ok ? "可用" : "不可用")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(ok ? Color.green : Color.red)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background((ok ? Color.green : Color.red).opacity(0.12))
+                                        .clipShape(Capsule())
+                                }
                                 Spacer()
                                 Button(role: .destructive) {
                                     apiKeys.remove(at: index)
+                                    keyOK.removeValue(forKey: index)
                                 } label: {
                                     Image(systemName: "minus.circle.fill")
                                 }
@@ -412,37 +423,47 @@ struct EditProviderView: View {
     }
 
     private func testCurrent() async {
-        // 确保 Key 已写入（若表单有输入）
         let id = provider?.id ?? UUID()
         store.saveAIKeys(for: id, keys: apiKeys)
-        // 临时写入/更新 provider 列表中的连接信息以便 callAI 能解析
         let temp = AIProvider(
             id: id, name: name.isEmpty ? "Test" : name,
             baseURL: baseURL, model: model, kind: kind
         )
-        if let idx = store.aiProviders.firstIndex(where: { $0.id == id }) {
-            let prev = store.aiProviders[idx]
-            store.aiProviders[idx] = temp
-            isTesting = true
-            testResult = nil
-            do {
-                testResult = try await store.testAIProvider(id)
-            } catch {
-                testResult = "失败：\(error.localizedDescription)"
+        isTesting = true
+        testResult = nil
+        keyOK = [:]
+        defer { isTesting = false }
+
+        let insertedTemporarily: Bool
+        if store.aiProviders.contains(where: { $0.id == id }) {
+            if let idx = store.aiProviders.firstIndex(where: { $0.id == id }) {
+                store.aiProviders[idx] = temp
             }
-            isTesting = false
-            store.aiProviders[idx] = prev
+            insertedTemporarily = false
         } else {
             store.aiProviders.append(temp)
-            isTesting = true
-            testResult = nil
-            do {
-                testResult = try await store.testAIProvider(id)
-            } catch {
-                testResult = "失败：\(error.localizedDescription)"
-            }
-            isTesting = false
+            insertedTemporarily = true
+        }
+
+        guard !apiKeys.isEmpty else {
+            testResult = "未配置 API Key"
+            if insertedTemporarily { store.aiProviders.removeAll { $0.id == id } }
+            return
+        }
+
+        var okCount = 0
+        for (i, key) in apiKeys.enumerated() {
+            let ok = await store.probeAIKey(provider: temp, key: key)
+            keyOK[i] = ok
+            if ok { okCount += 1 }
+        }
+        testResult = "\(temp.name)：\(okCount)/\(apiKeys.count) 个 Key 可用"
+        if insertedTemporarily {
             store.aiProviders.removeAll { $0.id == id }
+        } else if let prev = provider, let idx = store.aiProviders.firstIndex(where: { $0.id == id }) {
+            // 恢复原先 provider 对象（测试中可能覆盖了名称等未保存改动以外的引用）
+            store.aiProviders[idx] = prev
+            // 但保留用户当前表单中的 key 已 saveAIKeys
         }
     }
 

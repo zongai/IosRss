@@ -423,6 +423,59 @@ class AppStore {
         saveToStorage()
     }
 
+
+    /// 单 Key 连通性探测（用于设置页 Key 行旁标记）
+    func probeGoogleKey(_ key: String) async -> Bool {
+        let sample = "Hello"
+        do {
+            let out = try await GoogleTranslate.translate(
+                text: sample,
+                targetLang: targetLanguage.googleCode,
+                apiKey: key
+            )
+            return !out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } catch {
+            return false
+        }
+    }
+
+    func probeMicrosoftKey(_ key: String) async -> Bool {
+        do {
+            let out = try await MicrosoftTranslate.translate(
+                text: "Hello",
+                apiKey: key,
+                region: microsoftTranslateRegion,
+                targetLang: targetLanguage.microsoftCode
+            )
+            return !out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } catch {
+            return false
+        }
+    }
+
+    func probeDeepLKey(_ key: String) async -> Bool {
+        do {
+            let out = try await DeepLTranslate.translate(
+                text: "Hello",
+                apiKey: key,
+                targetLang: targetLanguage.deeplCode
+            )
+            return !out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } catch {
+            return false
+        }
+    }
+
+    func probeAIKey(provider: AIProvider, key: String) async -> Bool {
+        let prompt = "Reply with exactly: OK"
+        do {
+            let text = try await callAI(prompt: prompt, provider: provider, apiKey: key, maxTokens: 16)
+            return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } catch {
+            return false
+        }
+    }
+
     private func maskKeyForTest(_ key: String) -> String {
         let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard k.count > 8 else { return String(repeating: "•", count: max(4, k.count)) }

@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+## [v1.3-42] — 2026-09-10
+### Improved
+- 测试 Key 可用性时在每个 Key 行旁直接显示「可用 / 不可用」标记（Google / Microsoft / DeepL / AI）
+
+
 ## [v1.3-41] — 2026-09-10
 ### Fixed
 - 左右滑换篇后滚动回到文章开头

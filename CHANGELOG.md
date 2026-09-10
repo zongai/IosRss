@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+## [v1.3-44] — 2026-09-10
+### Improved
+- 刷新加速：最多 8 源并行拉取；专用 URLSession；超时缩短；批量落盘（刷新过程中不每源写磁盘）
+
+
 ## [v1.3-43] — 2026-09-10
 ### Changed
 - Google 无 Key：优先使用 GET `translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=…&dt=t&q=…`（长文本回退 POST）

@@ -785,7 +785,7 @@ class AppStore {
 
     /// 刷新单个源；返回失败说明（已含源名），成功返回 nil
     @discardableResult
-    func refreshFeedResult(_ feedID: UUID, manageLoading: Bool = true) async -> String? {
+    func refreshFeedResult(_ feedID: UUID, manageLoading: Bool = true, persist: Bool = true) async -> String? {
         guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return nil }
         let feedTitle = feeds[idx].title.isEmpty ? "未命名源" : feeds[idx].title
         let urlStr = feeds[idx].url
@@ -823,7 +823,7 @@ class AppStore {
         do {
             let data = try await Self.fetchFeedData(from: url)
             OfflineCache.saveFeedXML(url: urlStr, data: data)
-            applyParsedFeed(data: data, feedID: feedID, idx: idx, urlStr: urlStr)
+            applyParsedFeed(data: data, feedID: feedID, idx: idx, urlStr: urlStr, persist: persist)
             return nil
         } catch {
             // http 失败时尝试 https
@@ -834,17 +834,17 @@ class AppStore {
                     do {
                         let data = try await Self.fetchFeedData(from: httpsURL)
                         OfflineCache.saveFeedXML(url: urlStr, data: data)
-                        applyParsedFeed(data: data, feedID: feedID, idx: idx, urlStr: urlStr)
-                        if idx < feeds.count, feeds[idx].id == feedID {
-                            feeds[idx].url = httpsURL.absoluteString
-                            saveToStorage()
+                        applyParsedFeed(data: data, feedID: feedID, idx: idx, urlStr: urlStr, persist: persist)
+                        if let i = feeds.firstIndex(where: { $0.id == feedID }) {
+                            feeds[i].url = httpsURL.absoluteString
+                            if persist { saveToStorage() }
                         }
                         return nil
                     } catch { /* fall through */ }
                 }
             }
             if let cached = OfflineCache.loadFeedXML(url: urlStr) {
-                applyParsedFeed(data: cached, feedID: feedID, idx: idx, urlStr: urlStr)
+                applyParsedFeed(data: cached, feedID: feedID, idx: idx, urlStr: urlStr, persist: persist)
                 let msg = "「\(feedTitle)」：网络异常，已使用本地缓存"
                 errorMessage = msg
                 return msg
@@ -857,14 +857,30 @@ class AppStore {
         }
     }
 
+    /// 订阅源拉取专用 Session：提高并发连接数，缩短超时
+    private enum FeedHTTP {
+        static let session: URLSession = {
+            let cfg = URLSessionConfiguration.ephemeral
+            cfg.timeoutIntervalForRequest = 12
+            cfg.timeoutIntervalForResource = 18
+            cfg.httpMaximumConnectionsPerHost = 6
+            cfg.waitsForConnectivity = false
+            cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+            return URLSession(configuration: cfg)
+        }()
+        /// 全量刷新时的并行源数量
+        static let refreshConcurrency = 8
+    }
+
     private static func fetchFeedData(from url: URL) async throws -> Data {
-        var request = URLRequest(url: url, timeoutInterval: 25)
+        var request = URLRequest(url: url, timeoutInterval: 12)
         request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
             forHTTPHeaderField: "User-Agent"
         )
+        request.setValue("application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8", forHTTPHeaderField: "Accept")
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await FeedHTTP.session.data(for: request)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw URLError(.badServerResponse)
         }
@@ -890,7 +906,9 @@ class AppStore {
         return text
     }
 
-    private func applyParsedFeed(data: Data, feedID: UUID, idx: Int, urlStr: String) {
+    private func applyParsedFeed(data: Data, feedID: UUID, idx: Int, urlStr: String, persist: Bool = true) {
+        // 并发刷新时 idx 可能过期，始终按 feedID 重定位
+        guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
         let parsed = FeedParser.parse(data: data, feedID: feedID, feedTitle: feeds[idx].title)
         var existingByLink: [String: Int] = [:]
         for (i, a) in feeds[idx].articles.enumerated() {
@@ -939,9 +957,11 @@ class AppStore {
             feed.faviconFetchDone = true
             feeds[idx] = feed
         }
-        purgeOldReadArticles()
-        pruneFullContentCache()
-        saveToStorage()
+        if persist {
+            purgeOldReadArticles()
+            pruneFullContentCache()
+            saveToStorage()
+        }
     }
 
     func refreshAll() async {
@@ -955,16 +975,37 @@ class AppStore {
             refreshProgressTitle = "准备中…"
         }
         var failures: [String] = []
-        for (i, feed) in snapshot.enumerated() {
-            let title = feed.title.isEmpty ? "未命名源" : feed.title
-            withAnimation(.easeInOut(duration: 0.32)) {
-                refreshProgressCurrent = i + 1
-                refreshProgressTitle = title
+        let limit = FeedHTTP.refreshConcurrency
+        var completed = 0
+        // 按批次并行，避免同时打满所有源
+        var offset = 0
+        while offset < snapshot.count {
+            let end = min(offset + limit, snapshot.count)
+            let batch = Array(snapshot[offset..<end])
+            await withTaskGroup(of: (String, String?).self) { group in
+                for feed in batch {
+                    let title = feed.title.isEmpty ? "未命名源" : feed.title
+                    let id = feed.id
+                    group.addTask { @MainActor in
+                        let err = await self.refreshFeedResult(id, manageLoading: false, persist: false)
+                        return (title, err)
+                    }
+                }
+                for await (title, err) in group {
+                    completed += 1
+                    withAnimation(.easeInOut(duration: 0.22)) {
+                        refreshProgressCurrent = completed
+                        refreshProgressTitle = title
+                    }
+                    if let err { failures.append(err) }
+                }
             }
-            if let err = await refreshFeedResult(feed.id, manageLoading: false) {
-                failures.append(err)
-            }
+            offset = end
         }
+        // 全部源刷新完后统一落盘，避免每源写一次磁盘
+        purgeOldReadArticles()
+        pruneFullContentCache()
+        saveToStorage()
         // 收尾：先走到 100%，再淡出，避免进度条突然消失
         withAnimation(.easeInOut(duration: 0.28)) {
             refreshProgressCurrent = snapshot.count

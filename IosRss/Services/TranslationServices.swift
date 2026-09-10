@@ -89,18 +89,83 @@ enum DeepLTranslate {
 // MARK: - Google Translate (free unofficial endpoint)
 
 enum GoogleTranslate {
-    /// 使用 POST 避免超长 URL，并复用高并发 Session
-    static func translate(text: String, targetLang: String = "zh") async throws -> String {
+    /// - Parameter apiKey: 有值时走 Cloud Translation v2；否则走免费 gtx（易 429）
+    static func translate(text: String, targetLang: String = "zh", apiKey: String? = nil) async throws -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
+        let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !key.isEmpty {
+            return try await translateOfficial(text: trimmed, targetLang: targetLang, apiKey: key)
+        }
+        return try await translateFreeWithRetry(text: trimmed, targetLang: targetLang)
+    }
 
+    /// Google Cloud Translation API v2（需启用 Cloud Translation 的 API Key）
+    private static func translateOfficial(text: String, targetLang: String, apiKey: String) async throws -> String {
+        guard let url = URL(string: "https://translation.googleapis.com/language/translate/v2?key=\(apiKey)") else {
+            throw TranslationError.apiError("无效的 Google API URL")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "q": text,
+            "target": targetLang,
+            "format": "text"
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await TranslationHTTP.session.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            let raw = String(data: data, encoding: .utf8) ?? ""
+            if http.statusCode == 429 {
+                throw TranslationError.apiError("Google 官方 API 限流 (429)，请稍后再试")
+            }
+            if http.statusCode == 403 {
+                throw TranslationError.apiError("Google API Key 无效或未启用 Cloud Translation API")
+            }
+            throw TranslationError.apiError("Google 官方 API 错误 \(http.statusCode): \(raw.prefix(120))")
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let dataObj = json["data"] as? [String: Any],
+              let translations = dataObj["translations"] as? [[String: Any]],
+              let translated = translations.first?["translatedText"] as? String,
+              !translated.isEmpty else {
+            throw TranslationError.apiError("解析 Google 官方响应失败")
+        }
+        return translated
+    }
+
+    /// 免费 gtx：遇 429 退避重试
+    private static func translateFreeWithRetry(text: String, targetLang: String, maxAttempts: Int = 4) async throws -> String {
+        var lastError: Error = TranslationError.apiError("Google 翻译失败")
+        for attempt in 0..<maxAttempts {
+            if attempt > 0 {
+                // 0.8s, 1.6s, 3.2s
+                let ns = UInt64(pow(2.0, Double(attempt - 1)) * 0.8 * 1_000_000_000)
+                try await Task.sleep(nanoseconds: ns)
+            }
+            do {
+                return try await translateFreeOnce(text: text, targetLang: targetLang)
+            } catch {
+                lastError = error
+                let msg = error.localizedDescription
+                if msg.contains("429") || msg.lowercased().contains("rate") {
+                    continue
+                }
+                throw error
+            }
+        }
+        throw TranslationError.apiError("Google 免费接口限流 (429)。请降低并发、稍后再试，或在设置中填写 Google Cloud Translation API Key / 换用 DeepL·Microsoft·MyMemory。")
+    }
+
+    private static func translateFreeOnce(text: String, targetLang: String) async throws -> String {
         guard let url = URL(string: "https://translate.googleapis.com/translate_a/single") else {
             throw TranslationError.apiError("无效的URL")
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded;charset=UTF-8", forHTTPHeaderField: "Content-Type")
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 15
 
@@ -110,19 +175,25 @@ enum GoogleTranslate {
             URLQueryItem(name: "sl", value: "auto"),
             URLQueryItem(name: "tl", value: targetLang),
             URLQueryItem(name: "dt", value: "t"),
-            URLQueryItem(name: "q", value: trimmed)
+            URLQueryItem(name: "q", value: text)
         ]
         request.httpBody = body.percentEncodedQuery?.data(using: .utf8)
 
         let (data, response) = try await TranslationHTTP.session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
-            throw TranslationError.apiError("Google 翻译请求失败 (状态码 \(http.statusCode)): \(raw)")
+            if http.statusCode == 429 {
+                throw TranslationError.apiError("Google 429")
+            }
+            // 不把整页 HTML 塞进错误
+            throw TranslationError.apiError("Google 翻译请求失败 (状态码 \(http.statusCode))")
+        }
+        // 有时 200 仍返回 HTML 拦截页
+        if let raw = String(data: data, encoding: .utf8), raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("<!") {
+            throw TranslationError.apiError("Google 429")
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
               let firstElement = json.first as? [Any] else {
-            let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? "空响应"
-            throw TranslationError.apiError("解析响应失败: \(raw)")
+            throw TranslationError.apiError("解析 Google 响应失败")
         }
         let result = firstElement.compactMap { segment -> String? in
             guard let segArray = segment as? [Any],

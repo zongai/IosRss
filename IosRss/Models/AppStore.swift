@@ -470,7 +470,8 @@ class AppStore {
         case .google:
             let key = (Keychain.load(key: "google_translate_key") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             do {
-                let out = try await GoogleTranslate.translate(text: sample, targetLang: targetLanguage.googleCode)
+                let gKey = (Keychain.load(key: "google_translate_key") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let out = try await GoogleTranslate.translate(text: sample, targetLang: targetLanguage.googleCode, apiKey: gKey.isEmpty ? nil : gKey)
                 let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !preview.isEmpty else { throw TranslationError.apiError("返回空译文") }
                 if key.isEmpty {
@@ -1090,7 +1091,8 @@ class AppStore {
         }
         // 全部 Key 失败 → 回退 Google（免 Key）再试一次
         do {
-            return try await GoogleTranslate.translate(text: text, targetLang: targetLanguage.googleCode)
+            let gKey = Keychain.load(key: "google_translate_key") ?? ""
+            return try await GoogleTranslate.translate(text: text, targetLang: targetLanguage.googleCode, apiKey: gKey.isEmpty ? nil : gKey)
         } catch {
             throw lastError
         }
@@ -1208,7 +1210,9 @@ class AppStore {
     func translateText(_ text: String) async throws -> String {
         let lang = targetLanguage
         switch defaultTranslationEngine {
-        case .google: return try await GoogleTranslate.translate(text: text, targetLang: lang.googleCode)
+        case .google:
+            let gKey = Keychain.load(key: "google_translate_key") ?? ""
+            return try await GoogleTranslate.translate(text: text, targetLang: lang.googleCode, apiKey: gKey.isEmpty ? nil : gKey)
         case .mymemory: return try await MyMemoryTranslate.translate(text: text, targetLang: lang.mymemoryCode)
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
@@ -1244,7 +1248,7 @@ class AppStore {
         if translationConcurrency > 0 { return min(8, translationConcurrency) }
         switch engine {
         case .ai: return 4
-        case .google: return 8
+        case .google: return 3
         case .mymemory: return 4
         case .microsoft: return 3
         case .deepl: return 3

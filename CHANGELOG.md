@@ -8,6 +8,12 @@
 
 ## [Unreleased]
 
+## [v1.3-37] — 2026-09-10
+### Fixed
+- Google 翻译 429：免费接口退避重试、默认并发降至 3、错误不再刷 HTML
+- 填写 Google Cloud Translation API Key 时走官方 v2 接口
+
+
 ## [v1.3-36] — 2026-09-10
 ### Improved
 - 翻译 / AI 测试结果标明每个 Key 是否可用（掩码显示，多 Key 逐个检测）

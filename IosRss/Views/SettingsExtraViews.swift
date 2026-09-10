@@ -52,7 +52,7 @@ struct TranslationSettingsView: View {
             } header: {
                 Text("并发")
             } footer: {
-                Text("同时请求数。自动：Google 6、免 Key 4、AI 4。过高可能限流。")
+                Text("同时请求数。自动：Google 3、MyMemory 4、AI 4。遇 429 请降到 1～2 或换引擎。")
             }
 
             // Google
@@ -66,7 +66,7 @@ struct TranslationSettingsView: View {
                     }
                 testButton(for: .google)
             } header: { Text("Google") }
-            footer: { Text("不填 Key 时使用公开接口；有 Key 时走官方 API。") }
+            footer: { Text("不填 Key 用免费接口（易 429 限流，默认低并发并自动重试）。填写 Google Cloud Translation API Key 更稳定。") }
 
             // Microsoft
             Section {

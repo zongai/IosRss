@@ -175,39 +175,61 @@ enum MyMemoryTranslate {
 // MARK: - Lingva (public Google frontends, no key)
 
 enum LingvaTranslate {
-    /// 公共实例列表，失败时轮询
-    private static let hosts = [
+    /// 公共实例（多数可能不稳定；可在设置中填写自定义实例）
+    private static let defaultHosts = [
+        "https://lingva.lunar.icu",
+        "https://translate.plausibility.cloud",
         "https://lingva.ml",
         "https://lingva.garudalinux.org",
-        "https://translate.plausibility.cloud"
+        "https://translate.projectsegfau.lt",
+        "https://translate.dr460nf1r3.org"
     ]
 
-    static func translate(text: String, targetLang: String = "zh") async throws -> String {
+    static func resolveHosts(customBase: String?) -> [String] {
+        var list: [String] = []
+        if let c = customBase?.trimmingCharacters(in: .whitespacesAndNewlines), !c.isEmpty {
+            let base = c.hasSuffix("/") ? String(c.dropLast()) : c
+            list.append(base)
+        }
+        list.append(contentsOf: defaultHosts)
+        // 去重保持顺序
+        var seen = Set<String>()
+        return list.filter { seen.insert($0).inserted }
+    }
+
+    static func translate(text: String, targetLang: String = "zh", customBase: String? = nil) async throws -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
-        // path: /api/v1/{source}/{target}/{query}
-        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmed
+        // 过长文本易失败，截断到约 1200 字符
+        let payload = trimmed.count > 1200 ? String(trimmed.prefix(1200)) : trimmed
+        let encoded = payload.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? payload
         let tl: String = {
             switch targetLang.lowercased() {
-            case "zh-cn", "zh": return "zh"
-            case "zh-tw": return "zh_HANT"
+            case "zh-cn", "zh-hans", "zh": return "zh"
+            case "zh-tw", "zh-hant": return "zh_HANT"
             default: return targetLang.replacingOccurrences(of: "-", with: "_")
             }
         }()
-        var lastError: Error = TranslationError.apiError("Lingva 不可用")
-        for host in hosts {
+        var lastError: Error = TranslationError.apiError("Lingva 公共实例暂不可用，请改用 Google / MyMemory，或填写自定义 Lingva 地址")
+        for host in resolveHosts(customBase: customBase) {
             guard let url = URL(string: "\(host)/api/v1/auto/\(tl)/\(encoded)") else { continue }
-            var request = URLRequest(url: url, timeoutInterval: 18)
-            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+            var request = URLRequest(url: url, timeoutInterval: 14)
+            request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)", forHTTPHeaderField: "User-Agent")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
             do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                let (data, response) = try await TranslationHTTP.session.data(for: request)
+                guard let http = response as? HTTPURLResponse else { continue }
+                if !(200..<300).contains(http.statusCode) {
+                    lastError = TranslationError.apiError("Lingva \(host) HTTP \(http.statusCode)")
                     continue
                 }
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let translation = json["translation"] as? String,
-                   !translation.isEmpty {
-                    return translation
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    if let translation = json["translation"] as? String, !translation.isEmpty {
+                        return translation
+                    }
+                    if let err = json["error"] as? String {
+                        lastError = TranslationError.apiError("Lingva: \(err)")
+                    }
                 }
             } catch {
                 lastError = error
@@ -217,16 +239,34 @@ enum LingvaTranslate {
     }
 }
 
-// MARK: - LibreTranslate (public instances, no key when available)
+// MARK: - LibreTranslate（官方需 Key；可填自定义实例）
 
 enum LibreTranslate {
-    private static let endpoints = [
+    private static let defaultEndpoints = [
         "https://libretranslate.com/translate",
-        "https://translate.argosopentech.com/translate",
-        "https://trans.zillyhuhn.com/translate"
+        "https://translate.argosopentech.com/translate"
     ]
 
-    static func translate(text: String, targetLang: String = "zh") async throws -> String {
+    static func resolveEndpoints(customBase: String?) -> [String] {
+        var list: [String] = []
+        if let c = customBase?.trimmingCharacters(in: .whitespacesAndNewlines), !c.isEmpty {
+            var base = c.hasSuffix("/") ? String(c.dropLast()) : c
+            if !base.hasSuffix("/translate") {
+                base += "/translate"
+            }
+            list.append(base)
+        }
+        list.append(contentsOf: defaultEndpoints)
+        var seen = Set<String>()
+        return list.filter { seen.insert($0).inserted }
+    }
+
+    static func translate(
+        text: String,
+        targetLang: String = "zh",
+        apiKey: String? = nil,
+        customBase: String? = nil
+    ) async throws -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         let tl: String = {
@@ -236,37 +276,45 @@ enum LibreTranslate {
             default: return targetLang.split(separator: "-").first.map(String.init) ?? targetLang
             }
         }()
-        var lastError: Error = TranslationError.apiError("LibreTranslate 不可用")
-        for endpoint in endpoints {
+        let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var lastError: Error = TranslationError.apiError("LibreTranslate 需要 API Key 或可用的自建实例")
+        for endpoint in resolveEndpoints(customBase: customBase) {
             guard let url = URL(string: endpoint) else { continue }
-            var request = URLRequest(url: url, timeoutInterval: 20)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
-            let body: [String: Any] = [
-                "q": String(trimmed.prefix(5000)),
+            var body: [String: Any] = [
+                "q": trimmed,
                 "source": "auto",
                 "target": tl,
                 "format": "text"
             ]
+            if !key.isEmpty {
+                body["api_key"] = key
+            }
+            var request = URLRequest(url: url, timeoutInterval: 18)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
             do {
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await TranslationHTTP.session.data(for: request)
                 guard let http = response as? HTTPURLResponse else { continue }
-                if !(200..<300).contains(http.statusCode) {
-                    // 许多公共实例会 400 要求 key
-                    continue
+                if http.statusCode == 200 {
+                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let translated = json["translatedText"] as? String,
+                       !translated.isEmpty {
+                        return translated
+                    }
                 }
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let translated = json["translatedText"] as? String,
-                   !translated.isEmpty {
-                    return translated
+                let msg = String(data: data, encoding: .utf8) ?? ""
+                if http.statusCode == 400 || http.statusCode == 403 || msg.lowercased().contains("api key") {
+                    lastError = TranslationError.apiError("LibreTranslate 需要有效 API Key（portal.libretranslate.com）")
+                } else {
+                    lastError = TranslationError.apiError("LibreTranslate HTTP \(http.statusCode)")
                 }
             } catch {
                 lastError = error
             }
         }
-        throw TranslationError.apiError("LibreTranslate 公共实例暂不可用（可能需要自建或 Key）")
+        throw lastError
     }
 }
 

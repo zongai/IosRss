@@ -62,6 +62,10 @@ class AppStore {
     var translationConcurrency: Int = 0
     /// AI 摘要/解释等输出语言
     var aiOutputLanguage: AppLanguage = .zhHans
+    /// 自定义 Lingva 实例根地址（可选）
+    var lingvaCustomBase: String = ""
+    /// 自定义 LibreTranslate 根地址（可选，可含或不含 /translate）
+    var libreCustomBase: String = ""
 
     static let defaultTranslationPrompt = """
 你是专业译者。将下面内容翻译成{{lang}}。
@@ -433,6 +437,22 @@ class AppStore {
         let text = try await callAIWithProviderKeys(provider: provider, prompt: prompt, maxTokens: 32)
         return "\(provider.name) (\(keys.count) Key): " + text
     }
+
+    /// 测试当前或指定翻译引擎（短句连通性 / Key 是否可用）
+    func testTranslationEngine(_ engine: TranslationEngine? = nil) async throws -> String {
+        let eng = engine ?? defaultTranslationEngine
+        let sample = "Hello, world."
+        let previous = defaultTranslationEngine
+        defaultTranslationEngine = eng
+        defer { defaultTranslationEngine = previous }
+        let out = try await translateText(sample)
+        let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !preview.isEmpty else {
+            throw TranslationError.apiError("\(eng.rawValue) 返回空译文")
+        }
+        return "\(eng.rawValue) 可用：\(preview.prefix(80))"
+    }
+
 
     var feedsByGroup: [(group: FeedGroup?, feeds: [RSSFeed])] {
         let sortedGroups = groups.sorted { $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name) }
@@ -1099,8 +1119,20 @@ class AppStore {
         switch defaultTranslationEngine {
         case .google: return try await GoogleTranslate.translate(text: text, targetLang: lang.googleCode)
         case .mymemory: return try await MyMemoryTranslate.translate(text: text, targetLang: lang.mymemoryCode)
-        case .lingva: return try await LingvaTranslate.translate(text: text, targetLang: lang.googleCode)
-        case .libre: return try await LibreTranslate.translate(text: text, targetLang: lang.googleCode)
+        case .lingva:
+            return try await LingvaTranslate.translate(
+                text: text,
+                targetLang: lang.googleCode,
+                customBase: lingvaCustomBase.isEmpty ? nil : lingvaCustomBase
+            )
+        case .libre:
+            let libreKey = Keychain.load(key: "libre_translate_key") ?? ""
+            return try await LibreTranslate.translate(
+                text: text,
+                targetLang: lang.googleCode,
+                apiKey: libreKey.isEmpty ? nil : libreKey,
+                customBase: libreCustomBase.isEmpty ? nil : libreCustomBase
+            )
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
             return try await MicrosoftTranslate.translate(text: text, apiKey: key, targetLang: lang.microsoftCode)
@@ -1689,6 +1721,8 @@ class AppStore {
         UserDefaults.standard.set(feedSortMode.rawValue, forKey: "feedSortMode")
         UserDefaults.standard.set(targetLanguage.rawValue, forKey: "targetLanguage")
         UserDefaults.standard.set(translationConcurrency, forKey: "translationConcurrency")
+        UserDefaults.standard.set(lingvaCustomBase, forKey: "lingvaCustomBase")
+        UserDefaults.standard.set(libreCustomBase, forKey: "libreCustomBase")
         UserDefaults.standard.set(aiOutputLanguage.rawValue, forKey: "aiOutputLanguage")
         if let data = try? JSONEncoder().encode(aiProviders) { UserDefaults.standard.set(data, forKey: "aiProviders") }
         if let id = defaultSummaryProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultSummaryProviderID") }
@@ -1722,6 +1756,8 @@ class AppStore {
         groupTitleFontSize = UserDefaults.standard.object(forKey: "groupTitleFontSize") as? Double ?? 13
         if let raw = UserDefaults.standard.string(forKey: "titleDisplayMode"),
            let mode = TitleDisplayMode(rawValue: raw) { titleDisplayMode = mode }
+        if let s = UserDefaults.standard.string(forKey: "lingvaCustomBase") { lingvaCustomBase = s }
+        if let s = UserDefaults.standard.string(forKey: "libreCustomBase") { libreCustomBase = s }
         if let raw = UserDefaults.standard.string(forKey: "defaultTranslationEngine"),
            let engine = TranslationEngine(rawValue: raw) { defaultTranslationEngine = engine }
         showReadArticles = UserDefaults.standard.object(forKey: "showReadArticles") as? Bool ?? false

@@ -328,7 +328,7 @@ enum TranslationEngine: String, CaseIterable, Codable {
     case google = "Google 翻译"
     case mymemory = "MyMemory（免 Key）"
     case lingva = "Lingva（免 Key）"
-    case libre = "LibreTranslate（免 Key）"
+    case libre = "LibreTranslate（可填 Key）"
     case microsoft = "Microsoft 翻译"
     case deepl = "DeepL"
     case ai = "AI 翻译"   // Gemini / OpenAI / Anthropic 等统一走 AI Provider

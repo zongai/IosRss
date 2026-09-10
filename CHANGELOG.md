@@ -8,6 +8,14 @@
 
 ## [Unreleased]
 
+## [v1.3-33] — 2026-09-10
+### Fixed
+- Lingva：扩充公共实例、可选自定义实例地址，失败提示更明确
+- LibreTranslate：支持 API Key 与自定义实例（官方需 Key）
+### Added
+- 翻译设置：各引擎「测试此引擎」连通性 / Key 可用性检测
+
+
 ### Added
 - DeepL 多 Key + 配额切换/回退 Google
 ### Improved

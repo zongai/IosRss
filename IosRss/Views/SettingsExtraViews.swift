@@ -4,8 +4,12 @@ struct TranslationSettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var googleKey = Keychain.load(key: "google_translate_key") ?? ""
     @State private var microsoftKey = Keychain.load(key: "microsoft_translate_key") ?? ""
+    @State private var libreKey = Keychain.load(key: "libre_translate_key") ?? ""
     @State private var deeplKeys: [String] = []
     @State private var newDeepLKey = ""
+    @State private var testingEngine: TranslationEngine?
+    @State private var testMessage: String?
+    @State private var testIsError = false
 
     var body: some View {
         @Bindable var store = store
@@ -49,122 +53,121 @@ struct TranslationSettingsView: View {
             } header: {
                 Text("并发")
             } footer: {
-                Text("同时请求数。自动：Google 6、免 Key 4、AI 4。列表整批并发。过高可能限流。")
+                Text("同时请求数。自动：Google 6、免 Key 4、AI 4。过高可能限流。")
             }
 
+            // Google
             Section {
-                HStack {
-                    Text("Google 翻译").font(.system(size: 15, weight: .medium))
-                    Spacer()
-                    if store.defaultTranslationEngine == .google {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.primary)
-                    }
-                }
-                TextField("API Key（可选，免费模式无需填写）", text: $googleKey)
+                engineHeader("Google 翻译", selected: store.defaultTranslationEngine == .google)
+                TextField("API Key（可选，免费模式可不填）", text: $googleKey)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
-                    .onChange(of: googleKey) { _, new in
-                        if new.isEmpty { Keychain.delete(key: "google_translate_key") }
-                        else { Keychain.save(key: "google_translate_key", value: new) }
+                    .onChange(of: googleKey) { _, v in
+                        Keychain.save(key: "google_translate_key", value: v.trimmingCharacters(in: .whitespacesAndNewlines))
                     }
-            } header: { Text("Google 翻译") }
-            footer: { Text("不填 API Key 时使用免费翻译接口，有请求频率限制") }
+                testButton(for: .google)
+            } header: { Text("Google") }
+            footer: { Text("不填 Key 时使用公开接口；有 Key 时走官方 API。") }
 
+            // Microsoft
             Section {
-                freeEngineRow("MyMemory（免 Key）", selected: store.defaultTranslationEngine == .mymemory)
-                freeEngineRow("Lingva（免 Key）", selected: store.defaultTranslationEngine == .lingva)
-                freeEngineRow("LibreTranslate（免 Key）", selected: store.defaultTranslationEngine == .libre)
-            } header: {
-                Text("免注册免 Key")
-            } footer: {
-                Text("MyMemory / Lingva / LibreTranslate 均无需注册与 Key。公共实例可能限流，失败时可换 Google 或其它引擎。")
-            }
-
-            Section {
-                HStack {
-                    Text("Microsoft 翻译").font(.system(size: 15, weight: .medium))
-                    Spacer()
-                    if store.defaultTranslationEngine == .microsoft {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.primary)
-                    }
-                }
-                TextField("Ocp-Apim-Subscription-Key", text: $microsoftKey)
+                engineHeader("Microsoft 翻译", selected: store.defaultTranslationEngine == .microsoft)
+                TextField("API Key（必填）", text: $microsoftKey)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
-                    .onChange(of: microsoftKey) { _, new in
-                        if new.isEmpty { Keychain.delete(key: "microsoft_translate_key") }
-                        else { Keychain.save(key: "microsoft_translate_key", value: new) }
+                    .onChange(of: microsoftKey) { _, v in
+                        Keychain.save(key: "microsoft_translate_key", value: v.trimmingCharacters(in: .whitespacesAndNewlines))
                     }
-            } header: { Text("Microsoft Translator") }
+                testButton(for: .microsoft)
+            } header: { Text("Microsoft") }
 
+            // DeepL
             Section {
-                HStack {
-                    Text("DeepL 翻译").font(.system(size: 15, weight: .medium))
-                    Spacer()
-                    if store.defaultTranslationEngine == .deepl {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.primary)
-                    }
-                }
-                if deeplKeys.isEmpty {
-                    Text("尚未添加 Key").foregroundStyle(.secondary)
-                } else {
-                    ForEach(Array(deeplKeys.enumerated()), id: \.offset) { index, key in
-                        HStack {
-                            Text(maskSecret(key))
-                                .font(.system(size: 13, design: .monospaced))
-                            Spacer()
-                            Button(role: .destructive) {
-                                deeplKeys.remove(at: index)
-                                store.saveDeepLKeys(deeplKeys)
-                            } label: {
-                                Image(systemName: "minus.circle.fill")
-                            }
-                            .buttonStyle(.plain)
-                        }
+                engineHeader("DeepL", selected: store.defaultTranslationEngine == .deepl)
+                ForEach(Array(deeplKeys.enumerated()), id: \.offset) { idx, key in
+                    HStack {
+                        Text(maskSecret(key)).font(.system(.body, design: .monospaced))
+                        Spacer()
+                        Button(role: .destructive) {
+                            deeplKeys.remove(at: idx)
+                            store.saveDeepLKeys(deeplKeys)
+                        } label: { Image(systemName: "trash") }
                     }
                 }
                 HStack {
-                    SecureField("添加 DeepL API Key", text: $newDeepLKey)
+                    TextField("添加 DeepL Key", text: $newDeepLKey)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                     Button("添加") {
                         let k = newDeepLKey.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !k.isEmpty else { return }
-                        if !deeplKeys.contains(k) {
-                            deeplKeys.append(k)
-                            store.saveDeepLKeys(deeplKeys)
-                        }
+                        deeplKeys.append(k)
+                        store.saveDeepLKeys(deeplKeys)
                         newDeepLKey = ""
                     }
-                    .disabled(newDeepLKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+                testButton(for: .deepl)
             } header: { Text("DeepL（多 Key）") }
-            footer: { Text("可添加多个 Key；配额用尽时自动换下一把，全部失败回退 Google。免费版 Key 以 :fx 结尾。") }
+            footer: { Text("配额耗尽或失败时自动切换下一把 Key，全部失败则回退 Google。") }
 
+            // MyMemory
             Section {
-                HStack {
-                    Text("AI 翻译").font(.system(size: 15, weight: .medium))
-                    Spacer()
-                    if store.defaultTranslationEngine == .ai {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.primary)
+                engineHeader("MyMemory（免 Key）", selected: store.defaultTranslationEngine == .mymemory)
+                testButton(for: .mymemory)
+            } header: { Text("MyMemory") }
+            footer: { Text("按 IP 有日配额；限流时请换引擎或稍后再试。") }
+
+            // Lingva
+            Section {
+                engineHeader("Lingva（免 Key）", selected: store.defaultTranslationEngine == .lingva)
+                TextField("自定义实例 URL（可选）", text: $store.lingvaCustomBase)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                testButton(for: .lingva)
+            } header: { Text("Lingva") }
+            footer: { Text("公共实例经常不可用。可自建或填写可用实例根地址，例如 https://lingva.example.com") }
+
+            // Libre
+            Section {
+                engineHeader("LibreTranslate", selected: store.defaultTranslationEngine == .libre)
+                TextField("API Key（官方实例必填）", text: $libreKey)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .onChange(of: libreKey) { _, v in
+                        Keychain.save(key: "libre_translate_key", value: v.trimmingCharacters(in: .whitespacesAndNewlines))
                     }
-                }
-                if let pid = store.defaultTranslationProviderID,
-                   let provider = store.aiProviders.first(where: { $0.id == pid }) {
-                    Text("使用 \(provider.name) · \(provider.model)")
-                        .font(.system(size: 13)).foregroundStyle(.secondary)
-                } else {
-                    Text("在 AI 设置中指定翻译 Provider（支持 OpenAI / Anthropic / Gemini）")
-                        .font(.system(size: 13)).foregroundStyle(.secondary)
-                }
+                TextField("自定义实例 URL（可选）", text: $store.libreCustomBase)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                testButton(for: .libre)
+            } header: { Text("LibreTranslate") }
+            footer: { Text("libretranslate.com 需在 portal.libretranslate.com 申请 Key；自建实例通常可不填 Key。") }
+
+            // AI
+            Section {
+                engineHeader("AI 翻译", selected: store.defaultTranslationEngine == .ai)
+                Text("在「AI 设置」中配置 Provider 与 Key，可对单个 Provider 左滑测试。")
+                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                testButton(for: .ai)
             } header: { Text("AI 翻译") }
-            footer: { Text("Gemini、OpenAI、Anthropic 等统一在「AI 设置」中配置，选择「AI 翻译」后即可使用") }
+
+            if let testMessage {
+                Section {
+                    Text(testMessage)
+                        .font(.system(size: 13))
+                        .foregroundStyle(testIsError ? .red : .secondary)
+                } header: { Text("测试结果") }
+            }
         }
         .navigationTitle("翻译设置")
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear { store.persistSettings() }
         .onChange(of: store.defaultTranslationEngine) { _, _ in store.persistSettings() }
         .onChange(of: store.translationConcurrency) { _, _ in store.persistSettings() }
+        .onChange(of: store.lingvaCustomBase) { _, _ in store.persistSettings() }
+        .onChange(of: store.libreCustomBase) { _, _ in store.persistSettings() }
         .onAppear { deeplKeys = store.loadDeepLKeys() }
         .onChange(of: store.targetLanguage) { _, _ in store.persistSettings() }
         .onChange(of: store.aiOutputLanguage) { _, _ in store.persistSettings() }
@@ -177,13 +180,52 @@ struct TranslationSettingsView: View {
     }
 
     @ViewBuilder
-    private func freeEngineRow(_ title: String, selected: Bool) -> some View {
+    private func engineHeader(_ title: String, selected: Bool) -> some View {
         HStack {
             Text(title).font(.system(size: 15, weight: .medium))
             Spacer()
             if selected {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.primary)
             }
+        }
+    }
+
+    private func testButton(for engine: TranslationEngine) -> some View {
+        Button {
+            Task { await runTest(engine) }
+        } label: {
+            HStack {
+                if testingEngine == engine {
+                    ProgressView().scaleEffect(0.85)
+                    Text("测试中…")
+                } else {
+                    Label("测试此引擎", systemImage: "network")
+                }
+                Spacer()
+            }
+        }
+        .disabled(testingEngine != nil)
+    }
+
+    @MainActor
+    private func runTest(_ engine: TranslationEngine) async {
+        testingEngine = engine
+        testMessage = nil
+        testIsError = false
+        defer { testingEngine = nil }
+        do {
+            // 先保存当前输入的 Key
+            Keychain.save(key: "google_translate_key", value: googleKey.trimmingCharacters(in: .whitespacesAndNewlines))
+            Keychain.save(key: "microsoft_translate_key", value: microsoftKey.trimmingCharacters(in: .whitespacesAndNewlines))
+            Keychain.save(key: "libre_translate_key", value: libreKey.trimmingCharacters(in: .whitespacesAndNewlines))
+            store.saveDeepLKeys(deeplKeys)
+            store.persistSettings()
+            let msg = try await store.testTranslationEngine(engine)
+            testMessage = msg
+            testIsError = false
+        } catch {
+            testMessage = error.localizedDescription
+            testIsError = true
         }
     }
 }

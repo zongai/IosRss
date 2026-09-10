@@ -365,8 +365,9 @@ struct EditProviderView: View {
                     .disabled(isTesting || baseURL.isEmpty || model.isEmpty)
                     if let testResult {
                         Text(testResult)
-                            .font(.caption)
-                            .foregroundStyle(testResult.hasPrefix("失败") ? .red : .secondary)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(testResult.contains("不可用") && !testResult.contains("可用") ? .red : .primary)
+                            .textSelection(.enabled) ? .red : .secondary)
                     }
                 } footer: {
                     Text("使用当前表单中的配置（需先保存 Key 后对新 Provider 更准确；已有 Provider 直接测已存 Key）。")

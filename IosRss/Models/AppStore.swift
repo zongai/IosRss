@@ -421,7 +421,13 @@ class AppStore {
         saveToStorage()
     }
 
-    /// 仅测试指定 Provider（不 failover 到其它）
+    private func maskKeyForTest(_ key: String) -> String {
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard k.count > 8 else { return String(repeating: "•", count: max(4, k.count)) }
+        return String(k.prefix(4)) + "…" + String(k.suffix(4))
+    }
+
+    /// 仅测试指定 Provider：逐个 Key 验证是否可用
     func testAIProvider(_ providerID: UUID?) async throws -> String {
         guard let id = providerID,
               let provider = aiProviders.first(where: { $0.id == id }) else {
@@ -432,23 +438,110 @@ class AppStore {
             throw TranslationError.apiError("未配置 API Key")
         }
         let prompt = "You are a connectivity probe. Reply with exactly the two letters: OK"
-        let text = try await callAIWithProviderKeys(provider: provider, prompt: prompt, maxTokens: 32)
-        return "\(provider.name) (\(keys.count) Key): " + text
+        var lines: [String] = ["\(provider.name)：共 \(keys.count) 个 Key"]
+        var okCount = 0
+        for (i, key) in keys.enumerated() {
+            let label = "Key\(i + 1) (\(maskKeyForTest(key)))"
+            do {
+                let text = try await callAI(prompt: prompt, provider: provider, apiKey: key, maxTokens: 32)
+                let preview = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if preview.isEmpty {
+                    lines.append("• \(label)：不可用（空响应）")
+                } else {
+                    okCount += 1
+                    lines.append("• \(label)：可用")
+                }
+            } catch {
+                lines.append("• \(label)：不可用 — \(error.localizedDescription)")
+            }
+        }
+        lines.append(okCount > 0 ? "结果：\(okCount)/\(keys.count) 可用" : "结果：全部不可用")
+        if okCount == 0 {
+            throw TranslationError.apiError(lines.joined(separator: "\n"))
+        }
+        return lines.joined(separator: "\n")
     }
 
-    /// 测试当前或指定翻译引擎（短句连通性 / Key 是否可用）
+    /// 测试翻译引擎：标明对应 Key 是否可用（多 Key 时逐个测）
     func testTranslationEngine(_ engine: TranslationEngine? = nil) async throws -> String {
         let eng = engine ?? defaultTranslationEngine
         let sample = "Hello, world."
-        let previous = defaultTranslationEngine
-        defaultTranslationEngine = eng
-        defer { defaultTranslationEngine = previous }
-        let out = try await translateText(sample)
-        let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !preview.isEmpty else {
-            throw TranslationError.apiError("\(eng.rawValue) 返回空译文")
+        switch eng {
+        case .google:
+            let key = (Keychain.load(key: "google_translate_key") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            do {
+                let out = try await GoogleTranslate.translate(text: sample, targetLang: targetLanguage.googleCode)
+                let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !preview.isEmpty else { throw TranslationError.apiError("返回空译文") }
+                if key.isEmpty {
+                    return "Google：免 Key 模式可用\n试译：\(preview.prefix(60))"
+                }
+                return "Google Key (\(maskKeyForTest(key)))：可用\n试译：\(preview.prefix(60))"
+            } catch {
+                if key.isEmpty {
+                    throw TranslationError.apiError("Google 免 Key 模式不可用 — \(error.localizedDescription)")
+                }
+                throw TranslationError.apiError("Google Key (\(maskKeyForTest(key)))：不可用 — \(error.localizedDescription)")
+            }
+        case .mymemory:
+            do {
+                let out = try await MyMemoryTranslate.translate(text: sample, targetLang: targetLanguage.mymemoryCode)
+                let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !preview.isEmpty else { throw TranslationError.apiError("MyMemory 返回空译文") }
+                return "MyMemory（无需 Key）：可用\n试译：\(preview.prefix(60))"
+            } catch {
+                throw TranslationError.apiError("MyMemory（无需 Key）：不可用 — \(error.localizedDescription)")
+            }
+        case .microsoft:
+            let key = (Keychain.load(key: "microsoft_translate_key") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else {
+                throw TranslationError.apiError("Microsoft：未配置 API Key")
+            }
+            do {
+                let out = try await MicrosoftTranslate.translate(
+                    text: sample,
+                    apiKey: key,
+                    region: microsoftTranslateRegion,
+                    targetLang: targetLanguage.microsoftCode
+                )
+                let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !preview.isEmpty else { throw TranslationError.apiError("返回空译文") }
+                return "Microsoft Key (\(maskKeyForTest(key)))：可用\n区域：\(microsoftTranslateRegion.isEmpty ? "global" : microsoftTranslateRegion)\n试译：\(preview.prefix(60))"
+            } catch {
+                throw TranslationError.apiError("Microsoft Key (\(maskKeyForTest(key)))：不可用 — \(error.localizedDescription)")
+            }
+        case .deepl:
+            let keys = loadDeepLKeys()
+            guard !keys.isEmpty else {
+                throw TranslationError.apiError("DeepL：未配置 API Key")
+            }
+            var lines: [String] = ["DeepL：共 \(keys.count) 个 Key"]
+            var okCount = 0
+            let lang = targetLanguage.deeplCode
+            for (i, key) in keys.enumerated() {
+                let label = "Key\(i + 1) (\(maskKeyForTest(key)))"
+                do {
+                    let out = try await DeepLTranslate.translate(text: sample, apiKey: key, targetLang: lang)
+                    let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if preview.isEmpty {
+                        lines.append("• \(label)：不可用（空译文）")
+                    } else {
+                        okCount += 1
+                        lines.append("• \(label)：可用 — \(preview.prefix(40))")
+                    }
+                } catch {
+                    lines.append("• \(label)：不可用 — \(error.localizedDescription)")
+                }
+            }
+            lines.append(okCount > 0 ? "结果：\(okCount)/\(keys.count) 可用" : "结果：全部不可用")
+            if okCount == 0 {
+                throw TranslationError.apiError(lines.joined(separator: "\n"))
+            }
+            return lines.joined(separator: "\n")
+        case .ai:
+            let id = defaultTranslationProviderID ?? defaultSummaryProviderID
+            return try await testAIProvider(id)
         }
-        return "\(eng.rawValue) 可用：\(preview.prefix(80))"
     }
 
 

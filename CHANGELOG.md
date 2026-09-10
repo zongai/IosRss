@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+## [v1.3-36] — 2026-09-10
+### Improved
+- 翻译 / AI 测试结果标明每个 Key 是否可用（掩码显示，多 Key 逐个检测）
+
+
 ## [v1.3-35] — 2026-09-10
 ### Removed
 - 移除不可用的 Lingva、LibreTranslate 翻译引擎（原选择自动回退到 Google）

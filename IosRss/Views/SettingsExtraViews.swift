@@ -132,9 +132,10 @@ struct TranslationSettingsView: View {
             if let testMessage {
                 Section {
                     Text(testMessage)
-                        .font(.system(size: 13))
-                        .foregroundStyle(testIsError ? .red : .secondary)
-                } header: { Text("测试结果") }
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundStyle(testIsError ? .red : .primary)
+                        .textSelection(.enabled)
+                } header: { Text("测试结果（含 Key 可用性）") }
             }
         }
         .navigationTitle("翻译设置")

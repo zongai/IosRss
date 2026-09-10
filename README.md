@@ -2,7 +2,7 @@
 
 原生 SwiftUI 实现的 iOS / iPadOS RSS 阅读器。支持 RSS 与 Atom，内置全文抓取、多引擎翻译、AI 摘要 / 解释、Edge TTS 朗读、源分组、评论（Substack / HN / Engadget 等）与离线缓存。
 
-**版本**：本地调试 `v1.3-35`；CI 构建 `v1.3-35-build{N}`（`N` = GitHub Actions `run_number`）。
+**版本**：本地调试 `v1.3-38`；CI 构建 `v1.3-38-build{N}`（`N` = GitHub Actions `run_number`）。
 
 > **文档维护**：`README.md` 与 `CHANGELOG.md` 由维护者手动更新，**不由** GitHub Actions 自动改写。
 
@@ -30,8 +30,8 @@
 - **已读**：打开即标已读；文章黑名单命中自动标已读
 
 ### 翻译与 AI
-- **引擎**：Google（可不填 Key）/ MyMemory（免 Key）/ Microsoft（Key + 区域）/ DeepL（多 Key）/ AI
-- 已移除不可用的 Lingva、LibreTranslate
+- **引擎**：Google（可不填 Key）/ MyMemory / Lingva（免 Key，REST v1 GET/POST）/ Microsoft（Key + 区域）/ DeepL（多 Key）/ AI
+- LibreTranslate 已移除；Lingva 支持自定义实例
 - **翻译目标语言**与 **AI 输出语言**可分别配置
 - 列表 / 阅读页自动翻译（按源开关；以正文是否已译为准；隐藏的已读条目可跳过）
 - 并发可调；Google/Microsoft 提高连接与批量吞吐；DeepL 多 Key 轮询，配额耗尽回退 Google
@@ -99,8 +99,8 @@ IosRss/
 
 | 场景 | 显示 |
 |------|------|
-| 本地 Xcode | `v1.3-35` |
-| GitHub Actions | `v1.3-35-build{N}` |
+| 本地 Xcode | `v1.3-38` |
+| GitHub Actions | `v1.3-38-build{N}` |
 
 ## Changelog
 

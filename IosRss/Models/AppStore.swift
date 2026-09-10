@@ -64,6 +64,8 @@ class AppStore {
     var aiOutputLanguage: AppLanguage = .zhHans
     /// Azure Translator 区域（eastasia / eastus / global 等）
     var microsoftTranslateRegion: String = "global"
+    /// 自定义 Lingva 实例根地址（可选）
+    var lingvaCustomBase: String = ""
 
     static let defaultTranslationPrompt = """
 你是专业译者。将下面内容翻译成{{lang}}。
@@ -493,7 +495,21 @@ class AppStore {
             } catch {
                 throw TranslationError.apiError("MyMemory（无需 Key）：不可用 — \(error.localizedDescription)")
             }
-        case .microsoft:
+        case .lingva:
+            do {
+                let out = try await LingvaTranslate.translate(
+                    text: sample,
+                    targetLang: targetLanguage.googleCode,
+                    customBase: lingvaCustomBase.isEmpty ? nil : lingvaCustomBase
+                )
+                let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !preview.isEmpty else { throw TranslationError.apiError("Lingva 返回空译文") }
+                let hostHint = lingvaCustomBase.isEmpty ? "公共实例" : lingvaCustomBase
+                return "Lingva（\(hostHint)）：可用\n试译：\(preview.prefix(60))"
+            } catch {
+                throw TranslationError.apiError("Lingva：不可用 — \(error.localizedDescription)")
+            }
+        case .microsoft:case .microsoft:
             let key = (Keychain.load(key: "microsoft_translate_key") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !key.isEmpty else {
                 throw TranslationError.apiError("Microsoft：未配置 API Key")
@@ -1214,6 +1230,12 @@ class AppStore {
             let gKey = Keychain.load(key: "google_translate_key") ?? ""
             return try await GoogleTranslate.translate(text: text, targetLang: lang.googleCode, apiKey: gKey.isEmpty ? nil : gKey)
         case .mymemory: return try await MyMemoryTranslate.translate(text: text, targetLang: lang.mymemoryCode)
+        case .lingva:
+            return try await LingvaTranslate.translate(
+                text: text,
+                targetLang: lang.googleCode,
+                customBase: lingvaCustomBase.isEmpty ? nil : lingvaCustomBase
+            )
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
             return try await MicrosoftTranslate.translate(
@@ -1249,7 +1271,7 @@ class AppStore {
         switch engine {
         case .ai: return 4
         case .google: return 3
-        case .mymemory: return 4
+        case .mymemory, .lingva: return 3
         case .microsoft: return 3
         case .deepl: return 3
         }
@@ -1269,7 +1291,7 @@ class AppStore {
             return await translateNativeBatchParallel(texts, chunkSize: 25, parallelism: 3) {
                 try await MicrosoftTranslate.translate(texts: $0, apiKey: key, region: msRegion, targetLang: msLang)
             }
-        case .google, .mymemory, .ai:
+        case .google, .mymemory, .lingva, .ai:
             // 统一走 translateText（含 AI failover / 多 Key），不再跨 Provider 分片，避免质量与失败率变差
             return await translateConcurrently(texts, concurrency: limit)
         }
@@ -1809,6 +1831,7 @@ class AppStore {
         UserDefaults.standard.set(targetLanguage.rawValue, forKey: "targetLanguage")
         UserDefaults.standard.set(translationConcurrency, forKey: "translationConcurrency")
         UserDefaults.standard.set(microsoftTranslateRegion, forKey: "microsoftTranslateRegion")
+        UserDefaults.standard.set(lingvaCustomBase, forKey: "lingvaCustomBase")
         UserDefaults.standard.set(aiOutputLanguage.rawValue, forKey: "aiOutputLanguage")
         if let data = try? JSONEncoder().encode(aiProviders) { UserDefaults.standard.set(data, forKey: "aiProviders") }
         if let id = defaultSummaryProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultSummaryProviderID") }
@@ -1843,6 +1866,7 @@ class AppStore {
         if let raw = UserDefaults.standard.string(forKey: "titleDisplayMode"),
            let mode = TitleDisplayMode(rawValue: raw) { titleDisplayMode = mode }
         if let s = UserDefaults.standard.string(forKey: "microsoftTranslateRegion"), !s.isEmpty { microsoftTranslateRegion = s }
+        if let s = UserDefaults.standard.string(forKey: "lingvaCustomBase") { lingvaCustomBase = s }
         if let raw = UserDefaults.standard.string(forKey: "defaultTranslationEngine") {
             if raw.contains("Lingva") || raw.contains("Libre") {
                 defaultTranslationEngine = .google

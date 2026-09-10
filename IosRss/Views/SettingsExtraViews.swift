@@ -120,6 +120,17 @@ struct TranslationSettingsView: View {
             } header: { Text("MyMemory") }
             footer: { Text("按 IP 有日配额；限流时请换引擎或稍后再试。") }
 
+            // Lingva
+            Section {
+                engineHeader("Lingva（免 Key）", selected: store.defaultTranslationEngine == .lingva)
+                TextField("自定义实例 URL（可选）", text: $store.lingvaCustomBase)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                testButton(for: .lingva)
+            } header: { Text("Lingva") }
+            footer: { Text("REST v1：GET /api/v1/{source}/{target}/{query} 与 POST /api/v1/{source}/{target}。可填自建实例，如 https://lingva.example.com") }
+
 
             // AI
             Section {
@@ -144,6 +155,7 @@ struct TranslationSettingsView: View {
         .onChange(of: store.defaultTranslationEngine) { _, _ in store.persistSettings() }
         .onChange(of: store.translationConcurrency) { _, _ in store.persistSettings() }
         .onChange(of: store.microsoftTranslateRegion) { _, _ in store.persistSettings() }
+        .onChange(of: store.lingvaCustomBase) { _, _ in store.persistSettings() }
         .onAppear { deeplKeys = store.loadDeepLKeys() }
         .onChange(of: store.targetLanguage) { _, _ in store.persistSettings() }
         .onChange(of: store.aiOutputLanguage) { _, _ in store.persistSettings() }

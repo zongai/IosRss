@@ -243,6 +243,112 @@ enum MyMemoryTranslate {
     }
 }
 
+
+// MARK: - Lingva (REST v1 GET & POST, no key)
+
+enum LingvaTranslate {
+    /// 公共实例；可在设置中指定自定义根地址
+    private static let defaultHosts = [
+        "https://lingva.ml",
+        "https://lingva.lunar.icu",
+        "https://translate.plausibility.cloud",
+        "https://lingva.garudalinux.org",
+        "https://translate.projectsegfau.lt"
+    ]
+
+    static func resolveHosts(customBase: String?) -> [String] {
+        var list: [String] = []
+        if let c = customBase?.trimmingCharacters(in: .whitespacesAndNewlines), !c.isEmpty {
+            let base = c.hasSuffix("/") ? String(c.dropLast()) : c
+            list.append(base)
+        }
+        list.append(contentsOf: defaultHosts)
+        var seen = Set<String>()
+        return list.filter { seen.insert($0).inserted }
+    }
+
+    static func mapTarget(_ targetLang: String) -> String {
+        switch targetLang.lowercased() {
+        case "zh-cn", "zh-hans", "zh": return "zh"
+        case "zh-tw", "zh-hant": return "zh_HANT"
+        default:
+            return targetLang.replacingOccurrences(of: "-", with: "_")
+        }
+    }
+
+    /// REST v1：短文本优先 GET；较长文本用 POST JSON
+    static func translate(text: String, targetLang: String = "zh", customBase: String? = nil) async throws -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let tl = mapTarget(targetLang)
+        var lastError: Error = TranslationError.apiError("Lingva 暂不可用")
+        for host in resolveHosts(customBase: customBase) {
+            do {
+                // 超过 ~300 字符用 POST，避免 URL 过长
+                if trimmed.count > 300 {
+                    return try await post(host: host, target: tl, query: trimmed)
+                }
+                do {
+                    return try await get(host: host, target: tl, query: trimmed)
+                } catch {
+                    // GET 失败再试 POST
+                    return try await post(host: host, target: tl, query: trimmed)
+                }
+            } catch {
+                lastError = error
+                continue
+            }
+        }
+        throw lastError
+    }
+
+    /// GET /api/v1/:source/:target/:query
+    private static func get(host: String, target: String, query: String) async throws -> String {
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? query
+        guard let url = URL(string: "\(host)/api/v1/auto/\(target)/\(encoded)") else {
+            throw TranslationError.apiError("Lingva GET URL 无效")
+        }
+        var request = URLRequest(url: url, timeoutInterval: 16)
+        request.httpMethod = "GET"
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return try await parseResponse(request: request, host: host)
+    }
+
+    /// POST /api/v1/:source/:target  body: {"query":"..."}
+    private static func post(host: String, target: String, query: String) async throws -> String {
+        guard let url = URL(string: "\(host)/api/v1/auto/\(target)") else {
+            throw TranslationError.apiError("Lingva POST URL 无效")
+        }
+        var request = URLRequest(url: url, timeoutInterval: 18)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["query": query])
+        return try await parseResponse(request: request, host: host)
+    }
+
+    private static func parseResponse(request: URLRequest, host: String) async throws -> String {
+        let (data, response) = try await TranslationHTTP.session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw TranslationError.apiError("Lingva 无响应 (\(host))")
+        }
+        if !(200..<300).contains(http.statusCode) {
+            throw TranslationError.apiError("Lingva HTTP \(http.statusCode) (\(host))")
+        }
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let translation = json["translation"] as? String, !translation.isEmpty {
+                return translation
+            }
+            if let err = json["error"] as? String {
+                throw TranslationError.apiError("Lingva: \(err)")
+            }
+        }
+        throw TranslationError.apiError("Lingva 解析失败 (\(host))")
+    }
+}
+
 // MARK: - Microsoft Translator
 
 enum MicrosoftTranslate {

@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+## [v1.3-34] — 2026-09-10
+### Fixed
+- Microsoft 翻译 401：请求增加 `Ocp-Apim-Subscription-Region`（默认 global），设置中可填 Azure 资源区域
+
+
 ## [v1.3-33] — 2026-09-10
 ### Fixed
 - Lingva：扩充公共实例、可选自定义实例地址，失败提示更明确

@@ -321,8 +321,8 @@ enum LibreTranslate {
 // MARK: - Microsoft Translator
 
 enum MicrosoftTranslate {
-    static func translate(text: String, apiKey: String, targetLang: String = "zh-Hans") async throws -> String {
-        let all = try await translate(texts: [text], apiKey: apiKey, targetLang: targetLang)
+    static func translate(text: String, apiKey: String, region: String = "", targetLang: String = "zh-Hans") async throws -> String {
+        let all = try await translate(texts: [text], apiKey: apiKey, region: region, targetLang: targetLang)
         guard let first = all.first, !first.isEmpty else {
             throw TranslationError.apiError("Microsoft Translator 返回无效响应")
         }
@@ -330,18 +330,26 @@ enum MicrosoftTranslate {
     }
 
     /// 一次请求翻译多段文本，顺序与输入一致
-    static func translate(texts: [String], apiKey: String, targetLang: String = "zh-Hans") async throws -> [String] {
-        guard !apiKey.isEmpty else { throw TranslationError.apiError("未配置 Microsoft Translator API Key") }
+    /// - Parameter region: Azure 资源区域（如 eastasia、eastus、global）。多服务资源 Key 必须带区域，否则常返回 401。
+    static func translate(texts: [String], apiKey: String, region: String = "", targetLang: String = "zh-Hans") async throws -> [String] {
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { throw TranslationError.apiError("未配置 Microsoft Translator API Key") }
         guard !texts.isEmpty else { return [] }
         let url = URL(string: "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=\(targetLang)")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(apiKey, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
+        request.setValue(key, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
+        let regionTrim = region.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 多服务 / 区域资源必须带 Region；未填时默认 global（全球资源）
+        request.setValue(regionTrim.isEmpty ? "global" : regionTrim, forHTTPHeaderField: "Ocp-Apim-Subscription-Region")
         request.httpBody = try JSONEncoder().encode(texts.map { ["Text": $0] })
         let (data, response) = try await TranslationHTTP.session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
+            if http.statusCode == 401 {
+                throw TranslationError.apiError("Microsoft 401：Key 无效或区域不匹配。请在设置中填写 Azure 资源区域（如 eastasia / eastus / global），并确认 Key 来自 Translator 或多服务资源。")
+            }
             throw TranslationError.apiError("Microsoft Translator 错误 \(http.statusCode): \(msg.prefix(200))")
         }
         struct Response: Decodable {

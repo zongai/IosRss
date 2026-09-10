@@ -78,8 +78,12 @@ struct TranslationSettingsView: View {
                     .onChange(of: microsoftKey) { _, v in
                         Keychain.save(key: "microsoft_translate_key", value: v.trimmingCharacters(in: .whitespacesAndNewlines))
                     }
+                TextField("资源区域（如 eastasia / eastus / global）", text: $store.microsoftTranslateRegion)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
                 testButton(for: .microsoft)
             } header: { Text("Microsoft") }
+            footer: { Text("401 时请填写 Azure 门户中该资源的「位置/区域」。多服务资源必须填区域；全球资源可填 global。") }
 
             // DeepL
             Section {
@@ -168,6 +172,7 @@ struct TranslationSettingsView: View {
         .onChange(of: store.translationConcurrency) { _, _ in store.persistSettings() }
         .onChange(of: store.lingvaCustomBase) { _, _ in store.persistSettings() }
         .onChange(of: store.libreCustomBase) { _, _ in store.persistSettings() }
+        .onChange(of: store.microsoftTranslateRegion) { _, _ in store.persistSettings() }
         .onAppear { deeplKeys = store.loadDeepLKeys() }
         .onChange(of: store.targetLanguage) { _, _ in store.persistSettings() }
         .onChange(of: store.aiOutputLanguage) { _, _ in store.persistSettings() }

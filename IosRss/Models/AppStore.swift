@@ -66,6 +66,8 @@ class AppStore {
     var lingvaCustomBase: String = ""
     /// 自定义 LibreTranslate 根地址（可选，可含或不含 /translate）
     var libreCustomBase: String = ""
+    /// Azure Translator 区域（eastasia / eastus / global 等）
+    var microsoftTranslateRegion: String = "global"
 
     static let defaultTranslationPrompt = """
 你是专业译者。将下面内容翻译成{{lang}}。
@@ -1135,7 +1137,12 @@ class AppStore {
             )
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
-            return try await MicrosoftTranslate.translate(text: text, apiKey: key, targetLang: lang.microsoftCode)
+            return try await MicrosoftTranslate.translate(
+                text: text,
+                apiKey: key,
+                region: microsoftTranslateRegion,
+                targetLang: lang.microsoftCode
+            )
         case .deepl:
             return try await translateWithDeepL(text, targetLang: lang.deeplCode)
         case .ai:
@@ -1179,8 +1186,9 @@ class AppStore {
         case .microsoft:
             let key = Keychain.load(key: "microsoft_translate_key") ?? ""
             let msLang = targetLanguage.microsoftCode
+            let msRegion = microsoftTranslateRegion
             return await translateNativeBatchParallel(texts, chunkSize: 25, parallelism: 3) {
-                try await MicrosoftTranslate.translate(texts: $0, apiKey: key, targetLang: msLang)
+                try await MicrosoftTranslate.translate(texts: $0, apiKey: key, region: msRegion, targetLang: msLang)
             }
         case .google, .mymemory, .lingva, .libre, .ai:
             // 统一走 translateText（含 AI failover / 多 Key），不再跨 Provider 分片，避免质量与失败率变差
@@ -1723,6 +1731,7 @@ class AppStore {
         UserDefaults.standard.set(translationConcurrency, forKey: "translationConcurrency")
         UserDefaults.standard.set(lingvaCustomBase, forKey: "lingvaCustomBase")
         UserDefaults.standard.set(libreCustomBase, forKey: "libreCustomBase")
+        UserDefaults.standard.set(microsoftTranslateRegion, forKey: "microsoftTranslateRegion")
         UserDefaults.standard.set(aiOutputLanguage.rawValue, forKey: "aiOutputLanguage")
         if let data = try? JSONEncoder().encode(aiProviders) { UserDefaults.standard.set(data, forKey: "aiProviders") }
         if let id = defaultSummaryProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultSummaryProviderID") }
@@ -1758,6 +1767,7 @@ class AppStore {
            let mode = TitleDisplayMode(rawValue: raw) { titleDisplayMode = mode }
         if let s = UserDefaults.standard.string(forKey: "lingvaCustomBase") { lingvaCustomBase = s }
         if let s = UserDefaults.standard.string(forKey: "libreCustomBase") { libreCustomBase = s }
+        if let s = UserDefaults.standard.string(forKey: "microsoftTranslateRegion"), !s.isEmpty { microsoftTranslateRegion = s }
         if let raw = UserDefaults.standard.string(forKey: "defaultTranslationEngine"),
            let engine = TranslationEngine(rawValue: raw) { defaultTranslationEngine = engine }
         showReadArticles = UserDefaults.standard.object(forKey: "showReadArticles") as? Bool ?? false

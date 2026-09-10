@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+## [v1.3-40] — 2026-09-10
+### Changed
+- Lingva 公共实例重新加入 lingva.ml
+
+
 ## [v1.3-39] — 2026-09-10
 ### Changed
 - Lingva 公共实例改为：translate.plausibility.cloud、lingva.lunar.icu、translate.projectsegfau.lt、lingva.garudalinux.org

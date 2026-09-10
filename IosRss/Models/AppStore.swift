@@ -1220,10 +1220,11 @@ class AppStore {
     }
 
 
-    /// Microsoft：多 Key 轮询 + 失败切换
+    /// Microsoft：多 Key 轮询，自动跳过无效/限流 Key
     func translateWithMicrosoft(_ text: String, targetLang: String) async throws -> String {
-        let keys = loadMicrosoftKeys()
-        guard !keys.isEmpty else { throw TranslationError.apiError("未配置 Microsoft API Key") }
+        let allKeys = loadMicrosoftKeys()
+        guard !allKeys.isEmpty else { throw TranslationError.apiError("未配置 Microsoft API Key") }
+        let keys = microsoftKeyCooldown.availableKeys(from: allKeys)
         let region = microsoftTranslateRegion
         let start = microsoftKeyRoundRobin % keys.count
         var lastError: Error = TranslationError.apiError("Microsoft 全部 Key 不可用")
@@ -1232,10 +1233,11 @@ class AppStore {
             let key = keys[idx]
             do {
                 let out = try await MicrosoftTranslate.translate(text: text, apiKey: key, region: region, targetLang: targetLang)
-                microsoftKeyRoundRobin = idx + 1
+                microsoftKeyRoundRobin = (allKeys.firstIndex(of: key) ?? idx) + 1
                 return out
             } catch {
                 lastError = error
+                microsoftKeyCooldown.mark(key, kind: Self.keyFailureKind(error))
                 continue
             }
         }
@@ -1247,8 +1249,9 @@ class AppStore {
 
     /// DeepL：多 Key 轮询；配额/鉴权失败换 Key；全部失败可回退其它引擎
     func translateWithDeepL(_ text: String, targetLang: String) async throws -> String {
-        let keys = loadDeepLKeys()
-        guard !keys.isEmpty else { throw TranslationError.apiError("未配置 DeepL API Key") }
+        let allKeys = loadDeepLKeys()
+        guard !allKeys.isEmpty else { throw TranslationError.apiError("未配置 DeepL API Key") }
+        let keys = deeplKeyCooldown.availableKeys(from: allKeys)
         let start = deeplKeyRoundRobin % keys.count
         var lastError: Error = TranslationError.apiError("DeepL 全部 Key 不可用")
         for offset in 0..<keys.count {
@@ -1256,16 +1259,15 @@ class AppStore {
             let key = keys[idx]
             do {
                 let out = try await DeepLTranslate.translate(text: text, apiKey: key, targetLang: targetLang)
-                deeplKeyRoundRobin = idx + 1
+                deeplKeyRoundRobin = (allKeys.firstIndex(of: key) ?? idx) + 1
                 return out
             } catch {
                 lastError = error
-                if Self.isQuotaOrAuthError(error) { continue }
-                // 非配额类错误也尝试下一把 Key（网络抖动）
+                deeplKeyCooldown.mark(key, kind: Self.keyFailureKind(error))
                 continue
             }
         }
-        // 全部 Key 失败 → 回退 Google（免 Key）再试一次
+        // 全部 Key 失败 → 回退 Google（免 Key）
         do {
             return try await GoogleTranslate.translate(text: text, targetLang: targetLanguage.googleCode)
         } catch {
@@ -1280,22 +1282,22 @@ class AppStore {
         }
         // 按 Key 轮询分批并行，提高吞吐
         return await translateNativeBatchParallel(texts, chunkSize: 30, parallelism: min(3, max(1, keys.count))) { chunk in
-            // 每批选用下一把 Key
-            let key = self.loadDeepLKeys().isEmpty ? "" : {
-                let ks = self.loadDeepLKeys()
-                let i = self.deeplKeyRoundRobin % ks.count
-                self.deeplKeyRoundRobin = i + 1
-                return ks[i]
-            }()
+            let ks = self.deeplKeyCooldown.availableKeys(from: self.loadDeepLKeys())
+            guard !ks.isEmpty else { throw TranslationError.apiError("DeepL 无可用 Key") }
+            let i = self.deeplKeyRoundRobin % ks.count
+            let key = ks[i]
+            self.deeplKeyRoundRobin = i + 1
             do {
                 return try await DeepLTranslate.translate(texts: chunk, apiKey: key, targetLang: targetLang)
             } catch {
-                if Self.isQuotaOrAuthError(error) {
-                    // 换 Key 重试整批
-                    for k in self.loadDeepLKeys() where k != key {
-                        if let r = try? await DeepLTranslate.translate(texts: chunk, apiKey: k, targetLang: targetLang) {
-                            return r
-                        }
+                self.deeplKeyCooldown.mark(key, kind: Self.keyFailureKind(error))
+                for k in self.deeplKeyCooldown.availableKeys(from: self.loadDeepLKeys()) where k != key {
+                    do {
+                        let r = try await DeepLTranslate.translate(texts: chunk, apiKey: k, targetLang: targetLang)
+                        return r
+                    } catch {
+                        self.deeplKeyCooldown.mark(k, kind: Self.keyFailureKind(error))
+                        continue
                     }
                 }
                 throw error
@@ -1304,12 +1306,71 @@ class AppStore {
     }
 
     static func isQuotaOrAuthError(_ error: Error) -> Bool {
-        let msg = error.localizedDescription.lowercased()
-        for token in ["456", "quota", "limit", "403", "401", "429", "exceed", "额度", "配额", "授权", "forbidden", "unauthorized"] {
-            if msg.contains(token) { return true }
-        }
-        return false
+        keyFailureKind(error) != .other
     }
+
+    enum KeyFailureKind {
+        case invalid   // 401/403 等：Key 无效，较长时间跳过
+        case limited   // 429/配额：限流，短时间跳过
+        case other
+    }
+
+    static func keyFailureKind(_ error: Error) -> KeyFailureKind {
+        let msg = error.localizedDescription.lowercased()
+        let invalidTokens = ["401", "403", "unauthorized", "forbidden", "invalid api", "invalid key",
+                             "authentication", "鉴权", "授权", "无效", "not valid", "incorrect api"]
+        let limitedTokens = ["429", "456", "quota", "rate limit", "too many", "exceed", "额度", "配额",
+                             "resource exhausted", "限流", "throttle"]
+        for t in invalidTokens where msg.contains(t) { return .invalid }
+        for t in limitedTokens where msg.contains(t) { return .limited }
+        return .other
+    }
+
+    /// 多 Key 冷却：无效 Key 跳过约 1 小时，限流 Key 跳过约 5 分钟
+    private struct KeyCooldownBook {
+        private var until: [String: Date] = [:]
+        private let invalidCooldown: TimeInterval = 3600
+        private let limitedCooldown: TimeInterval = 300
+
+        private func fp(_ key: String) -> String {
+            // 不存明文，用前后缀指纹
+            let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            if k.count <= 8 { return k }
+            return String(k.prefix(6)) + "#" + String(k.suffix(6)) + "#\(k.count)"
+        }
+
+        mutating func isAvailable(_ key: String, now: Date = Date()) -> Bool {
+            let id = fp(key)
+            if let u = until[id], u > now { return false }
+            if let u = until[id], u <= now { until.removeValue(forKey: id) }
+            return true
+        }
+
+        mutating func mark(_ key: String, kind: KeyFailureKind, now: Date = Date()) {
+            let id = fp(key)
+            switch kind {
+            case .invalid:
+                until[id] = now.addingTimeInterval(invalidCooldown)
+            case .limited:
+                until[id] = now.addingTimeInterval(limitedCooldown)
+            case .other:
+                // 短暂跳过，避免连续打同一坏网关
+                until[id] = now.addingTimeInterval(20)
+            }
+        }
+
+        /// 从列表中挑出当前可用的 Key；若全部冷却则清空冷却并返回全部（避免卡死）
+        mutating func availableKeys(from keys: [String]) -> [String] {
+            let open = keys.filter { isAvailable($0) }
+            if !open.isEmpty { return open }
+            until.removeAll()
+            return keys
+        }
+    }
+
+    private var deeplKeyCooldown = KeyCooldownBook()
+    private var microsoftKeyCooldown = KeyCooldownBook()
+    private var aiKeyCooldown: [UUID: KeyCooldownBook] = [:]
 
 /// 轮询取下一个 Key（负载均衡）；无 Key 返回 nil
     private var aiKeyRoundRobin: [UUID: Int] = [:]
@@ -1323,15 +1384,16 @@ class AppStore {
         return keys[idx]
     }
 
-    /// 按顺序尝试该 Provider 的所有 Key
+    /// 多 Key 轮询：自动跳过冷却中的无效/限流 Key
     func callAIWithProviderKeys(
         provider: AIProvider,
         prompt: String,
         maxTokens: Int
     ) async throws -> String {
-        let keys = loadAIKeys(for: provider.id)
-        guard !keys.isEmpty else { throw TranslationError.apiError("未配置 API Key") }
-        // 从轮询位点开始，转一圈
+        let allKeys = loadAIKeys(for: provider.id)
+        guard !allKeys.isEmpty else { throw TranslationError.apiError("未配置 API Key") }
+        var book = aiKeyCooldown[provider.id] ?? KeyCooldownBook()
+        let keys = book.availableKeys(from: allKeys)
         let start = (aiKeyRoundRobin[provider.id] ?? 0) % keys.count
         var lastError: Error = TranslationError.apiError("全部 Key 失败")
         for offset in 0..<keys.count {
@@ -1341,15 +1403,24 @@ class AppStore {
                 let raw = try await callAI(prompt: prompt, provider: provider, apiKey: key, maxTokens: maxTokens)
                 let text = AIResponseSanitizer.stripThinking(raw)
                 if text.isEmpty || Self.looksLikeAIErrorResponse(text) {
-                    throw TranslationError.apiError(text.isEmpty ? "空响应" : text)
+                    // 内容像错误：标记短暂冷却并换 Key
+                    book.mark(key, kind: .other)
+                    aiKeyCooldown[provider.id] = book
+                    lastError = TranslationError.apiError(text.isEmpty ? "空响应" : text)
+                    continue
                 }
-                aiKeyRoundRobin[provider.id] = idx + 1
+                aiKeyRoundRobin[provider.id] = (allKeys.firstIndex(of: key) ?? idx) + 1
+                aiKeyCooldown[provider.id] = book
                 return text
             } catch {
                 lastError = error
+                let kind = Self.keyFailureKind(error)
+                book.mark(key, kind: kind)
+                aiKeyCooldown[provider.id] = book
                 continue
             }
         }
+        aiKeyCooldown[provider.id] = book
         throw lastError
     }
 
@@ -1441,7 +1512,7 @@ class AppStore {
             let msRegion = microsoftTranslateRegion
             let keys = loadMicrosoftKeys()
             return await translateNativeBatchParallel(texts, chunkSize: 25, parallelism: min(3, max(1, keys.count))) { chunk in
-                let ks = self.loadMicrosoftKeys()
+                let ks = self.microsoftKeyCooldown.availableKeys(from: self.loadMicrosoftKeys())
                 guard !ks.isEmpty else { throw TranslationError.apiError("未配置 Microsoft API Key") }
                 let start = self.microsoftKeyRoundRobin % ks.count
                 var last: Error = TranslationError.apiError("Microsoft 全部 Key 失败")
@@ -1454,6 +1525,7 @@ class AppStore {
                         return r
                     } catch {
                         last = error
+                        self.microsoftKeyCooldown.mark(key, kind: Self.keyFailureKind(error))
                         continue
                     }
                 }

@@ -361,7 +361,7 @@ struct EditProviderView: View {
                 } header: {
                     Text("API Key（可多个）")
                 } footer: {
-                    Text("可添加多个 Key，调用时自动轮询；某个失败会换下一个。存于系统钥匙串，不会写入普通备份。")
+                    Text("可添加多个 Key：自动轮询；无效 Key 跳过约 1 小时，限流约 5 分钟。存于钥匙串。")
                 }
                 Section {
                     Button {

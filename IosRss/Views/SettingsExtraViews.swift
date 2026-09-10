@@ -98,7 +98,7 @@ struct TranslationSettingsView: View {
                     .textInputAutocapitalization(.never)
                 testButton(for: .microsoft)
             } header: { Text("Microsoft（多 Key）") }
-            footer: { Text("失败或 401 时自动切换下一把 Key。区域需与 Azure 资源位置一致。") }
+            footer: { Text("多 Key 自动轮询；无效/限流 Key 自动跳过。区域需与 Azure 资源位置一致。") }
 
             // DeepL
             Section {
@@ -129,7 +129,7 @@ struct TranslationSettingsView: View {
                 }
                 testButton(for: .deepl)
             } header: { Text("DeepL（多 Key）") }
-            footer: { Text("配额耗尽或失败时自动切换下一把 Key，全部失败则回退 Google。") }
+            footer: { Text("多 Key 自动轮询；无效 Key 跳过约 1 小时，限流 Key 跳过约 5 分钟；全部失败回退 Google。") }
 
             // MyMemory
             Section {

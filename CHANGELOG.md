@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+## [v1.3-47] — 2026-09-11
+### Improved
+- 多 Key 自动轮询并冷却：无效 Key 跳过约 1 小时、限流 Key 约 5 分钟（AI / DeepL / Microsoft）
+
+
 ## [v1.3-46] — 2026-09-11
 ### Improved
 - 兼容 AI 思考模型：忽略 reasoning 字段与 Gemini thought parts；剥离 `<think>` 等标签，界面不展示思考过程

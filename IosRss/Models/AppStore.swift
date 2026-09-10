@@ -524,8 +524,7 @@ class AppStore {
                 let out = try await GoogleTranslate.translate(text: sample, targetLang: targetLanguage.googleCode)
                 let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !preview.isEmpty else { throw TranslationError.apiError("返回空译文") }
-                return "Google（免 Key）：可用
-试译：\(preview.prefix(60))"
+                return "Google（免 Key）：可用\n试译：\(preview.prefix(60))"
             } catch {
                 throw TranslationError.apiError("Google（免 Key）：不可用 — \(error.localizedDescription)")
             }

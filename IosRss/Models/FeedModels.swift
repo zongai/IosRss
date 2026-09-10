@@ -260,14 +260,6 @@ enum AppLanguage: String, CaseIterable, Codable, Identifiable {
     /// MyMemory `langpair` 目标端，如 zh-CN
     var mymemoryCode: String { googleCode }
 
-    /// Lingva / Libre 目标语言码
-    var libreCode: String {
-        switch self {
-        case .zhHans: return "zh"
-        case .zhHant: return "zt" // Libre 有时用 zt；Lingva 用 zh_HANT 见调用处
-        default: return googleCode
-        }
-    }
 
     /// DeepL `target_lang`
     var deeplCode: String {
@@ -327,8 +319,6 @@ enum TitleDisplayMode: String, CaseIterable, Codable {
 enum TranslationEngine: String, CaseIterable, Codable {
     case google = "Google 翻译"
     case mymemory = "MyMemory（免 Key）"
-    case lingva = "Lingva（免 Key）"
-    case libre = "LibreTranslate（可填 Key）"
     case microsoft = "Microsoft 翻译"
     case deepl = "DeepL"
     case ai = "AI 翻译"   // Gemini / OpenAI / Anthropic 等统一走 AI Provider
@@ -336,7 +326,7 @@ enum TranslationEngine: String, CaseIterable, Codable {
     /// 无需 API Key 的引擎
     var isFreeNoKey: Bool {
         switch self {
-        case .google, .mymemory, .lingva, .libre: return true
+        case .google, .mymemory: return true
         default: return false
         }
     }

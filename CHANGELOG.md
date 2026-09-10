@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+## [v1.3-35] — 2026-09-10
+### Removed
+- 移除不可用的 Lingva、LibreTranslate 翻译引擎（原选择自动回退到 Google）
+
+
 ## [v1.3-34] — 2026-09-10
 ### Fixed
 - Microsoft 翻译 401：请求增加 `Ocp-Apim-Subscription-Region`（默认 global），设置中可填 Azure 资源区域
@@ -42,7 +47,7 @@
 - 翻译并发可配置；AI 多 Provider 分片并行
 
 ### Added
-- 免 Key 翻译：MyMemory / Lingva / LibreTranslate
+- 免 Key 翻译：MyMemory；Google 可不填 Key
 
 ### Changed
 - TTS 默认语速 1.2×

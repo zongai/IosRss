@@ -4,7 +4,6 @@ struct TranslationSettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var googleKey = Keychain.load(key: "google_translate_key") ?? ""
     @State private var microsoftKey = Keychain.load(key: "microsoft_translate_key") ?? ""
-    @State private var libreKey = Keychain.load(key: "libre_translate_key") ?? ""
     @State private var deeplKeys: [String] = []
     @State private var newDeepLKey = ""
     @State private var testingEngine: TranslationEngine?
@@ -121,33 +120,6 @@ struct TranslationSettingsView: View {
             } header: { Text("MyMemory") }
             footer: { Text("按 IP 有日配额；限流时请换引擎或稍后再试。") }
 
-            // Lingva
-            Section {
-                engineHeader("Lingva（免 Key）", selected: store.defaultTranslationEngine == .lingva)
-                TextField("自定义实例 URL（可选）", text: $store.lingvaCustomBase)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.URL)
-                testButton(for: .lingva)
-            } header: { Text("Lingva") }
-            footer: { Text("公共实例经常不可用。可自建或填写可用实例根地址，例如 https://lingva.example.com") }
-
-            // Libre
-            Section {
-                engineHeader("LibreTranslate", selected: store.defaultTranslationEngine == .libre)
-                TextField("API Key（官方实例必填）", text: $libreKey)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .onChange(of: libreKey) { _, v in
-                        Keychain.save(key: "libre_translate_key", value: v.trimmingCharacters(in: .whitespacesAndNewlines))
-                    }
-                TextField("自定义实例 URL（可选）", text: $store.libreCustomBase)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.URL)
-                testButton(for: .libre)
-            } header: { Text("LibreTranslate") }
-            footer: { Text("libretranslate.com 需在 portal.libretranslate.com 申请 Key；自建实例通常可不填 Key。") }
 
             // AI
             Section {
@@ -170,8 +142,6 @@ struct TranslationSettingsView: View {
         .onDisappear { store.persistSettings() }
         .onChange(of: store.defaultTranslationEngine) { _, _ in store.persistSettings() }
         .onChange(of: store.translationConcurrency) { _, _ in store.persistSettings() }
-        .onChange(of: store.lingvaCustomBase) { _, _ in store.persistSettings() }
-        .onChange(of: store.libreCustomBase) { _, _ in store.persistSettings() }
         .onChange(of: store.microsoftTranslateRegion) { _, _ in store.persistSettings() }
         .onAppear { deeplKeys = store.loadDeepLKeys() }
         .onChange(of: store.targetLanguage) { _, _ in store.persistSettings() }
@@ -222,7 +192,6 @@ struct TranslationSettingsView: View {
             // 先保存当前输入的 Key
             Keychain.save(key: "google_translate_key", value: googleKey.trimmingCharacters(in: .whitespacesAndNewlines))
             Keychain.save(key: "microsoft_translate_key", value: microsoftKey.trimmingCharacters(in: .whitespacesAndNewlines))
-            Keychain.save(key: "libre_translate_key", value: libreKey.trimmingCharacters(in: .whitespacesAndNewlines))
             store.saveDeepLKeys(deeplKeys)
             store.persistSettings()
             let msg = try await store.testTranslationEngine(engine)

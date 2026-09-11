@@ -66,6 +66,12 @@ class AppStore {
     var microsoftTranslateRegion: String = "global"
     /// 自定义 Lingva 实例根地址（可选）
     var lingvaCustomBase: String = ""
+    /// AI 对话历史（本地持久化）
+    var chatConversations: [ChatConversation] = []
+    /// 新建对话默认使用的 Provider
+    var defaultChatProviderID: UUID?
+    /// 当前打开的对话
+    var activeChatID: UUID?
 
     static let defaultTranslationPrompt = """
 你是专业译者。将下面内容翻译成{{lang}}。
@@ -126,6 +132,9 @@ class AppStore {
         }
         if defaultExplainProviderID == nil {
             defaultExplainProviderID = defaultSummaryProviderID ?? aiProviders.first?.id
+        }
+        if defaultChatProviderID == nil {
+            defaultChatProviderID = defaultSummaryProviderID ?? aiProviders.first?.id
         }
         rebuildReadLinksFromArticles()
         purgeOldReadArticles()
@@ -2087,6 +2096,12 @@ class AppStore {
         } else {
             UserDefaults.standard.removeObject(forKey: "aiBlacklistFallbackProviderID")
         }
+        if let id = defaultChatProviderID {
+            UserDefaults.standard.set(id.uuidString, forKey: "defaultChatProviderID")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "defaultChatProviderID")
+        }
+        OfflineCache.saveChatConversations(chatConversations)
     }
 
     func loadFromStorage() {
@@ -2181,6 +2196,232 @@ class AppStore {
            let decoded = try? JSONDecoder().decode([String].self, from: data) { articleBlacklistTerms = decoded }
         if let s = UserDefaults.standard.string(forKey: "aiBlacklistFallbackProviderID"),
            let id = UUID(uuidString: s) { aiBlacklistFallbackProviderID = id }
+        if let s = UserDefaults.standard.string(forKey: "defaultChatProviderID"),
+           let id = UUID(uuidString: s) {
+            defaultChatProviderID = id
+        }
+        if let loaded = OfflineCache.loadChatConversations() {
+            chatConversations = loaded.sorted { $0.updatedAt > $1.updatedAt }
+        }
+    }
+
+    // MARK: - AI Chat
+
+    static let defaultChatSystemPrompt = """
+你是有帮助的助手。用清晰、简洁的语言回答用户问题。
+若用户使用中文，优先用中文回复。
+"""
+
+    /// 已配置 API Key 的 Provider（对话页仅允许选用这些）
+    var chatCapableProviders: [AIProvider] {
+        aiProviders.filter { !loadAIKeys(for: $0.id).isEmpty }
+    }
+
+    @discardableResult
+    func createChatConversation(providerID: UUID? = nil) -> ChatConversation {
+        let pid = providerID
+            ?? defaultChatProviderID
+            ?? chatCapableProviders.first?.id
+            ?? aiProviders.first?.id
+        var conv = ChatConversation(
+            title: "新对话",
+            providerID: pid,
+            systemPrompt: Self.defaultChatSystemPrompt
+        )
+        chatConversations.insert(conv, at: 0)
+        activeChatID = conv.id
+        persistChat()
+        return conv
+    }
+
+    func deleteChatConversation(_ id: UUID) {
+        chatConversations.removeAll { $0.id == id }
+        if activeChatID == id {
+            activeChatID = chatConversations.first?.id
+        }
+        persistChat()
+    }
+
+    func deleteChatConversations(at offsets: IndexSet) {
+        let sorted = chatConversations
+        let ids = offsets.map { sorted[$0].id }
+        chatConversations.removeAll { ids.contains($0.id) }
+        if let active = activeChatID, ids.contains(active) {
+            activeChatID = chatConversations.first?.id
+        }
+        persistChat()
+    }
+
+    func clearAllChatConversations() {
+        chatConversations = []
+        activeChatID = nil
+        persistChat()
+    }
+
+    func renameChatConversation(_ id: UUID, to title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let idx = chatConversations.firstIndex(where: { $0.id == id }) else { return }
+        chatConversations[idx].title = trimmed
+        chatConversations[idx].updatedAt = Date()
+        persistChat()
+    }
+
+    func setChatProvider(conversationID: UUID, providerID: UUID) {
+        guard chatCapableProviders.contains(where: { $0.id == providerID }) else { return }
+        guard let idx = chatConversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        chatConversations[idx].providerID = providerID
+        chatConversations[idx].updatedAt = Date()
+        defaultChatProviderID = providerID
+        persistChat()
+        saveToStorage()
+    }
+
+    func clearChatMessages(_ conversationID: UUID) {
+        guard let idx = chatConversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        chatConversations[idx].messages = []
+        chatConversations[idx].updatedAt = Date()
+        persistChat()
+    }
+
+    /// 发送用户消息并请求回复；仅可使用已配置 Key 的 Provider
+    func sendChatMessage(conversationID: UUID, text: String) async throws {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let idx = chatConversations.firstIndex(where: { $0.id == conversationID }) else {
+            throw TranslationError.apiError("对话不存在")
+        }
+
+        var conv = chatConversations[idx]
+        let userMsg = ChatMessage(role: .user, content: trimmed)
+        conv.messages.append(userMsg)
+        if conv.title == "新对话" {
+            conv.title = String(trimmed.prefix(24))
+        }
+        conv.updatedAt = Date()
+        chatConversations[idx] = conv
+        persistChat()
+
+        let providerID = conv.providerID
+            ?? defaultChatProviderID
+            ?? chatCapableProviders.first?.id
+        guard let providerID,
+              let provider = chatCapableProviders.first(where: { $0.id == providerID })
+                ?? aiProviders.first(where: { $0.id == providerID }),
+              !loadAIKeys(for: provider.id).isEmpty else {
+            var c = chatConversations[idx]
+            c.messages.append(ChatMessage(
+                role: .assistant,
+                content: "未配置可用的 AI Provider 或 API Key。请到设置 → AI 设置中添加。",
+                isError: true
+            ))
+            c.updatedAt = Date()
+            chatConversations[idx] = c
+            persistChat()
+            throw TranslationError.noProvider
+        }
+
+        // 若会话绑定的 Provider 已无 Key，自动切到第一个可用
+        let resolved: AIProvider = {
+            if chatCapableProviders.contains(where: { $0.id == provider.id }) { return provider }
+            return chatCapableProviders.first ?? provider
+        }()
+        if conv.providerID != resolved.id {
+            conv.providerID = resolved.id
+            if let i = chatConversations.firstIndex(where: { $0.id == conversationID }) {
+                chatConversations[i].providerID = resolved.id
+            }
+        }
+
+        var history: [(role: ChatRole, content: String)] = []
+        let system = conv.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !system.isEmpty {
+            history.append((.system, system))
+        }
+        // 限制上下文长度，避免超长请求
+        let recent = (chatConversations.first(where: { $0.id == conversationID })?.messages ?? conv.messages)
+            .filter { !$0.isError }
+            .suffix(40)
+        for m in recent {
+            history.append((m.role, m.content))
+        }
+
+        do {
+            let reply = try await callAIChatWithProviderKeys(
+                provider: resolved,
+                messages: history,
+                maxTokens: 2048
+            )
+            let assistant = ChatMessage(
+                role: .assistant,
+                content: reply,
+                providerID: resolved.id,
+                providerName: resolved.name
+            )
+            if let i = chatConversations.firstIndex(where: { $0.id == conversationID }) {
+                var c = chatConversations[i]
+                c.messages.append(assistant)
+                c.updatedAt = Date()
+                chatConversations[i] = c
+                chatConversations.sort { $0.updatedAt > $1.updatedAt }
+                persistChat()
+            }
+        } catch {
+            if let i = chatConversations.firstIndex(where: { $0.id == conversationID }) {
+                var c = chatConversations[i]
+                c.messages.append(ChatMessage(
+                    role: .assistant,
+                    content: error.localizedDescription,
+                    providerID: resolved.id,
+                    providerName: resolved.name,
+                    isError: true
+                ))
+                c.updatedAt = Date()
+                chatConversations[i] = c
+                persistChat()
+            }
+            throw error
+        }
+    }
+
+    private func callAIChatWithProviderKeys(
+        provider: AIProvider,
+        messages: [(role: ChatRole, content: String)],
+        maxTokens: Int
+    ) async throws -> String {
+        let allKeys = loadAIKeys(for: provider.id)
+        guard !allKeys.isEmpty else { throw TranslationError.apiError("未配置 API Key") }
+        var book = aiKeyCooldown[provider.id] ?? KeyCooldownBook()
+        let keys = book.availableKeys(from: allKeys)
+        let start = (aiKeyRoundRobin[provider.id] ?? 0) % keys.count
+        var lastError: Error = TranslationError.apiError("全部 Key 失败")
+        for offset in 0..<keys.count {
+            let idx = (start + offset) % keys.count
+            let key = keys[idx]
+            do {
+                let raw = try await callAIChat(messages: messages, provider: provider, apiKey: key, maxTokens: maxTokens)
+                let text = AIResponseSanitizer.stripThinking(raw)
+                if text.isEmpty || Self.looksLikeAIErrorResponse(text) {
+                    book.mark(key, kind: .other)
+                    aiKeyCooldown[provider.id] = book
+                    lastError = TranslationError.apiError(text.isEmpty ? "空响应" : text)
+                    continue
+                }
+                aiKeyRoundRobin[provider.id] = (allKeys.firstIndex(of: key) ?? idx) + 1
+                aiKeyCooldown[provider.id] = book
+                return text
+            } catch {
+                lastError = error
+                book.mark(key, kind: Self.keyFailureKind(error))
+                aiKeyCooldown[provider.id] = book
+                continue
+            }
+        }
+        aiKeyCooldown[provider.id] = book
+        throw lastError
+    }
+
+    private func persistChat() {
+        OfflineCache.saveChatConversations(chatConversations)
     }
 
     private func seedSampleData() {}

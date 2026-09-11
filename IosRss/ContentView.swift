@@ -18,6 +18,9 @@ struct ContentView: View {
             Tab("收藏", systemImage: "star") {
                 FavoritesListView()
             }
+            Tab("对话", systemImage: "bubble.left.and.bubble.right") {
+                AIChatView()
+            }
             Tab("设置", systemImage: "gearshape") {
                 SettingsView()
             }

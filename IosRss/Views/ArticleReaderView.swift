@@ -350,6 +350,8 @@ struct ArticleReaderView: View {
             showTranslated = false
             translatedContent = nil
             fullContentHint = silent ? nil : "已获取全文（约 \(HTMLUtils.stripTags(updated.content).count) 字）"
+            // 全文到位后：若源开启自动翻译且正文非目标语言，自动译新正文（与标题是否已译无关）
+            await autoTranslateBodyIfNeeded()
             if !silent {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 if fullContentHint?.contains("已获取全文") == true { fullContentHint = nil }
@@ -361,26 +363,30 @@ struct ArticleReaderView: View {
         isFetchingFull = false
     }
 
-    /// 源开启自动翻译时：打开阅读页自动译正文（已有译文则直接显示）
+    /// 源开启自动翻译时：打开阅读页自动译正文（已有译文则直接显示）。
+    /// 不依赖标题是否已译：列表可能已译标题，正文仍需在打开时翻译。
     private func autoTranslateBodyIfNeeded() async {
         let feed = store.feeds.first(where: { $0.id == currentArticle.feedID })
         guard feed?.autoTranslateEnabled == true else { return }
-        // 已在显示译文或正在翻译
-        if showTranslated || isTranslating { return }
+        guard !isTranslating else { return }
 
-        // 标题若未译且不像目标语言，一并处理（toggleTranslation 内也会做）
+        // 已有正文译文：直接显示（标题是否已译无关）
         if let cached = currentArticle.translatedContent, !cached.isEmpty {
             translatedContent = cached
+            showTranslated = true
+            return
+        }
+        if let local = translatedContent, !local.isEmpty {
             showTranslated = true
             return
         }
 
         let sample = HTMLUtils.plainText(currentArticle.content)
         if sample.count >= 40, ListLanguageDetect.isMostlyTarget(sample, language: store.targetLanguage) {
-            // 正文已是目标语言：不显示翻译按钮态，也不请求
+            // 正文已是目标语言：不请求翻译
             return
         }
-        // 内容过短则只译标题
+        // 内容过短则只译标题（若尚未译）
         if sample.count < 20 {
             if currentArticle.translatedTitle == nil {
                 await translateTitleIfNeeded()
@@ -388,7 +394,54 @@ struct ArticleReaderView: View {
             return
         }
 
-        await toggleTranslation()
+        // 正文需要翻译：即使 showTranslated 因标题已译而为 true，也继续译正文
+        await translateBodyForAuto()
+    }
+
+    /// 自动翻译正文（不切换「已显示译文」时的关闭逻辑；供 autoTranslateBodyIfNeeded 使用）
+    private func translateBodyForAuto() async {
+        if let cached = currentArticle.translatedContent, !cached.isEmpty {
+            translatedContent = cached
+            showTranslated = true
+            return
+        }
+        translationError = nil
+        isTranslating = true
+        translationProgress = "正在翻译…"
+        do {
+            let titleTask = Task { () -> String? in
+                if let existing = currentArticle.translatedTitle, !existing.isEmpty { return existing }
+                let t = currentArticle.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !t.isEmpty else { return nil }
+                return try? await store.translateText(t)
+            }
+            let (plainWithPlaceholders, images) = HTMLUtils.extractImagesForTranslation(currentArticle.content)
+            let result = try await store.translateLongText(plainWithPlaceholders, maxChunkChars: 1800)
+            let restored = HTMLUtils.restoreImagesAfterTranslation(result, images: images)
+            let htmlResult = restored
+                .components(separatedBy: "\n\n")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .map { part -> String in
+                    if part.localizedCaseInsensitiveContains("<img") { return part }
+                    return "<p>\(part)</p>"
+                }
+                .joined()
+            translatedContent = htmlResult.isEmpty ? "<p>\(restored)</p>" : htmlResult
+            let translatedTitle = await titleTask.value
+            var updated = currentArticle
+            updated.translatedContent = translatedContent
+            if let translatedTitle, !translatedTitle.isEmpty {
+                updated.translatedTitle = translatedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            store.updateArticle(updated)
+            showTranslated = true
+            translationProgress = nil
+        } catch {
+            translationError = error.localizedDescription
+            translationProgress = nil
+        }
+        isTranslating = false
     }
 
     private func toggleTranslation() async {

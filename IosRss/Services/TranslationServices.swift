@@ -447,6 +447,132 @@ func callAI(prompt: String, provider: AIProvider, apiKey: String, maxTokens: Int
     return try await callOpenAICompatible(prompt: prompt, provider: provider, apiKey: apiKey, maxTokens: maxTokens)
 }
 
+/// 多轮对话：messages 为 user/assistant/system 序列（按时间顺序）
+func callAIChat(
+    messages: [(role: ChatRole, content: String)],
+    provider: AIProvider,
+    apiKey: String,
+    maxTokens: Int = 2048
+) async throws -> String {
+    if provider.kind == "gemini" || provider.name.lowercased().contains("gemini") {
+        return try await callGeminiChat(messages: messages, provider: provider, apiKey: apiKey, maxTokens: maxTokens)
+    }
+    return try await callOpenAICompatibleChat(messages: messages, provider: provider, apiKey: apiKey, maxTokens: maxTokens)
+}
+
+func callOpenAICompatibleChat(
+    messages: [(role: ChatRole, content: String)],
+    provider: AIProvider,
+    apiKey: String,
+    maxTokens: Int = 2048
+) async throws -> String {
+    let baseURL = provider.baseURL.hasSuffix("/") ? String(provider.baseURL.dropLast()) : provider.baseURL
+    guard let url = URL(string: "\(baseURL)/chat/completions") else {
+        throw TranslationError.apiError("无效的 Base URL")
+    }
+    var request = URLRequest(url: url, timeoutInterval: 90)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+    let mapped: [[String: String]] = messages.compactMap { item in
+        let text = item.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        let role: String
+        switch item.role {
+        case .user: role = "user"
+        case .assistant: role = "assistant"
+        case .system: role = "system"
+        }
+        return ["role": role, "content": text]
+    }
+    guard !mapped.isEmpty else { throw TranslationError.apiError("消息为空") }
+
+    let body: [String: Any] = [
+        "model": provider.model,
+        "messages": mapped,
+        "max_tokens": max(maxTokens, 800)
+    ]
+    request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+    let (data, response) = try await URLSession.shared.data(for: request)
+    if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+        let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
+        throw TranslationError.apiError("API 错误 \(http.statusCode): \(msg.prefix(200))")
+    }
+    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let choices = json["choices"] as? [[String: Any]],
+       let message = choices.first?["message"] as? [String: Any] {
+        let content = (message["content"] as? String) ?? ""
+        let cleaned = AIResponseSanitizer.stripThinking(content)
+        if !cleaned.isEmpty { return cleaned }
+    }
+    throw TranslationError.apiError("解析 AI 响应失败")
+}
+
+func callGeminiChat(
+    messages: [(role: ChatRole, content: String)],
+    provider: AIProvider,
+    apiKey: String,
+    maxTokens: Int = 2048
+) async throws -> String {
+    let model = provider.model.isEmpty ? "gemini-2.0-flash" : provider.model
+    let urlStr = "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)"
+    guard let url = URL(string: urlStr) else {
+        throw TranslationError.apiError("无效的 Gemini URL")
+    }
+    var request = URLRequest(url: url, timeoutInterval: 90)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+    var systemText = ""
+    var contents: [[String: Any]] = []
+    for item in messages {
+        let text = item.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { continue }
+        switch item.role {
+        case .system:
+            if systemText.isEmpty { systemText = text }
+            else { systemText += "\n" + text }
+        case .user:
+            contents.append(["role": "user", "parts": [["text": text]]])
+        case .assistant:
+            contents.append(["role": "model", "parts": [["text": text]]])
+        }
+    }
+    guard !contents.isEmpty else { throw TranslationError.apiError("消息为空") }
+
+    var body: [String: Any] = [
+        "contents": contents,
+        "generationConfig": ["maxOutputTokens": max(maxTokens, 1024)]
+    ]
+    if !systemText.isEmpty {
+        body["systemInstruction"] = ["parts": [["text": systemText]]]
+    }
+    request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+    let (data, response) = try await URLSession.shared.data(for: request)
+    if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+        let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
+        throw TranslationError.apiError("Gemini API 错误 \(http.statusCode): \(msg.prefix(200))")
+    }
+    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let candidates = json["candidates"] as? [[String: Any]],
+       let content = candidates.first?["content"] as? [String: Any],
+       let parts = content["parts"] as? [[String: Any]] {
+        var texts: [String] = []
+        for part in parts {
+            if let thought = part["thought"] as? Bool, thought { continue }
+            if let text = part["text"] as? String, !text.isEmpty {
+                texts.append(text)
+            }
+        }
+        let cleaned = AIResponseSanitizer.stripThinking(texts.joined())
+        if !cleaned.isEmpty { return cleaned }
+    }
+    let raw = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
+    throw TranslationError.apiError("解析 Gemini 响应失败: \(raw)")
+}
+
 func callOpenAICompatible(prompt: String, provider: AIProvider, apiKey: String, maxTokens: Int = 500) async throws -> String {
     let baseURL = provider.baseURL.hasSuffix("/") ? String(provider.baseURL.dropLast()) : provider.baseURL
     guard let url = URL(string: "\(baseURL)/chat/completions") else {

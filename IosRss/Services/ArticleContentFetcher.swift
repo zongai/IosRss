@@ -44,6 +44,14 @@ enum ArticleContentFetcher {
             return apiResult
         }
 
+        // Sixth Tone：__NEXT_DATA__ 含完整正文 + textImageList 配图
+        if isSixthToneHost(url.host) {
+            if let st = await fetchSixthToneContent(pageURL: url) {
+                OfflineCache.saveArticleHTML(link: urlString, html: st.contentHTML)
+                return st
+            }
+        }
+
         var request = URLRequest(url: url, timeoutInterval: 25)
         request.setValue(
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
@@ -74,6 +82,12 @@ enum ArticleContentFetcher {
 
         let html = decodeHTML(data: data) ?? ""
         guard !html.isEmpty else { throw FetchError.emptyContent }
+
+        // Sixth Tone：从页面内嵌 __NEXT_DATA__ 提取（避免脚本被通用去噪删掉后丢失正文图）
+        if isSixthToneHost(url.host), let st = extractSixthTone(from: html, baseURL: url) {
+            OfflineCache.saveArticleHTML(link: urlString, html: st.contentHTML)
+            return st
+        }
 
         var extracted = extractArticle(from: html, baseURL: url)
         var plainLen = HTMLUtils.stripTags(extracted.content).count
@@ -225,6 +239,122 @@ enum ArticleContentFetcher {
         guard len >= 80 else { return nil }
         let title = (json["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         return Result(title: title, contentHTML: cleaned, textLength: len)
+    }
+
+    // MARK: - Sixth Tone (Next.js __NEXT_DATA__)
+
+    private static func isSixthToneHost(_ host: String?) -> Bool {
+        guard let host = host?.lowercased() else { return false }
+        return host == "sixthtone.com" || host.hasSuffix(".sixthtone.com")
+    }
+
+    /// 拉取页面并解析 __NEXT_DATA__（与 sspai 一样走专用通道，避免通用启发式丢图）
+    private static func fetchSixthToneContent(pageURL: URL) async -> Result? {
+        var request = URLRequest(url: pageURL, timeoutInterval: 25)
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.setValue("https://www.sixthtone.com/", forHTTPHeaderField: "Referer")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                return nil
+            }
+            guard let html = decodeHTML(data: data), !html.isEmpty else { return nil }
+            return extractSixthTone(from: html, baseURL: pageURL)
+        } catch {
+            return nil
+        }
+    }
+
+    /// 从页面 `__NEXT_DATA__` 取出 detailData.data.content + textImageList 配图
+    private static func extractSixthTone(from html: String, baseURL: URL) -> Result? {
+        guard let jsonText = matchFirst(
+            #"<script[^>]*id=[\"']__NEXT_DATA__[\"'][^>]*>([\s\S]*?)</script>"#,
+            in: html
+        ) else { return nil }
+        guard let data = jsonText.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let props = root["props"] as? [String: Any],
+              let pageProps = props["pageProps"] as? [String: Any] else {
+            return nil
+        }
+
+        // detailData 可能是 { code, data: {...} } 或直接为文章对象
+        let article: [String: Any]? = {
+            if let detail = pageProps["detailData"] as? [String: Any] {
+                if let inner = detail["data"] as? [String: Any] { return inner }
+                if detail["content"] != nil { return detail }
+            }
+            if let d = pageProps["data"] as? [String: Any] { return d }
+            return nil
+        }()
+        guard let article else { return nil }
+
+        let contentHTML = (article["content"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !contentHTML.isEmpty else { return nil }
+
+        let title = (article["name"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var parts: [String] = []
+
+        // 封面图（headPic / bigPic）
+        let cover = (article["headPic"] as? String)
+            ?? (article["bigPic"] as? String)
+            ?? (article["smallPic"] as? String)
+        if let cover, !cover.isEmpty, contentHTML.range(of: cover, options: .caseInsensitive) == nil {
+            parts.append("<p><img src=\"\(absoluteSixthToneURL(cover, base: baseURL))\" /></p>")
+        }
+
+        parts.append(contentHTML)
+
+        // 正文内通常无 <img>，配图在 textImageList
+        if let images = article["textImageList"] as? [[String: Any]] {
+            for img in images {
+                guard let rawURL = img["url"] as? String, !rawURL.isEmpty else { continue }
+                let abs = absoluteSixthToneURL(rawURL, base: baseURL)
+                if contentHTML.range(of: abs, options: .caseInsensitive) != nil
+                    || contentHTML.range(of: rawURL, options: .caseInsensitive) != nil {
+                    continue
+                }
+                var block = "<figure><img src=\"\(abs)\" />"
+                if let desc = img["desc"] as? String {
+                    let caption = HTMLUtils.stripTags(desc)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !caption.isEmpty {
+                        block += "<figcaption>\(escapeHTMLText(caption))</figcaption>"
+                    }
+                }
+                block += "</figure>"
+                parts.append(block)
+            }
+        }
+
+        let merged = parts.joined(separator: "\n")
+        let cleaned = cleanContentHTML(merged, baseURL: baseURL)
+        let len = HTMLUtils.stripTags(cleaned).count
+        guard len >= 80 else { return nil }
+        return Result(title: title, contentHTML: cleaned, textLength: len)
+    }
+
+    private static func absoluteSixthToneURL(_ raw: String, base: URL) -> String {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.hasPrefix("//") { return "https:" + t }
+        if t.hasPrefix("http://") || t.hasPrefix("https://") { return t }
+        if let u = URL(string: t, relativeTo: base)?.absoluteString { return u }
+        return t
+    }
+
+    private static func escapeHTMLText(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
     private static func extractArticle(from html: String, baseURL: URL) -> Extracted {

@@ -202,7 +202,14 @@ struct Article: Identifiable, Codable, Hashable {
     var relativeTime: String {
         guard let date = publishedDate else { return "" }
         let diff = Date().timeIntervalSince(date)
-        if diff < 3600 { return "\(Int(diff / 60))分钟前" }
+        // 超过 30 天显示具体年月日
+        if diff >= 30 * 86400 {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "zh_CN")
+            f.dateFormat = "yyyy年M月d日"
+            return f.string(from: date)
+        }
+        if diff < 3600 { return "\(max(0, Int(diff / 60)))分钟前" }
         if diff < 86400 { return "\(Int(diff / 3600))小时前" }
         return "\(Int(diff / 86400))天前"
     }
@@ -384,6 +391,85 @@ struct AIProvider: Identifiable, Codable, Hashable {
         model: "gemini-2.0-flash",
         kind: "gemini"
     )
+}
+
+// MARK: - AI Chat
+
+enum ChatRole: String, Codable, Hashable {
+    case user
+    case assistant
+    case system
+}
+
+struct ChatMessage: Identifiable, Codable, Hashable {
+    var id: UUID = UUID()
+    var role: ChatRole
+    var content: String
+    var createdAt: Date = Date()
+    /// 本条回复使用的 Provider（仅 assistant 有意义）
+    var providerID: UUID? = nil
+    var providerName: String? = nil
+    var isError: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case id, role, content, createdAt, providerID, providerName, isError
+    }
+
+    init(
+        id: UUID = UUID(),
+        role: ChatRole,
+        content: String,
+        createdAt: Date = Date(),
+        providerID: UUID? = nil,
+        providerName: String? = nil,
+        isError: Bool = false
+    ) {
+        self.id = id
+        self.role = role
+        self.content = content
+        self.createdAt = createdAt
+        self.providerID = providerID
+        self.providerName = providerName
+        self.isError = isError
+    }
+}
+
+struct ChatConversation: Identifiable, Codable, Hashable {
+    var id: UUID = UUID()
+    var title: String
+    var providerID: UUID?
+    var messages: [ChatMessage] = []
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+    /// 系统提示（可选）；空则用默认
+    var systemPrompt: String = ""
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, providerID, messages, createdAt, updatedAt, systemPrompt
+    }
+
+    init(
+        id: UUID = UUID(),
+        title: String = "新对话",
+        providerID: UUID? = nil,
+        messages: [ChatMessage] = [],
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        systemPrompt: String = ""
+    ) {
+        self.id = id
+        self.title = title
+        self.providerID = providerID
+        self.messages = messages
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.systemPrompt = systemPrompt
+    }
+
+    var previewText: String {
+        messages.last(where: { $0.role == .user || $0.role == .assistant })?.content
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "暂无消息"
+    }
 }
 
 // MARK: - Keychain (Security.framework; migrates legacy UserDefaults Base64)

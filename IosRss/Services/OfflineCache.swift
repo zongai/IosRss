@@ -20,6 +20,10 @@ enum OfflineCache {
         rootURL.appendingPathComponent("feeds.json")
     }
 
+    private static var chatsFileURL: URL {
+        rootURL.appendingPathComponent("chat_conversations.json")
+    }
+
     private static var articlesDir: URL {
         let u = rootURL.appendingPathComponent("articles", isDirectory: true)
         try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
@@ -94,6 +98,33 @@ enum OfflineCache {
         var id: UUID
         var title: String
         var url: String
+    }
+
+    // MARK: - AI Chat conversations
+
+    static func saveChatConversations(_ conversations: [ChatConversation]) {
+        do {
+            let data = try JSONEncoder().encode(conversations)
+            try data.write(to: chatsFileURL, options: [.atomic])
+        } catch {
+            if let data = try? JSONEncoder().encode(conversations) {
+                UserDefaults.standard.set(data, forKey: "chat_conversations")
+            }
+        }
+    }
+
+    static func loadChatConversations() -> [ChatConversation]? {
+        if let data = try? Data(contentsOf: chatsFileURL),
+           let list = try? JSONDecoder().decode([ChatConversation].self, from: data) {
+            return list
+        }
+        if let data = UserDefaults.standard.data(forKey: "chat_conversations"),
+           let list = try? JSONDecoder().decode([ChatConversation].self, from: data) {
+            saveChatConversations(list)
+            UserDefaults.standard.removeObject(forKey: "chat_conversations")
+            return list
+        }
+        return nil
     }
 
     // MARK: - Article full HTML

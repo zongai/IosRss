@@ -9,8 +9,8 @@ struct AddFeedView: View {
     @State private var errorMessage: String?
     @State private var phase: Phase = .input
     @FocusState private var isURLFocused: Bool
-    /// 新源加入的分组；nil = 未分组
-    @State private var selectedGroupID: UUID?
+    /// 新源加入的分组键：`"none"` = 未分组（不要塞进任何分组）
+    @State private var selectedGroupKey: String = "none"
     @State private var showNewGroupAlert = false
     @State private var newGroupName = ""
 
@@ -20,6 +20,16 @@ struct AddFeedView: View {
         store.groups.sorted {
             $0.sortOrder < $1.sortOrder || ($0.sortOrder == $1.sortOrder && $0.name < $1.name)
         }
+    }
+
+    /// 仅当用户明确选中某个仍存在的分组时才返回 id
+    private var resolvedGroupID: UUID? {
+        guard selectedGroupKey != "none",
+              let id = UUID(uuidString: selectedGroupKey),
+              store.groups.contains(where: { $0.id == id }) else {
+            return nil
+        }
+        return id
     }
 
     var body: some View {
@@ -48,15 +58,15 @@ struct AddFeedView: View {
                     .background(.secondary.opacity(0.1), in: .rect(cornerRadius: 10))
                     .padding(.horizontal, 20)
 
-                    // 指定分组
+                    // 指定分组（默认「未分组」= groupID 为 nil，不放进任何分组）
                     HStack(spacing: 10) {
                         Image(systemName: "folder")
                             .foregroundStyle(.secondary)
                             .frame(width: 18)
-                        Picker("加入分组", selection: $selectedGroupID) {
-                            Text("未分组").tag(Optional<UUID>.none)
+                        Picker("加入分组", selection: $selectedGroupKey) {
+                            Text("未分组").tag("none")
                             ForEach(sortedGroups) { group in
-                                Text(group.name).tag(Optional(group.id))
+                                Text(group.name).tag(group.id.uuidString)
                             }
                         }
                         .labelsHidden()
@@ -168,7 +178,7 @@ struct AddFeedView: View {
                     guard !name.isEmpty else { return }
                     store.addGroup(name: name)
                     if let g = store.groups.first(where: { $0.name == name }) {
-                        selectedGroupID = g.id
+                        selectedGroupKey = g.id.uuidString
                     }
                     newGroupName = ""
                 }
@@ -178,7 +188,14 @@ struct AddFeedView: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .onAppear { isURLFocused = true }
+        .onAppear {
+            isURLFocused = true
+            // 打开添加页时默认未分组；无效残留选择也回退
+            if selectedGroupKey != "none",
+               UUID(uuidString: selectedGroupKey).map({ id in store.groups.contains(where: { $0.id == id }) }) != true {
+                selectedGroupKey = "none"
+            }
+        }
     }
 
     private func discover() async {
@@ -253,11 +270,8 @@ struct AddFeedView: View {
             )
             let articles = FeedParser.parse(data: data, feedID: feedID, feedTitle: resolvedTitle)
             let favicon = FeedParser.resolveFaviconURL(from: data, feedURL: discovered.url)
-            // 若所选分组已被删除则回退为未分组
-            let groupID: UUID? = {
-                guard let gid = selectedGroupID else { return nil }
-                return store.groups.contains(where: { $0.id == gid }) ? gid : nil
-            }()
+            // 未选择分组时 groupID 为 nil，不放进任何分组
+            let groupID = resolvedGroupID
             let sampleLinks = articles.prefix(8).map(\.link)
             let enableComments = CommentFetcher.shouldAutoEnableComments(
                 feedURL: discovered.url,

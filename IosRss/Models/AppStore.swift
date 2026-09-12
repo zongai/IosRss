@@ -891,6 +891,15 @@ class AppStore {
     }
 
     private func applyParsedFeed(data: Data, feedID: UUID, idx: Int, urlStr: String, persist: Bool = true) {
+        // 刷新过程中禁用隐式动画，避免列表因未读数/排序变化而“自动展开/折叠”
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            applyParsedFeedUnanimated(data: data, feedID: feedID, urlStr: urlStr, persist: persist)
+        }
+    }
+
+    private func applyParsedFeedUnanimated(data: Data, feedID: UUID, urlStr: String, persist: Bool) {
         // 并发刷新时 idx 可能过期，始终按 feedID 重定位
         guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
         let parsed = FeedParser.parse(data: data, feedID: feedID, feedTitle: feeds[idx].title)

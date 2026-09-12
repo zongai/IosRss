@@ -41,7 +41,8 @@ struct FeedsListView: View {
                     if sections.isEmpty {
                         noUnreadState
                     } else {
-                    ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+                    // 用稳定 sectionID，避免刷新重排后 ForEach 把折叠状态“串”到别的分组
+                    ForEach(sections, id: \.sectionID) { section in
                         let groupID = section.group?.id
                         let collapsed = store.isGroupCollapsed(groupID)
                         let unreadSum = section.feeds.reduce(0) { $0 + $1.unreadCount }
@@ -194,6 +195,7 @@ struct FeedsListView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
+            // 仅动画进度条显隐，不带动列表分区折叠/展开
             .animation(.easeInOut(duration: 0.35), value: store.isRefreshingAll)
             .animation(.easeInOut(duration: 0.35), value: store.isLoading)
             .safeAreaInset(edge: .bottom) {
@@ -439,13 +441,14 @@ struct FeedsListView: View {
 
     
     /// 源列表展示用：默认只显示有未读的源；开启「显示已读文章」时显示全部
-    private var visibleFeedSections: [(group: FeedGroup?, feeds: [RSSFeed])] {
+    private var visibleFeedSections: [(sectionID: String, group: FeedGroup?, feeds: [RSSFeed])] {
         store.feedsByGroup.compactMap { section in
             let feeds = store.showReadArticles
                 ? section.feeds
                 : section.feeds.filter { $0.unreadCount > 0 }
             guard !feeds.isEmpty else { return nil }
-            return (section.group, feeds)
+            let sid = section.group?.id.uuidString ?? "__ungrouped__"
+            return (sid, section.group, feeds)
         }
     }
 

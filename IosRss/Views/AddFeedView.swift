@@ -205,8 +205,13 @@ struct AddFeedView: View {
         discoveredFeeds = []
         phase = .discovering
 
-        var urlStr = raw
-        if !urlStr.hasPrefix("http://") && !urlStr.hasPrefix("https://") {
+        // rsshub://zaobao/realtime → https://rsshub.app/zaobao/realtime
+        var urlStr = FeedURL.expandCustomSchemes(raw)
+        if urlStr != raw {
+            urlText = urlStr // 输入框同步为展开后的 https 地址
+        }
+        let lower = urlStr.lowercased()
+        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") {
             urlStr = "https://\(urlStr)"
         }
         guard let url = URL(string: urlStr) else {
@@ -268,22 +273,43 @@ struct AddFeedView: View {
             return
         }
         do {
-            var request = URLRequest(url: url, timeoutInterval: 20)
-            request.setValue(
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
-                forHTTPHeaderField: "User-Agent"
-            )
-            request.setValue(
-                "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8",
-                forHTTPHeaderField: "Accept"
-            )
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                failAdd("无法获取源信息（HTTP \(http.statusCode)）")
-                return
+            let data: Data
+            if RSSHubSupport.isRSSHubURL(url) {
+                // RSSHub 官方站常被 Cloudflare 拦截：自动尝试公共镜像（订阅地址仍保留用户输入）
+                do {
+                    (data, _) = try await FeedDiscovery.fetchRSSHubFeed(from: url)
+                } catch {
+                    let ns = error as NSError
+                    if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorNoPermissionsToReadFile {
+                        failAdd("RSSHub 返回了验证页（Cloudflare），已尝试公共镜像仍失败，请稍后重试或更换实例")
+                    } else {
+                        failAdd("无法获取 RSSHub 源信息：\(error.localizedDescription)")
+                    }
+                    return
+                }
+            } else {
+                var request = URLRequest(url: url, timeoutInterval: 20)
+                request.setValue(
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+                    forHTTPHeaderField: "User-Agent"
+                )
+                request.setValue(
+                    "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8",
+                    forHTTPHeaderField: "Accept"
+                )
+                let (body, response) = try await URLSession.shared.data(for: request)
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    failAdd("无法获取源信息（HTTP \(http.statusCode)）")
+                    return
+                }
+                data = body
             }
             guard !data.isEmpty else {
                 failAdd("无法获取源信息：返回内容为空")
+                return
+            }
+            if RSSHubSupport.looksLikeCloudflareOrHTMLGate(data) {
+                failAdd("源站返回了验证页，无法读取 Feed")
                 return
             }
 
@@ -300,7 +326,7 @@ struct AddFeedView: View {
 
             // 既无频道标题、又解析不出任何条目 → 视为获取失败，不添加
             let hasTitle = fromXML.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false
-            let looksLikeFeed = Self.dataLooksLikeFeed(data)
+            let looksLikeFeed = Self.dataLooksLikeFeed(data) || RSSHubSupport.looksLikeFeedXML(data)
             if articles.isEmpty && !hasTitle {
                 failAdd(looksLikeFeed
                         ? "该源暂无文章，且缺少标题信息，已取消添加"

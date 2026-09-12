@@ -414,7 +414,8 @@ struct FeedsListView: View {
                 continue
             }
             let lower = line.lowercased()
-            if lower.hasPrefix("http://") || lower.hasPrefix("https://") || lower.hasPrefix("feed://") {
+            if lower.hasPrefix("http://") || lower.hasPrefix("https://")
+                || lower.hasPrefix("feed://") || lower.hasPrefix("rsshub://") || lower.hasPrefix("rsshub:/") {
                 let url = FeedURL.canonical(line)
                 if store.feeds.contains(where: { FeedURL.canonical($0.url) == url }) {
                     skipped += 1

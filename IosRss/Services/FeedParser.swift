@@ -290,6 +290,73 @@ enum FeedNaming {
         host.lowercased().hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 }
+/// RSSHub 公共实例兼容：官方站常遇 Cloudflare，自动换同源路径镜像
+enum RSSHubSupport {
+    /// 优先保留用户原主机，失败后再试镜像
+    static let mirrorHosts: [String] = [
+        "rsshub.app",
+        "rsshub.rssforever.com",
+        "hub.slarker.me",
+        "rsshub.pseudoyu.com",
+        "rss.owo.nz",
+        "rsshub.rss.tips",
+    ]
+
+    static func isRSSHubURL(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased(), !host.isEmpty else { return false }
+        if host == "rsshub.app" || host.hasPrefix("rsshub.") { return true }
+        if host.contains("rsshub") { return true }
+        return mirrorHosts.contains(host)
+    }
+
+    static func isRSSHubURLString(_ s: String) -> Bool {
+        guard let u = URL(string: s) else { return false }
+        return isRSSHubURL(u)
+    }
+
+    /// 同一 path + query，替换主机后的候选列表（原主机在前）
+    static func candidateURLs(for url: URL) -> [URL] {
+        guard isRSSHubURL(url),
+              var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return [url]
+        }
+        let originalHost = (comps.host ?? "").lowercased()
+        var hosts: [String] = []
+        if !originalHost.isEmpty { hosts.append(originalHost) }
+        for h in mirrorHosts where !hosts.contains(h) { hosts.append(h) }
+        var result: [URL] = []
+        var seen = Set<String>()
+        for host in hosts {
+            comps.host = host
+            comps.scheme = "https"
+            guard let u = comps.url else { continue }
+            let key = u.absoluteString
+            if seen.insert(key).inserted { result.append(u) }
+        }
+        return result.isEmpty ? [url] : result
+    }
+
+    static func looksLikeCloudflareOrHTMLGate(_ data: Data) -> Bool {
+        guard let raw = String(data: data, encoding: .utf8)
+                ?? String(data: data, encoding: .isoLatin1) else { return false }
+        let head = raw.prefix(2500).lowercased()
+        if head.contains("just a moment") { return true }
+        if head.contains("cf-browser-verification") || head.contains("challenge-platform") { return true }
+        if head.contains("cdn-cgi/challenge") { return true }
+        if head.contains("<html") && !looksLikeFeedXML(data) { return true }
+        return false
+    }
+
+    static func looksLikeFeedXML(_ data: Data) -> Bool {
+        guard let raw = String(data: data, encoding: .utf8)
+                ?? String(data: data, encoding: .isoLatin1) else { return false }
+        let head = raw.prefix(4096).lowercased()
+        if head.contains("<rss") || head.contains("<feed") || head.contains("<rdf:rdf") { return true }
+        if head.contains("<channel") && (head.contains("<item") || head.contains("<title")) { return true }
+        return false
+    }
+}
+
 struct FeedDiscovery {
     static func discoverFeeds(from url: URL) async throws -> [DiscoveredFeed] {
         var finalURL = url
@@ -299,13 +366,68 @@ struct FeedDiscovery {
         guard NetworkURLPolicy.isAllowed(finalURL) else {
             throw URLError(.badURL)
         }
+
+        // RSSHub 路由本身就是 Feed：带镜像重试拉取，成功才返回
+        if RSSHubSupport.isRSSHubURL(finalURL) {
+            let (data, resolved) = try await fetchRSSHubFeed(from: finalURL)
+            let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
+            let title = FeedNaming.resolveTitle(
+                parsed: FeedParser.extractFeedTitle(from: data),
+                url: resolved.absoluteString
+            )
+            if articles.isEmpty && FeedParser.extractFeedTitle(from: data) == nil {
+                throw URLError(.cannotParseResponse)
+            }
+            // 仍用用户输入的 URL 作为订阅地址，避免列表被换成镜像域名
+            return [DiscoveredFeed(title: title, url: finalURL.absoluteString)]
+        }
+
         let (data, _) = try await URLSession.shared.data(from: finalURL)
+        if RSSHubSupport.looksLikeCloudflareOrHTMLGate(data) {
+            throw URLError(.noPermissionsToReadFile)
+        }
         let articles = FeedParser.parse(data: data, feedID: UUID(), feedTitle: "")
         if !articles.isEmpty {
             let title = FeedNaming.resolveTitle(parsed: FeedParser.extractFeedTitle(from: data), url: finalURL.absoluteString)
             return [DiscoveredFeed(title: title, url: finalURL.absoluteString)]
         }
         return [DiscoveredFeed(title: FeedNaming.domainName(from: finalURL.absoluteString), url: finalURL.absoluteString)]
+    }
+
+    /// 拉取 RSSHub（含镜像回退），返回 (data, 实际成功的 URL)
+    static func fetchRSSHubFeed(from url: URL) async throws -> (Data, URL) {
+        var lastError: Error = URLError(.badServerResponse)
+        for candidate in RSSHubSupport.candidateURLs(for: url) {
+            do {
+                var request = URLRequest(url: candidate, timeoutInterval: 20)
+                request.setValue(
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+                    forHTTPHeaderField: "User-Agent"
+                )
+                request.setValue(
+                    "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8",
+                    forHTTPHeaderField: "Accept"
+                )
+                request.cachePolicy = .reloadIgnoringLocalCacheData
+                let (data, response) = try await URLSession.shared.data(for: request)
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    lastError = URLError(.badServerResponse)
+                    continue
+                }
+                if RSSHubSupport.looksLikeCloudflareOrHTMLGate(data) {
+                    lastError = URLError(.noPermissionsToReadFile)
+                    continue
+                }
+                if !RSSHubSupport.looksLikeFeedXML(data) {
+                    lastError = URLError(.cannotParseResponse)
+                    continue
+                }
+                return (data, candidate)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError
     }
 }
 struct DiscoveredFeed: Identifiable { let id = UUID(); let title: String; let url: String }

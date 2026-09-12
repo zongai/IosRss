@@ -620,10 +620,30 @@ struct SubscriptionImportResult {
 enum FeedURL {
     static func canonical(_ raw: String) -> String {
         var s = HTMLUtils.decodeEntities(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        s = expandCustomSchemes(s)
         if s.lowercased().hasPrefix("feed://") {
             s = "https://" + String(s.dropFirst(7))
         }
         if s.hasSuffix("/") { s = String(s.dropLast()) }
         return s
+    }
+
+    /// `rsshub://zaobao/realtime` → `https://rsshub.app/zaobao/realtime`
+    static func expandCustomSchemes(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+        guard lower.hasPrefix("rsshub://") || lower.hasPrefix("rsshub:/") else { return trimmed }
+
+        // 去掉 scheme（兼容 rsshub:// 与 rsshub:/）
+        var rest: String
+        if lower.hasPrefix("rsshub://") {
+            rest = String(trimmed.dropFirst("rsshub://".count))
+        } else {
+            rest = String(trimmed.dropFirst("rsshub:/".count))
+        }
+        while rest.hasPrefix("/") { rest = String(rest.dropFirst()) }
+
+        // 保留 path + query + fragment
+        return rest.isEmpty ? "https://rsshub.app" : "https://rsshub.app/\(rest)"
     }
 }

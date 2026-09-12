@@ -857,6 +857,11 @@ class AppStore {
     }
 
     private static func fetchFeedData(from url: URL) async throws -> Data {
+        // RSSHub：官方站常被 Cloudflare 拦，自动换同源路径镜像
+        if RSSHubSupport.isRSSHubURL(url) {
+            let (data, _) = try await FeedDiscovery.fetchRSSHubFeed(from: url)
+            return data
+        }
         var request = URLRequest(url: url, timeoutInterval: 12)
         request.setValue(
             "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
@@ -867,6 +872,10 @@ class AppStore {
         let (data, response) = try await FeedHTTP.session.data(for: request)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw URLError(.badServerResponse)
+        }
+        // 误返回 HTML 门禁页时给出明确错误，避免当成空 Feed
+        if RSSHubSupport.looksLikeCloudflareOrHTMLGate(data) {
+            throw URLError(.noPermissionsToReadFile)
         }
         return data
     }
@@ -884,6 +893,10 @@ class AppStore {
             case NSURLErrorTimedOut: return "连接超时"
             case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed: return "无法解析主机"
             case NSURLErrorAppTransportSecurityRequiresSecureConnection: return "需要 HTTPS 连接（ATS）"
+            case NSURLErrorNoPermissionsToReadFile:
+                return "源站返回了验证页（如 Cloudflare），无法读取 Feed。可稍后重试，或改用其它 RSSHub 实例。"
+            case NSURLErrorCannotParseResponse:
+                return "无法解析为有效的 RSS/Atom 内容"
             default: break
             }
         }

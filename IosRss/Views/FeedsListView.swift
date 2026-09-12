@@ -64,11 +64,21 @@ struct FeedsListView: View {
                                         }.tint(.blue)
                                     }
                                     .swipeActions(edge: .leading) {
+                                        Button {
+                                            UIPasteboard.general.string = feed.url
+                                        } label: {
+                                            Label("复制链接", systemImage: "link")
+                                        }.tint(.indigo)
                                         Button { moveFeedTarget = feed } label: {
                                             Label("分组", systemImage: "folder")
                                         }.tint(.orange)
                                     }
                                     .contextMenu {
+                                        Button {
+                                            UIPasteboard.general.string = feed.url
+                                        } label: {
+                                            Label("复制源链接", systemImage: "link")
+                                        }
                                         Button {
                                             renameFeedTarget = feed
                                             renameFeedText = feed.title
@@ -599,6 +609,14 @@ struct FeedRow: View {
                     .foregroundStyle(theme.text)
                     .lineLimit(1)
                 HStack(spacing: 6) {
+                    if CommentFetcher.isSubstackLike(feed: live) {
+                        Text("Substack")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color(.systemBackground))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.9), in: Capsule())
+                    }
                     if let last = live.lastFetched {
                         Text(Self.relativeString(last))
                             .font(AppTypography.caption())
@@ -648,6 +666,8 @@ struct FeedIcon: View {
     @State private var image: UIImage?
     @State private var loading = false
     @State private var useLetter = false
+    /// 本会话对失败缓存的重试（兼容旧版误标 fetchDone / 空缓存）
+    @State private var didSessionRetry = false
     private var cacheKey: String { "feed-icon:\(feed.id.uuidString)" }
     private var live: RSSFeed { store.feeds.first(where: { $0.id == feed.id }) ?? feed }
     var body: some View {
@@ -658,7 +678,13 @@ struct FeedIcon: View {
                 ProgressView().frame(width: size, height: size)
             } else { letterFallback }
         }
-        .task(id: feed.id) { await loadIcon() }
+        .task(id: "\(feed.id.uuidString)-\(live.faviconURL ?? "")-\(live.faviconFetchDone)") {
+            // URL / 完成标记变化时重新尝试（兼容旧数据误标 fetchDone）
+            if image == nil {
+                useLetter = false
+                await loadIcon()
+            }
+        }
     }
     private var letterFallback: some View {
         ZStack {
@@ -669,26 +695,46 @@ struct FeedIcon: View {
         }
     }
     private func loadIcon() async {
-        if image != nil || useLetter { return }
-        if let cached = FaviconCache.shared.image(for: cacheKey) { image = cached; return }
+        if image != nil { return }
+        if let cached = FaviconCache.shared.image(for: cacheKey) {
+            image = cached
+            useLetter = false
+            return
+        }
         if let data = OfflineCache.loadFavicon(key: cacheKey) {
-            if data.isEmpty { useLetter = true; return }
-            if let ui = UIImage(data: data), ui.size.width > 1 {
-                FaviconCache.shared.store(ui, for: cacheKey); image = ui; return
+            // 非空且能解码 → 成功缓存；空数据表示曾经失败
+            if !data.isEmpty, let ui = UIImage(data: data), ui.size.width > 1 {
+                FaviconCache.shared.store(ui, for: cacheKey)
+                image = ui
+                useLetter = false
+                return
+            }
+            // 失败空缓存：本会话允许重试一次（旧版可能未真正拉取就标记完成）
+            if data.isEmpty && live.faviconFetchDone && didSessionRetry {
+                useLetter = true
+                return
+            }
+            if data.isEmpty && !didSessionRetry {
+                didSessionRetry = true
+                // 清掉失败占位，重新走候选下载
+                OfflineCache.saveFavicon(key: cacheKey, data: Data()) // keep key; will overwrite on success
             }
         } else if let legacy = OfflineCache.loadImage(url: cacheKey) {
-            // 迁移旧 images 目录中的图标缓存
             OfflineCache.saveFavicon(key: cacheKey, data: legacy)
-            if legacy.isEmpty { useLetter = true; return }
-            if let ui = UIImage(data: legacy), ui.size.width > 1 {
-                FaviconCache.shared.store(ui, for: cacheKey); image = ui; return
+            if !legacy.isEmpty, let ui = UIImage(data: legacy), ui.size.width > 1 {
+                FaviconCache.shared.store(ui, for: cacheKey)
+                image = ui
+                useLetter = false
+                return
             }
         }
-        // 已执行过：不再发起任何网络请求
-        if live.faviconFetchDone {
+        // 兼容旧 bug：fetchDone=true 但磁盘无缓存 → 再试
+        if live.faviconFetchDone, OfflineCache.loadFavicon(key: cacheKey) != nil, didSessionRetry {
             useLetter = true
             return
         }
+        if !didSessionRetry { didSessionRetry = true }
+
         loading = true
         defer { loading = false }
         var candidates: [String] = []
@@ -696,20 +742,30 @@ struct FeedIcon: View {
         candidates.append(contentsOf: FeedParser.faviconCandidates(for: live.url))
         var seen = Set<String>()
         var found: UIImage?
+        var foundData: Data?
         for raw in candidates {
             guard !raw.isEmpty, seen.insert(raw).inserted, let url = URL(string: raw) else { continue }
             do {
-                let (data, response) = try await URLSession.shared.data(from: url)
+                var request = URLRequest(url: url, timeoutInterval: 12)
+                request.setValue(
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+                    forHTTPHeaderField: "User-Agent"
+                )
+                request.setValue("image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+                let (data, response) = try await URLSession.shared.data(for: request)
                 if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { continue }
+                guard data.count >= 32 else { continue }
                 guard let ui = UIImage(data: data), ui.size.width > 1 else { continue }
-                FaviconCache.shared.store(ui, for: cacheKey)
-                OfflineCache.saveFavicon(key: cacheKey, data: data)
                 found = ui
+                foundData = data
                 break
             } catch { continue }
         }
-        if let found {
+        if let found, let foundData {
+            FaviconCache.shared.store(found, for: cacheKey)
+            OfflineCache.saveFavicon(key: cacheKey, data: foundData)
             image = found
+            useLetter = false
         } else {
             useLetter = true
             OfflineCache.saveFavicon(key: cacheKey, data: Data())

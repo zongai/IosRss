@@ -248,18 +248,46 @@ struct AddFeedView: View {
         }
     }
 
+    private func failAdd(_ message: String) {
+        errorMessage = message
+        // 有候选列表时回到选择，否则回输入
+        phase = discoveredFeeds.isEmpty ? .input : .select
+    }
+
     private func addFeed(_ discovered: DiscoveredFeed) async {
         phase = .adding
+        errorMessage = nil
         guard let url = URL(string: discovered.url) else {
-            errorMessage = "无效的 Feed URL"
-            phase = .select
+            failAdd("无效的 Feed URL")
+            return
+        }
+        // 已存在则直接提示，不重复添加
+        let canonical = FeedURL.canonical(discovered.url)
+        if store.feeds.contains(where: { FeedURL.canonical($0.url) == canonical }) {
+            failAdd("该订阅源已存在")
             return
         }
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            OfflineCache.saveFeedXML(url: discovered.url, data: data)
+            var request = URLRequest(url: url, timeoutInterval: 20)
+            request.setValue(
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+                forHTTPHeaderField: "User-Agent"
+            )
+            request.setValue(
+                "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8",
+                forHTTPHeaderField: "Accept"
+            )
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                failAdd("无法获取源信息（HTTP \(http.statusCode)）")
+                return
+            }
+            guard !data.isEmpty else {
+                failAdd("无法获取源信息：返回内容为空")
+                return
+            }
+
             let feedID = UUID()
-            // 优先用 Feed 内 channel/title；没有再用 link 上的 title；仍没有则用域名
             let fromXML = FeedParser.extractFeedTitle(from: data)
             let fallbackName = (discovered.title != discovered.url
                                 && discovered.title != FeedNaming.domainName(from: discovered.url))
@@ -269,8 +297,23 @@ struct AddFeedView: View {
                 url: discovered.url
             )
             let articles = FeedParser.parse(data: data, feedID: feedID, feedTitle: resolvedTitle)
+
+            // 既无频道标题、又解析不出任何条目 → 视为获取失败，不添加
+            let hasTitle = fromXML.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false
+            let looksLikeFeed = Self.dataLooksLikeFeed(data)
+            if articles.isEmpty && !hasTitle {
+                failAdd(looksLikeFeed
+                        ? "该源暂无文章，且缺少标题信息，已取消添加"
+                        : "无法解析为有效的 RSS/Atom 源，已取消添加")
+                return
+            }
+            if articles.isEmpty && !looksLikeFeed {
+                failAdd("无法解析为有效的 RSS/Atom 源，已取消添加")
+                return
+            }
+
+            OfflineCache.saveFeedXML(url: discovered.url, data: data)
             let favicon = FeedParser.resolveFaviconURL(from: data, feedURL: discovered.url)
-            // 未选择分组时 groupID 为 nil，不放进任何分组
             let groupID = resolvedGroupID
             let sampleLinks = articles.prefix(8).map(\.link)
             let enableComments = CommentFetcher.shouldAutoEnableComments(
@@ -287,13 +330,22 @@ struct AddFeedView: View {
                 lastFetched: Date(),
                 groupID: groupID,
                 fetchCommentsEnabled: enableComments,
-                faviconFetchDone: favicon != nil
+                faviconFetchDone: false
             )
             store.addFeed(feed)
             dismiss()
         } catch {
-            errorMessage = "订阅失败：\(error.localizedDescription)"
-            phase = .select
+            failAdd("无法获取源信息：\(error.localizedDescription)")
         }
+    }
+
+    /// 粗检：内容是否像 RSS / Atom
+    private static func dataLooksLikeFeed(_ data: Data) -> Bool {
+        guard let raw = String(data: data, encoding: .utf8)
+                ?? String(data: data, encoding: .isoLatin1) else { return false }
+        let head = raw.prefix(4096).lowercased()
+        if head.contains("<rss") || head.contains("<feed") || head.contains("<rdf:rdf") { return true }
+        if head.contains("<channel") && (head.contains("<item") || head.contains("<title")) { return true }
+        return false
     }
 }

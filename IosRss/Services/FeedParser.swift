@@ -131,6 +131,7 @@ enum FeedParser {
         return nil
     }
     static func siteFaviconURL(for feedURL: String) -> String? { faviconCandidates(for: feedURL).first }
+    /// 候选顺序：优先 UIImage 易解码的 PNG 服务，站点路径次之；.ico 靠后（UIImage 常无法解码）
     static func faviconCandidates(for feedOrSiteURL: String) -> [String] {
         guard let host = hostOf(feedOrSiteURL) else { return [] }
         let scheme: String = {
@@ -140,19 +141,23 @@ enum FeedParser {
         let root = "\(scheme)://\(host)"
         let bareHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
         var list: [String] = [
-            "\(root)/apple-touch-icon.png", "\(root)/apple-touch-icon-precomposed.png",
-            "\(root)/favicon.png", "\(root)/favicon.ico",
+            // 第三方 PNG（解码稳）
             "https://www.google.com/s2/favicons?domain=\(bareHost)&sz=128",
             "https://www.google.com/s2/favicons?domain=\(host)&sz=128",
             "https://icons.duckduckgo.com/ip3/\(bareHost).ico",
             "https://icons.duckduckgo.com/ip3/\(host).ico",
+            // 站点常见路径
+            "\(root)/apple-touch-icon.png",
+            "\(root)/apple-touch-icon-precomposed.png",
+            "\(root)/favicon.png",
+            "\(root)/favicon.ico",
         ]
         if bareHost != host {
-            list.insert(contentsOf: [
+            list.append(contentsOf: [
                 "\(scheme)://\(bareHost)/apple-touch-icon.png",
                 "\(scheme)://\(bareHost)/favicon.png",
                 "\(scheme)://\(bareHost)/favicon.ico",
-            ], at: 4)
+            ])
         }
         var seen = Set<String>()
         return list.filter { seen.insert($0).inserted }

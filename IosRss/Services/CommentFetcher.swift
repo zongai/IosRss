@@ -68,18 +68,40 @@ enum CommentFetcher {
     }
 
     static func shouldAutoEnableComments(feedURL: String, sampleArticleLinks: [String] = []) -> Bool {
+        if isSubstackLike(feedURL: feedURL, sampleArticleLinks: sampleArticleLinks) { return true }
         let candidates = [feedURL] + sampleArticleLinks
         for raw in candidates {
             guard let url = NetworkURLPolicy.validate(raw), let host = url.host?.lowercased() else { continue }
-            if host == "substack.com" || host.hasSuffix(".substack.com") { return true }
             if host == "engadget.com" || host.hasSuffix(".engadget.com") { return true }
             if host == "news.ycombinator.com" || host.hasSuffix(".ycombinator.com") { return true }
+            // 其它站点带 /p/slug 的也尝试开启评论（兼容自定义域 Substack 已在 isSubstackLike 覆盖）
             let parts = url.path.lowercased().split(separator: "/").map(String.init)
             if let idx = parts.firstIndex(of: "p"), idx + 1 < parts.count, !parts[idx + 1].isEmpty {
                 return true
             }
         }
         return false
+    }
+
+    /// 识别 Substack（官方子域或文章路径含 /p/slug 的自定义域）
+    static func isSubstackLike(feedURL: String, sampleArticleLinks: [String] = []) -> Bool {
+        let candidates = [feedURL] + sampleArticleLinks
+        for raw in candidates {
+            guard let url = NetworkURLPolicy.validate(raw) ?? URL(string: raw),
+                  let host = url.host?.lowercased() else { continue }
+            if host == "substack.com" || host.hasSuffix(".substack.com") { return true }
+            let parts = url.path.lowercased().split(separator: "/").map(String.init)
+            // 自定义域名常见：https://example.com/p/slug 或 feed 同源文章
+            if let idx = parts.firstIndex(of: "p"), idx + 1 < parts.count, !parts[idx + 1].isEmpty {
+                return true
+            }
+        }
+        return false
+    }
+
+    static func isSubstackLike(feed: RSSFeed) -> Bool {
+        let samples = feed.articles.prefix(8).map(\.link)
+        return isSubstackLike(feedURL: feed.url, sampleArticleLinks: Array(samples))
     }
 
     // MARK: - Hacker News

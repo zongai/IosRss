@@ -938,17 +938,24 @@ class AppStore {
         feeds[idx].articles.insert(contentsOf: newArticles, at: 0)
         feeds[idx].unreadCount = feeds[idx].articles.filter { !$0.isRead }.count
         feeds[idx].lastFetched = Date()
-        // 图标获取只执行一次：无论成功与否都标记完成
-        if !feeds[idx].faviconFetchDone {
+        // 仅解析/更新图标 URL，真正下载由 FeedIcon 负责（勿在此标记 faviconFetchDone）
+        if let resolved = FeedParser.resolveFaviconURL(from: data, feedURL: urlStr) {
             var feed = feeds[idx]
-            if let resolved = FeedParser.resolveFaviconURL(from: data, feedURL: urlStr) {
-                let current = feed.faviconURL ?? ""
-                let isFallbackOnly = current.isEmpty || current.contains("duckduckgo.com/ip3/") || current.contains("google.com/s2/favicons")
-                let fromFeed = FeedParser.extractFeedImage(from: data) != nil
-                if isFallbackOnly || fromFeed { feed.faviconURL = resolved }
+            let current = feed.faviconURL ?? ""
+            let isFallbackOnly = current.isEmpty
+                || current.contains("duckduckgo.com/ip3/")
+                || current.contains("google.com/s2/favicons")
+            let fromFeed = FeedParser.extractFeedImage(from: data) != nil
+            if isFallbackOnly || fromFeed {
+                if feed.faviconURL != resolved {
+                    feed.faviconURL = resolved
+                    // URL 变更时允许重新下载
+                    if feed.faviconFetchDone {
+                        feed.faviconFetchDone = false
+                    }
+                    feeds[idx] = feed
+                }
             }
-            feed.faviconFetchDone = true
-            feeds[idx] = feed
         }
         if persist {
             purgeOldReadArticles()

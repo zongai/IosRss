@@ -259,7 +259,15 @@ struct AIProviderRow: View {
                     }
                 }
             }
-            Text(provider.model).font(.system(size: 12)).foregroundStyle(.secondary)
+            let models = provider.availableModels
+            if models.count > 1 {
+                Text("默认 \(provider.model) · 共 \(models.count) 个模型")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else {
+                Text(provider.model).font(.system(size: 12)).foregroundStyle(.secondary)
+            }
             Text(provider.baseURL).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
         }
         .padding(.vertical, 2)
@@ -290,6 +298,8 @@ struct EditProviderView: View {
     @State private var name = ""
     @State private var baseURL = ""
     @State private var model = ""
+    /// 每行一个模型名
+    @State private var modelsText = ""
     @State private var apiKeys: [String] = []
     @State private var newAPIKey = ""
     @State private var kind = "openai"
@@ -299,6 +309,22 @@ struct EditProviderView: View {
 
     private var isNew: Bool { provider == nil }
 
+    private var parsedModels: [String] {
+        var seen = Set<String>()
+        var list: [String] = []
+        for line in modelsText.components(separatedBy: .newlines) {
+            let m = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !m.isEmpty, !seen.contains(m) else { continue }
+            seen.insert(m)
+            list.append(m)
+        }
+        let primary = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !primary.isEmpty && !seen.contains(primary) {
+            list.insert(primary, at: 0)
+        }
+        return list
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -307,16 +333,38 @@ struct EditProviderView: View {
                     Button("Anthropic") { applyTemplate(.anthropicTemplate) }.foregroundStyle(Color.primary)
                     Button("Gemini") { applyTemplate(.geminiTemplate) }.foregroundStyle(Color.primary)
                 }
-                Section("基本信息") {
+                Section {
                     TextField("名称", text: $name)
                     TextField("Base URL", text: $baseURL)
                         .keyboardType(.URL).autocorrectionDisabled().textInputAutocapitalization(.never)
-                    TextField("模型名", text: $model)
-                        .autocorrectionDisabled().textInputAutocapitalization(.never)
                     Picker("接口类型", selection: $kind) {
                         Text("OpenAI 兼容").tag("openai")
                         Text("Gemini").tag("gemini")
                     }
+                } header: {
+                    Text("基本信息")
+                }
+                Section {
+                    TextEditor(text: $modelsText)
+                        .font(.system(size: 14, design: .monospaced))
+                        .frame(minHeight: 88)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    if !parsedModels.isEmpty {
+                        Picker("默认模型", selection: $model) {
+                            ForEach(parsedModels, id: \.self) { m in
+                                Text(m).tag(m)
+                            }
+                        }
+                    } else {
+                        TextField("默认模型名", text: $model)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                    }
+                } header: {
+                    Text("模型（可多个）")
+                } footer: {
+                    Text("每行一个模型 ID。默认模型用于摘要/翻译/解释；对话页可在列表中切换同一 Provider 下的其它模型。")
                 }
                 Section {
                     if apiKeys.isEmpty {
@@ -373,7 +421,7 @@ struct EditProviderView: View {
                             if isTesting { ProgressView() }
                         }
                     }
-                    .disabled(isTesting || baseURL.isEmpty || model.isEmpty)
+                    .disabled(isTesting || baseURL.isEmpty || (model.isEmpty && parsedModels.isEmpty))
                     if let testResult {
                         Text(testResult)
                             .font(.system(size: 12, design: .monospaced))
@@ -396,7 +444,7 @@ struct EditProviderView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") { save() }
-                        .disabled(name.isEmpty || baseURL.isEmpty || model.isEmpty)
+                        .disabled(name.isEmpty || baseURL.isEmpty || (model.isEmpty && parsedModels.isEmpty))
                 }
             }
         }
@@ -408,6 +456,7 @@ struct EditProviderView: View {
         name = p.name
         baseURL = p.baseURL
         model = p.model
+        modelsText = p.availableModels.joined(separator: "\n")
         kind = p.kind.isEmpty ? (p.name.lowercased().contains("gemini") ? "gemini" : "openai") : p.kind
         apiKeys = store.loadAIKeys(for: p.id)
         isDefaultSummary = store.defaultSummaryProviderID == p.id
@@ -419,15 +468,20 @@ struct EditProviderView: View {
         name = template.name
         baseURL = template.baseURL
         model = template.model
+        modelsText = template.availableModels.joined(separator: "\n")
         kind = template.kind
     }
 
     private func testCurrent() async {
         let id = provider?.id ?? UUID()
         store.saveAIKeys(for: id, keys: apiKeys)
+        let models = parsedModels
+        let active = model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (models.first ?? "")
+            : model.trimmingCharacters(in: .whitespacesAndNewlines)
         let temp = AIProvider(
             id: id, name: name.isEmpty ? "Test" : name,
-            baseURL: baseURL, model: model, kind: kind
+            baseURL: baseURL, model: active, models: models, kind: kind
         )
         isTesting = true
         testResult = nil
@@ -475,8 +529,11 @@ struct EditProviderView: View {
 
     private func save() {
         let id = provider?.id ?? UUID()
+        let models = parsedModels
+        var active = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if active.isEmpty { active = models.first ?? "" }
         let updated = AIProvider(
-            id: id, name: name, baseURL: baseURL, model: model, kind: kind,
+            id: id, name: name, baseURL: baseURL, model: active, models: models, kind: kind,
             isDefaultSummary: isDefaultSummary, isDefaultTranslation: isDefaultTranslation
         )
         store.saveAIKeys(for: id, keys: apiKeys)

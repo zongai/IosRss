@@ -112,7 +112,8 @@ private struct ChatConversationRow: View {
               let p = store.aiProviders.first(where: { $0.id == pid }) else {
             return "未指定模型"
         }
-        return p.name
+        let m = (conversation.model?.isEmpty == false ? conversation.model! : p.model)
+        return "\(p.name) · \(m)"
     }
 
     var body: some View {
@@ -236,13 +237,42 @@ struct AIChatDetailView: View {
                             Text("无可用模型")
                         } else {
                             ForEach(providers) { p in
-                                Button {
-                                    store.setChatProvider(conversationID: conversationID, providerID: p.id)
-                                } label: {
-                                    if conversation?.providerID == p.id {
-                                        Label(p.name + " · " + p.model, systemImage: "checkmark")
-                                    } else {
-                                        Text(p.name + " · " + p.model)
+                                let models = p.availableModels
+                                if models.count <= 1 {
+                                    Button {
+                                        store.setChatProvider(
+                                            conversationID: conversationID,
+                                            providerID: p.id,
+                                            model: models.first ?? p.model
+                                        )
+                                    } label: {
+                                        let label = p.name + " · " + (models.first ?? p.model)
+                                        if conversation?.providerID == p.id {
+                                            Label(label, systemImage: "checkmark")
+                                        } else {
+                                            Text(label)
+                                        }
+                                    }
+                                } else {
+                                    Menu(p.name) {
+                                        ForEach(models, id: \.self) { m in
+                                            Button {
+                                                store.setChatProvider(
+                                                    conversationID: conversationID,
+                                                    providerID: p.id,
+                                                    model: m
+                                                )
+                                            } label: {
+                                                let selected = conversation?.providerID == p.id
+                                                    && (conversation?.model == m
+                                                        || (conversation?.model == nil && m == p.model))
+                                                if selected {
+                                                    Label(m, systemImage: "checkmark")
+                                                } else {
+                                                    Text(m)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }

@@ -2227,14 +2227,19 @@ class AppStore {
     }
 
     @discardableResult
-    func createChatConversation(providerID: UUID? = nil) -> ChatConversation {
+    func createChatConversation(providerID: UUID? = nil, model: String? = nil) -> ChatConversation {
         let pid = providerID
             ?? defaultChatProviderID
             ?? chatCapableProviders.first?.id
             ?? aiProviders.first?.id
+        let provider = pid.flatMap { id in aiProviders.first(where: { $0.id == id }) }
+        let resolvedModel = model
+            ?? provider?.model
+            ?? provider?.availableModels.first
         var conv = ChatConversation(
             title: "新对话",
             providerID: pid,
+            model: resolvedModel,
             systemPrompt: Self.defaultChatSystemPrompt
         )
         chatConversations.insert(conv, at: 0)
@@ -2275,14 +2280,29 @@ class AppStore {
         persistChat()
     }
 
-    func setChatProvider(conversationID: UUID, providerID: UUID) {
+    func setChatProvider(conversationID: UUID, providerID: UUID, model: String? = nil) {
         guard chatCapableProviders.contains(where: { $0.id == providerID }) else { return }
         guard let idx = chatConversations.firstIndex(where: { $0.id == conversationID }) else { return }
         chatConversations[idx].providerID = providerID
+        if let model, !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            chatConversations[idx].model = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let p = aiProviders.first(where: { $0.id == providerID }) {
+            // 切换 Provider 时若未指定模型，落到该 Provider 默认模型
+            chatConversations[idx].model = p.model
+        }
         chatConversations[idx].updatedAt = Date()
         defaultChatProviderID = providerID
         persistChat()
         saveToStorage()
+    }
+
+    func setChatModel(conversationID: UUID, model: String) {
+        let m = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !m.isEmpty,
+              let idx = chatConversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        chatConversations[idx].model = m
+        chatConversations[idx].updatedAt = Date()
+        persistChat()
     }
 
     func clearChatMessages(_ conversationID: UUID) {
@@ -2330,10 +2350,17 @@ class AppStore {
         }
 
         // 若会话绑定的 Provider 已无 Key，自动切到第一个可用
-        let resolved: AIProvider = {
+        var resolved: AIProvider = {
             if chatCapableProviders.contains(where: { $0.id == provider.id }) { return provider }
             return chatCapableProviders.first ?? provider
         }()
+        // 会话级模型覆盖（多模型 Provider）
+        let sessionModel = (chatConversations.first(where: { $0.id == conversationID })?.model
+            ?? conv.model)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !sessionModel.isEmpty {
+            resolved = resolved.using(model: sessionModel)
+        }
         if conv.providerID != resolved.id {
             conv.providerID = resolved.id
             if let i = chatConversations.firstIndex(where: { $0.id == conversationID }) {
@@ -2364,7 +2391,7 @@ class AppStore {
                 role: .assistant,
                 content: reply,
                 providerID: resolved.id,
-                providerName: resolved.name
+                providerName: "\(resolved.name) · \(resolved.model)"
             )
             if let i = chatConversations.firstIndex(where: { $0.id == conversationID }) {
                 var c = chatConversations[i]

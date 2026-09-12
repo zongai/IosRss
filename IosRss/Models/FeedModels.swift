@@ -346,25 +346,38 @@ struct AIProvider: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
     var baseURL: String
+    /// 当前默认使用的模型（摘要/翻译/解释等走此模型）
     var model: String
+    /// 该 Provider 下可用的模型列表（可多个）；为空时回退为 [model]
+    var models: [String] = []
     /// 特殊标识：gemini 走 Google Generative Language API，其余走 OpenAI 兼容接口
     var kind: String = "openai" // "openai" | "gemini"
     var isDefaultSummary: Bool = false
     var isDefaultTranslation: Bool = false
 
     enum CodingKeys: String, CodingKey {
-        case id, name, baseURL, model, kind, isDefaultSummary, isDefaultTranslation
+        case id, name, baseURL, model, models, kind, isDefaultSummary, isDefaultTranslation
     }
 
-    init(id: UUID = UUID(), name: String, baseURL: String, model: String, kind: String = "openai",
-         isDefaultSummary: Bool = false, isDefaultTranslation: Bool = false) {
+    init(
+        id: UUID = UUID(),
+        name: String,
+        baseURL: String,
+        model: String,
+        models: [String] = [],
+        kind: String = "openai",
+        isDefaultSummary: Bool = false,
+        isDefaultTranslation: Bool = false
+    ) {
         self.id = id
         self.name = name
         self.baseURL = baseURL
         self.model = model
+        self.models = models
         self.kind = kind
         self.isDefaultSummary = isDefaultSummary
         self.isDefaultTranslation = isDefaultTranslation
+        normalizeModels()
     }
 
     init(from decoder: Decoder) throws {
@@ -373,22 +386,68 @@ struct AIProvider: Identifiable, Codable, Hashable {
         name = try c.decode(String.self, forKey: .name)
         baseURL = try c.decode(String.self, forKey: .baseURL)
         model = try c.decode(String.self, forKey: .model)
+        models = try c.decodeIfPresent([String].self, forKey: .models) ?? []
         kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "openai"
         isDefaultSummary = try c.decodeIfPresent(Bool.self, forKey: .isDefaultSummary) ?? false
         isDefaultTranslation = try c.decodeIfPresent(Bool.self, forKey: .isDefaultTranslation) ?? false
         if name.lowercased().contains("gemini") { kind = "gemini" }
+        normalizeModels()
+    }
+
+    /// 去重、去空；保证 model 在列表中且列表非空
+    mutating func normalizeModels() {
+        var seen = Set<String>()
+        var list: [String] = []
+        for raw in models + [model] {
+            let m = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !m.isEmpty, !seen.contains(m) else { continue }
+            seen.insert(m)
+            list.append(m)
+        }
+        if list.isEmpty {
+            models = []
+            return
+        }
+        models = list
+        if model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !seen.contains(model) {
+            model = list[0]
+        }
+    }
+
+    /// 可选模型（至少包含当前默认 model）
+    var availableModels: [String] {
+        var p = self
+        p.normalizeModels()
+        return p.models.isEmpty ? (model.isEmpty ? [] : [model]) : p.models
+    }
+
+    /// 使用指定模型的副本（不改动 Provider 默认 model）
+    func using(model selected: String) -> AIProvider {
+        var p = self
+        let m = selected.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !m.isEmpty { p.model = m }
+        return p
     }
 
     static let openAITemplate = AIProvider(
-        name: "OpenAI", baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini", kind: "openai"
+        name: "OpenAI",
+        baseURL: "https://api.openai.com/v1",
+        model: "gpt-4o-mini",
+        models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "o4-mini"],
+        kind: "openai"
     )
     static let anthropicTemplate = AIProvider(
-        name: "Anthropic", baseURL: "https://api.anthropic.com/v1", model: "claude-3-haiku-20240307", kind: "openai"
+        name: "Anthropic",
+        baseURL: "https://api.anthropic.com/v1",
+        model: "claude-3-haiku-20240307",
+        models: ["claude-3-haiku-20240307", "claude-3-5-haiku-latest", "claude-sonnet-4-20250514"],
+        kind: "openai"
     )
     static let geminiTemplate = AIProvider(
         name: "Gemini",
         baseURL: "https://generativelanguage.googleapis.com/v1beta",
         model: "gemini-2.0-flash",
+        models: ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"],
         kind: "gemini"
     )
 }
@@ -438,6 +497,8 @@ struct ChatConversation: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var title: String
     var providerID: UUID?
+    /// 本会话使用的模型；nil 则用 Provider 默认 model
+    var model: String? = nil
     var messages: [ChatMessage] = []
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
@@ -445,13 +506,14 @@ struct ChatConversation: Identifiable, Codable, Hashable {
     var systemPrompt: String = ""
 
     enum CodingKeys: String, CodingKey {
-        case id, title, providerID, messages, createdAt, updatedAt, systemPrompt
+        case id, title, providerID, model, messages, createdAt, updatedAt, systemPrompt
     }
 
     init(
         id: UUID = UUID(),
         title: String = "新对话",
         providerID: UUID? = nil,
+        model: String? = nil,
         messages: [ChatMessage] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
@@ -460,6 +522,7 @@ struct ChatConversation: Identifiable, Codable, Hashable {
         self.id = id
         self.title = title
         self.providerID = providerID
+        self.model = model
         self.messages = messages
         self.createdAt = createdAt
         self.updatedAt = updatedAt

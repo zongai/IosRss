@@ -33,6 +33,8 @@ struct ArticleReaderView: View {
     @State private var localReadProgress: Double = 0
     @State private var scrollContentHeight: CGFloat = 1
     @State private var scrollViewportHeight: CGFloat = 1
+    /// 横向滑动表格时为 true，避免误触发左右换篇
+    @State private var suppressArticleSwipe = false
 
     private var activeID: UUID { currentID ?? article.id }
 
@@ -191,7 +193,13 @@ struct ArticleReaderView: View {
                 let displayContent = showTranslated
                     ? (translatedContent ?? currentArticle.translatedContent ?? currentArticle.content)
                     : currentArticle.content
-                ArticleContentView(html: displayContent, fontSize: store.fontSize, prefersChineseTypography: showTranslated, onHighlight: { store.addHighlight(articleID: currentArticle.id, text: $0) })
+                ArticleContentView(
+                    html: displayContent,
+                    fontSize: store.fontSize,
+                    prefersChineseTypography: showTranslated,
+                    onHighlight: { store.addHighlight(articleID: currentArticle.id, text: $0) },
+                    suppressArticleSwipe: $suppressArticleSwipe
+                )
                     .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 56)
             }
         }
@@ -239,13 +247,18 @@ struct ArticleReaderView: View {
         .toolbarBackground(showChrome ? .automatic : .hidden, for: .navigationBar)
         .toolbarBackground(showChrome ? .automatic : .hidden, for: .tabBar)
         .animation(.easeInOut(duration: 0.2), value: showChrome)
-        // 换篇：仅识别明显水平滑动，避免干扰纵向滚动与工具栏显隐
+        // 换篇：明显水平滑动；表格横向滚动时 suppressArticleSwipe 为 true 则忽略
         .simultaneousGesture(
-            DragGesture(minimumDistance: 50)
+            DragGesture(minimumDistance: 80)
                 .onEnded { value in
-                    guard abs(value.translation.width) > 90,
-                          abs(value.translation.height) < 45 else { return }
-                    if value.translation.width < 0 {
+                    guard !suppressArticleSwipe else { return }
+                    let dx = value.translation.width
+                    let dy = value.translation.height
+                    // 更严：水平为主、位移足够大，避免滑表格/选文字时误换篇
+                    guard abs(dx) > 140,
+                          abs(dy) < 36,
+                          abs(dx) > abs(dy) * 3.5 else { return }
+                    if dx < 0 {
                         goNextArticle()
                     } else {
                         goPrevArticle()

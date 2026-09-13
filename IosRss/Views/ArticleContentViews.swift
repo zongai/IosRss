@@ -8,6 +8,8 @@ struct ArticleContentView: View {
     /// 译文默认按中文排版；原文按内容语言自动判断
     var prefersChineseTypography: Bool = false
     var onHighlight: ((String) -> Void)? = nil
+    /// 表格横向滑动时置 true，供阅读页屏蔽换篇手势
+    var suppressArticleSwipe: Binding<Bool> = .constant(false)
     @State private var browserURL: URL?
     @State private var explainQuery: String?
     @State private var explainResult: String?
@@ -52,7 +54,12 @@ struct ArticleContentView: View {
                         .frame(maxWidth: .infinity)
                     }
                 case .table(let headers, let rows):
-                    ArticleTableView(headers: headers, rows: rows, fontSize: fontSize)
+                    ArticleTableView(
+                        headers: headers,
+                        rows: rows,
+                        fontSize: fontSize,
+                        suppressArticleSwipe: suppressArticleSwipe
+                    )
                 }
             }
         }
@@ -152,6 +159,28 @@ enum ContentBlockParser {
             }
         }
 
+        // 表格先于图片抽出，避免表内 <img> 被换成 __IMG_n__ 文本残留
+        var tablePlaceholders: [(token: String, headers: [String], rows: [[String]])] = []
+        if let tableRe = try? NSRegularExpression(
+            pattern: #"<table\b[\s\S]*?</table>"#,
+            options: [.caseInsensitive]
+        ) {
+            let ns = working as NSString
+            let matches = tableRe.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed()
+            for (ti, match) in matches.enumerated() {
+                guard let full = Range(match.range, in: working) else { continue }
+                let tableHTML = String(working[full])
+                let parsed = parseHTMLTable(tableHTML)
+                guard !parsed.rows.isEmpty || !parsed.headers.isEmpty else {
+                    working.replaceSubrange(full, with: "\n")
+                    continue
+                }
+                let token = "__TABLE_\(ti)__"
+                tablePlaceholders.append((token, parsed.headers, parsed.rows))
+                working.replaceSubrange(full, with: "\n\(token)\n")
+            }
+        }
+
         // 整标签匹配，再从 src / data-src / srcset 等解析真实 URL（VC 等懒加载站）
         let imgPattern = #"<img\b[^>]*>"#
         var imageURLs: [String] = []
@@ -199,28 +228,6 @@ enum ContentBlockParser {
                 if let fullRange = Range(match.range, in: working) {
                     working.replaceSubrange(fullRange, with: "__LINK_\(i)__")
                 }
-            }
-        }
-
-        // 表格：先抽出，避免被去标签打成散行
-        var tablePlaceholders: [(token: String, headers: [String], rows: [[String]])] = []
-        if let tableRe = try? NSRegularExpression(
-            pattern: #"<table\b[\s\S]*?</table>"#,
-            options: [.caseInsensitive]
-        ) {
-            let ns = working as NSString
-            let matches = tableRe.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed()
-            for (ti, match) in matches.enumerated() {
-                guard let full = Range(match.range, in: working) else { continue }
-                let tableHTML = String(working[full])
-                let parsed = parseHTMLTable(tableHTML)
-                guard !parsed.rows.isEmpty || !parsed.headers.isEmpty else {
-                    working.replaceSubrange(full, with: "\n")
-                    continue
-                }
-                let token = "__TABLE_\(ti)__"
-                tablePlaceholders.append((token, parsed.headers, parsed.rows))
-                working.replaceSubrange(full, with: "\n\(token)\n")
             }
         }
 
@@ -540,9 +547,13 @@ private func parseHTMLTable(_ html: String) -> (headers: [String], rows: [[Strin
         return re.matches(in: fragment, range: NSRange(location: 0, length: ns.length)).compactMap { m in
             guard m.numberOfRanges >= 2, let r = Range(m.range(at: 1), in: fragment) else { return nil }
             var t = String(fragment[r])
-            t = t.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            // 表内国旗/图标：img → emoji，再处理纯文本占位如 `_IMG_O_ Israel`
+            t = TableCellIconMapper.replaceIcons(in: t)
+            t = t.replacingOccurrences(of: #"<img\b[^>]*>"#, with: " ", options: .regularExpression)
+            t = t.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
             t = HTMLUtils.decodeEntities(t)
-            t = t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            t = TableCellIconMapper.replaceTextualPlaceholders(in: t)
+            t = t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             return t.trimmingCharacters(in: .whitespacesAndNewlines)
         }.filter { !$0.isEmpty }
     }
@@ -590,11 +601,208 @@ private func parseHTMLTable(_ html: String) -> (headers: [String], rows: [[Strin
     return (headers, rows)
 }
 
+/// 表格单元格内国旗/图标 → emoji（无法显示原图时的可读回退）
+private enum TableCellIconMapper {
+    static func replaceIcons(in html: String) -> String {
+        var work = html
+        // 逐个 <img>：从 alt/title/src 推断国旗 emoji
+        if let re = try? NSRegularExpression(pattern: #"<img\b[^>]*>"#, options: .caseInsensitive) {
+            let ns = work as NSString
+            let matches = re.matches(in: work, range: NSRange(location: 0, length: ns.length)).reversed()
+            for m in matches {
+                guard let range = Range(m.range, in: work) else { continue }
+                let tag = String(work[range])
+                let emoji = flagEmoji(fromImgTag: tag)
+                work.replaceSubrange(range, with: emoji.map { " \($0) " } ?? " ")
+            }
+        }
+        return work
+    }
+
+    /// 纯文本残留：`_IMG_O_ Israel`、`__IMG_0__`、`[flag] Israel` 等 → 🇮🇱 Israel
+    static func replaceTextualPlaceholders(in text: String) -> String {
+        var work = text
+
+        // 1) `_IMG_O_ Israel` / `_IMG_12_United States` / `__IMG_0__ France`
+        let placeholderWithName = [
+            #"(?:_{1,2}IMG_[A-Za-z0-9]+_{1,2})\s*([A-Za-z][A-Za-z\u{00C0}-\u{024F}\s.\-']{1,48})"#,
+            #"\[(?:flag|img)[^\]]*\]\s*([A-Za-z][A-Za-z\u{00C0}-\u{024F}\s.\-']{1,48})"#
+        ]
+        for pattern in placeholderWithName {
+            guard let re = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+            let ns = work as NSString
+            let matches = re.matches(in: work, range: NSRange(location: 0, length: ns.length)).reversed()
+            for m in matches {
+                guard let full = Range(m.range, in: work),
+                      m.numberOfRanges >= 2,
+                      let nameR = Range(m.range(at: 1), in: work) else { continue }
+                let name = String(work[nameR]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let emoji = flagEmoji(forNameOrCode: name) {
+                    work.replaceSubrange(full, with: "\(emoji) \(name)")
+                } else {
+                    // 认不出国旗时至少去掉丑陋占位，保留国名
+                    work.replaceSubrange(full, with: name)
+                }
+            }
+        }
+
+        // 2) 孤立占位 `_IMG_O_` / `__IMG_3__`（无国名）直接去掉
+        work = work.replacingOccurrences(
+            of: #"_{1,2}IMG_[A-Za-z0-9]+_{1,2}"#,
+            with: " ",
+            options: .regularExpression
+        )
+
+        // 3) 单元格以国名开头且尚无 emoji 时，前缀国旗（常见：仅有 "Israel"）
+        let trimmed = work.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty,
+           !trimmed.unicodeScalars.contains(where: { $0.value >= 0x1F1E6 && $0.value <= 0x1F1FF }),
+           let emoji = flagEmoji(forNameOrCode: trimmed) {
+            // 整格就是国名
+            if nameToFlag[trimmed.lowercased()] != nil
+                || (trimmed.count <= 3 && (iso2ToFlag[trimmed.lowercased()] != nil || iso3ToIso2[trimmed.lowercased()] != nil)) {
+                work = "\(emoji) \(trimmed)"
+            }
+        }
+
+        return work
+    }
+
+    private static func flagEmoji(fromImgTag tag: String) -> String? {
+        func attr(_ name: String) -> String? {
+            let pat = name + #"\s*=\s*[\"']([^\"']+)[\"']"#
+            guard let re = try? NSRegularExpression(pattern: pat, options: .caseInsensitive) else { return nil }
+            let ns = tag as NSString
+            guard let m = re.firstMatch(in: tag, range: NSRange(location: 0, length: ns.length)),
+                  m.numberOfRanges >= 2,
+                  let r = Range(m.range(at: 1), in: tag) else { return nil }
+            return String(tag[r])
+        }
+        // alt / title 常为国名
+        if let alt = attr("alt"), let e = flagEmoji(forNameOrCode: alt) { return e }
+        if let title = attr("title"), let e = flagEmoji(forNameOrCode: title) { return e }
+        // src：…/flags/il.png、il.svg、country/israel
+        if let src = attr("src") ?? attr("data-src") {
+            let lower = src.lowercased()
+            // /flags/xx 或 _xx. 或 /xx.png
+            if let re = try? NSRegularExpression(
+                pattern: #"(?:flags?|country|countries)[/_\-]([a-z]{2,3})(?:[./_]|$)"#,
+                options: .caseInsensitive
+            ),
+               let m = re.firstMatch(in: lower, range: NSRange(location: 0, length: (lower as NSString).length)),
+               m.numberOfRanges >= 2,
+               let r = Range(m.range(at: 1), in: lower) {
+                if let e = flagEmoji(forNameOrCode: String(lower[r])) { return e }
+            }
+            // 文件名末尾两位：il.png
+            if let re = try? NSRegularExpression(
+                pattern: #"[/_\-]([a-z]{2})\.(?:png|svg|webp|jpg|jpeg|gif)"#,
+                options: .caseInsensitive
+            ),
+               let m = re.firstMatch(in: lower, range: NSRange(location: 0, length: (lower as NSString).length)),
+               m.numberOfRanges >= 2,
+               let r = Range(m.range(at: 1), in: lower) {
+                if let e = flagEmoji(forNameOrCode: String(lower[r])) { return e }
+            }
+            // 路径中国名
+            for (name, emoji) in nameToFlag {
+                if lower.contains(name) { return emoji }
+            }
+        }
+        return nil
+    }
+
+    private static func flagEmoji(forNameOrCode raw: String) -> String? {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !s.isEmpty else { return nil }
+        if s.count == 2, let e = iso2ToFlag[s] { return e }
+        if s.count == 3, let iso2 = iso3ToIso2[s], let e = iso2ToFlag[iso2] { return e }
+        if let e = nameToFlag[s] { return e }
+        // "Flag of Israel" / "Israel flag"
+        for (name, emoji) in nameToFlag {
+            if s.contains(name) { return emoji }
+        }
+        return nil
+    }
+
+    /// ISO 3166-1 alpha-2 → regional indicator flag
+    private static func flag(fromISO2 code: String) -> String? {
+        let c = code.uppercased()
+        let scalars = Array(c.unicodeScalars)
+        guard scalars.count == 2 else { return nil }
+        let a = scalars[0], b = scalars[1]
+        guard (65...90).contains(Int(a.value)), (65...90).contains(Int(b.value)) else { return nil }
+        let base: UInt32 = 127397
+        guard let s1 = UnicodeScalar(base + a.value),
+              let s2 = UnicodeScalar(base + b.value) else { return nil }
+        return String(String.UnicodeScalarView([s1, s2]))
+    }
+
+    private static let iso2ToFlag: [String: String] = {
+        var map: [String: String] = [:]
+        let codes = [
+            "us","gb","uk","cn","jp","kr","de","fr","it","es","ru","in","br","ca","au","mx","ar","cl",
+            "co","pe","ve","za","eg","ng","ke","et","il","sa","ae","tr","ir","iq","sy","lb","jo","ps",
+            "pk","bd","id","my","th","vn","ph","sg","nz","se","no","dk","fi","nl","be","ch","at","pl",
+            "cz","hu","ro","ua","gr","pt","ie","is","fi","tw","hk","mo","kp","mn","kz","uz","qa","kw",
+            "om","bh","ye","af","lk","np","mm","kh","la","bn","tl","fj","pg","cu","jm","ht","do","pr",
+            "gt","hn","sv","ni","cr","pa","bo","py","uy","ec","gy","sr","bz","tt","bb","bs","lc","gd"
+        ]
+        for c in codes {
+            let iso = c == "uk" ? "gb" : c
+            if let e = flag(fromISO2: iso) { map[c] = e }
+        }
+        return map
+    }()
+
+    private static let iso3ToIso2: [String: String] = [
+        "usa": "us", "gbr": "gb", "chn": "cn", "jpn": "jp", "kor": "kr", "deu": "de", "fra": "fr",
+        "ita": "it", "esp": "es", "rus": "ru", "ind": "in", "bra": "br", "can": "ca", "aus": "au",
+        "mex": "mx", "isr": "il", "sau": "sa", "are": "ae", "tur": "tr", "irn": "ir", "irq": "iq",
+        "syr": "sy", "lbn": "lb", "jor": "jo", "pse": "ps", "pak": "pk", "bgd": "bd", "idn": "id",
+        "mys": "my", "tha": "th", "vnm": "vn", "phl": "ph", "sgp": "sg", "nld": "nl", "bel": "be",
+        "che": "ch", "aut": "at", "pol": "pl", "ukr": "ua", "grc": "gr", "prt": "pt", "irl": "ie",
+        "twn": "tw", "hkg": "hk", "nzl": "nz", "swe": "se", "nor": "no", "dnk": "dk", "fin": "fi",
+        "arg": "ar", "chl": "cl", "col": "co", "per": "pe", "zaf": "za", "egy": "eg", "nga": "ng"
+    ]
+
+    private static let nameToFlag: [String: String] = {
+        let pairs: [(String, String)] = [
+            ("israel", "il"), ("united states", "us"), ("usa", "us"), ("america", "us"),
+            ("united kingdom", "gb"), ("britain", "gb"), ("england", "gb"), ("china", "cn"),
+            ("japan", "jp"), ("south korea", "kr"), ("korea", "kr"), ("germany", "de"),
+            ("france", "fr"), ("italy", "it"), ("spain", "es"), ("russia", "ru"),
+            ("india", "in"), ("brazil", "br"), ("canada", "ca"), ("australia", "au"),
+            ("mexico", "mx"), ("saudi arabia", "sa"), ("united arab emirates", "ae"),
+            ("uae", "ae"), ("turkey", "tr"), ("türkiye", "tr"), ("iran", "ir"), ("iraq", "iq"),
+            ("syria", "sy"), ("lebanon", "lb"), ("jordan", "jo"), ("palestine", "ps"),
+            ("pakistan", "pk"), ("bangladesh", "bd"), ("indonesia", "id"), ("malaysia", "my"),
+            ("thailand", "th"), ("vietnam", "vn"), ("philippines", "ph"), ("singapore", "sg"),
+            ("netherlands", "nl"), ("belgium", "be"), ("switzerland", "ch"), ("austria", "at"),
+            ("poland", "pl"), ("ukraine", "ua"), ("greece", "gr"), ("portugal", "pt"),
+            ("ireland", "ie"), ("taiwan", "tw"), ("hong kong", "hk"), ("new zealand", "nz"),
+            ("sweden", "se"), ("norway", "no"), ("denmark", "dk"), ("finland", "fi"),
+            ("argentina", "ar"), ("chile", "cl"), ("colombia", "co"), ("peru", "pe"),
+            ("south africa", "za"), ("egypt", "eg"), ("nigeria", "ng"), ("qatar", "qa"),
+            ("kuwait", "kw"), ("oman", "om"), ("bahrain", "bh"), ("yemen", "ye"),
+            ("afghanistan", "af"), ("czechia", "cz"), ("czech republic", "cz"), ("hungary", "hu"),
+            ("romania", "ro"), ("morocco", "ma"), ("algeria", "dz"), ("tunisia", "tn"),
+            ("ethiopia", "et"), ("kenya", "ke"), ("cuba", "cu"), ("venezuela", "ve")
+        ]
+        var map: [String: String] = [:]
+        for (name, iso) in pairs {
+            if let e = flag(fromISO2: iso) { map[name] = e }
+        }
+        return map
+    }()
+}
+
 /// 横向可滚动数据表（适配 Visual Capitalist 等宽表）
 struct ArticleTableView: View {
     let headers: [String]
     let rows: [[String]]
     var fontSize: Double = 15
+    var suppressArticleSwipe: Binding<Bool> = .constant(false)
 
     private var columnCount: Int {
         max(headers.count, rows.map(\.count).max() ?? 0, 1)
@@ -637,6 +845,23 @@ struct ArticleTableView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // 横向拖动表格时暂时屏蔽阅读页换篇手势
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 6)
+                .onChanged { value in
+                    if abs(value.translation.width) > abs(value.translation.height) {
+                        if !suppressArticleSwipe.wrappedValue {
+                            suppressArticleSwipe.wrappedValue = true
+                        }
+                    }
+                }
+                .onEnded { _ in
+                    // 略延迟，避免与父级 onEnded 竞态导致仍触发换篇
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        suppressArticleSwipe.wrappedValue = false
+                    }
+                }
+        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("数据表")
     }

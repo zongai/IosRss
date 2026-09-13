@@ -10,6 +10,13 @@ struct IosRssApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .background {
+#if canImport(Translation)
+                    if #available(iOS 18.0, *) {
+                        SystemTranslationAnchor()
+                    }
+#endif
+                }
         }
     }
 }

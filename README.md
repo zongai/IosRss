@@ -1,53 +1,59 @@
 # IosRss
 
-原生 SwiftUI 实现的 iOS / iPadOS RSS 阅读器。支持 RSS 与 Atom，内置全文抓取、多引擎翻译、AI 摘要 / 解释、Edge TTS 朗读、源分组、评论（Substack / HN / Engadget 等）与离线缓存。
+原生 SwiftUI 实现的 iOS / iPadOS RSS 阅读器。支持 RSS 与 Atom，内置全文抓取、多引擎翻译、AI 摘要 / 解释 / 对话、Edge TTS 朗读、源分组、评论（Substack / HN / Engadget 等）与离线缓存。
 
-**版本**：本地调试 `v1.3-38`；CI 构建 `v1.3-38-build{N}`（`N` = GitHub Actions `run_number`）。
+**版本**：本地调试 `v1.3-54`；CI 构建 `v1.3-54-build{N}`（`N` = GitHub Actions `run_number`）。
 
-> **文档维护**：`README.md` 与 `CHANGELOG.md` 由维护者手动更新，**不由** GitHub Actions 自动改写。
+> **文档维护**：有意义的功能变更后，构建时默认同步更新 `README.md`（及按约定整理 `CHANGELOG.md`）。CI **不**自动回写文档。
 
 ## 功能
 
 ### 订阅与分组
-- **订阅管理**：添加 RSS / Atom；自动发现常见 feed 路径；源名称可重命名
-- **源分组**：添加时可指定分组；移动到分组；分组管理；**分组可折叠**
+- **订阅管理**：添加 RSS / Atom；自动发现常见 feed 路径；源名称可重命名；失败时提示并中止添加
+- **源分组**：添加时可指定分组（默认未分组）；移动到分组；分组管理；**分组可折叠**（刷新保留折叠状态）
 - **无未读隐藏**：默认只显示有未读的源；设置中开启「显示已读文章」可查看全部
 - **源排序**：默认**未读优先自动排序**；可按名称、最近更新或手动拖拽
-- **OPML 导入 / 导出**：标准 OPML 2.0（含分组嵌套）；导出可选保存位置
-- **Feed 图标**：仅获取一次；磁盘缓存与内容缓存隔离（清缓存不删图标）
-- **源级开关**：全文获取、评论获取、自动翻译
-- **删除全部订阅**
-- 刷新进度条；失败时标明具体源名称；HTTP 源允许 ATS 并尝试升级 HTTPS
+- **OPML / TXT**：OPML 2.0 导入导出（含分组）；TXT 导出；导出可选保存位置
+- **Feed 图标**：RSS/Atom 图 + DuckDuckGo/Google 回退；误标修复后可重试；磁盘缓存与内容缓存隔离
+- **源级开关**：全文获取、评论获取、自动翻译、全文 URL 前缀、摘要 Prompt 模板
+- **Substack 标识**：识别 Substack 类源并显示徽章；可自动开启评论获取
+- **复制源链接**（长按 / 左滑）
+- **RSSHub**：Cloudflare 时镜像回退；`rsshub://path` → `https://rsshub.app/path`
+- 刷新进度条；失败时标明源名；HTTP 源允许 ATS 并尝试升级 HTTPS
 
 ### 阅读
-- **全文抓取**：摘要过短时自动或手动抓取；源关闭时隐藏全文按钮（Foreign Affairs / Foreign Policy / 少数派等有站点优化）
-- **排版**：系统 / 苹方 / 宋体 / 黑体；中西文分排版；首行缩进；HTML 标签清理
+- **全文抓取**：摘要过短时自动或手动抓取；源可关闭；站点优化含 Foreign Affairs / Foreign Policy / 少数派 / **Sixth Tone** / **CarNewsChina** 等
+- **全文 URL 前缀**（设置全局开关 + 前缀，源级启用）：抓取时在文章链接前拼接（如 archive.is / 12ft.io）；缓存仍按原始链接
+- **排版**：系统 / 苹方 / 宋体 / 黑体；中西文分排版；首行缩进；清理空段落与广告块，减少大片留白
 - **工具栏显隐**：向下滑动隐藏顶部导航与底部 Tab；上滑恢复
 - **左右滑换篇**：源内或收藏列表内上一篇 / 下一篇
-- **TTS**：Edge 在线语音（默认云扬、语速 1.2× 可调）；无需 API Key
+- **TTS**：Edge 在线语音（默认云扬、语速可调）；无需 API Key
 - **框选 AI 解释**；**评论**（Substack、Hacker News、Engadget/OpenWeb 等）
 - **收藏**（已译显示译文）；**MP3 / 音频卡片**
-- **已读**：打开即标已读；文章黑名单命中自动标已读
+- **已读**：打开即标已读；文章黑名单命中自动标已读；清除离线缓存**不**删已读状态
+- **相对时间**：30 天内相对时间，超过显示具体年月日
 
 ### 翻译与 AI
-- **引擎**：Google（可不填 Key）/ MyMemory / Lingva（免 Key，REST v1 GET/POST）/ Microsoft（Key + 区域）/ DeepL（多 Key）/ AI
-- LibreTranslate 已移除；Lingva 支持自定义实例
+- **翻译引擎链**：可排序使用列表；限流（429 等）自动切换下一引擎；Google / MyMemory / Lingva / Microsoft / DeepL / AI
 - **翻译目标语言**与 **AI 输出语言**可分别配置
-- 列表 / 阅读页自动翻译（按源开关；以正文是否已译为准；隐藏的已读条目可跳过）
-- 并发可调；Google/Microsoft 提高连接与批量吞吐；DeepL 多 Key 轮询，配额耗尽回退 Google
-- 设置中可对各翻译引擎做**连通性 / Key 测试**
-- AI 摘要 / 解释（可自定义 Prompt）；单 Provider 测试；失败自动切换 Provider；每 Provider **多 Key**
-- AI 黑名单（三级页）；文章黑名单（与 AI 黑名单独立）
-- API Key 存**系统钥匙串**；设置导出默认不含 Key；网络拒绝本机/内网地址
+- 列表 / 阅读页自动翻译（按源开关）；**全文抓取完成前不自动翻译正文**
+- 并发可调；多 Key 轮询；设置内连通性测试
+- **AI Provider 多模型**：每 Provider 可配置模型列表与默认模型；可选**经济模型**做费用路由
+- **模型费用路由**：短文本用经济模型，长文摘要与解释用强模型
+- **Prompt 预设**：标准摘要 / 科技速览 / 学术精读 / 投资要点；全局 + **按源**覆盖；仍可自定义 Prompt
+- **背景补全**：AI 总结后自动补人物/公司/事件「是谁、为何重要」
+- **兴趣过滤**：收藏 / 「不感兴趣」学习词权重；文章打分；低分可沉底或自动已读；列表可按兴趣排序
+- AI 摘要 / 解释 / **独立对话页**（历史管理）；失败自动切换 Provider；每 Provider 多 Key
+- AI 黑名单；文章黑名单；Key 存钥匙串
 
 ### 外观与字体
 - **外观**：跟随系统（默认）/ 浅色 / 深色
 - **阅读主题（6 套）**：Classic Light / Sepia Paper / Night Dark / Midnight Blue / Forest Sage / High Contrast
-- **字体**：系统默认、苹方、宋体、黑体（不内置大字体包）
-- 设计 token：软阴影卡片、无硬边框、分区字号
+- **字体**：系统默认、苹方、宋体、黑体
+- 设计 token：软阴影卡片、分区字号；SwiftUI Pro 无障碍约定（带标签的 Button/Menu 等）
 
 ### 其它
-- 离线缓存；分区字号；多语言（zh-Hans / en）
+- 离线缓存（全文 / Feed 快照 / 图片）；清除缓存保留订阅与已读
 - 设置备份导入 / 导出
 - CI：打 `v*` 标签产出 unsigned IPA 与 Release 说明（不回写文档）
 
@@ -56,7 +62,7 @@
 ```
 IosRss/
 ├── App.swift / ContentView.swift / Cloud.swift / Info.plist
-├── Theme/AppTheme.swift / ReadingThemes.swift
+├── Theme/AppTheme.swift
 ├── Models/
 │   ├── AppStore.swift
 │   └── FeedModels.swift
@@ -69,7 +75,7 @@ IosRss/
 │   ├── NetworkURLPolicy.swift
 │   └── TranslationServices.swift
 └── Views/
-    ├── FeedsListView / AddFeedView
+    ├── FeedsListView / AddFeedView / AIChatView
     ├── ArticleListView / ArticleReaderView
     ├── ArticleContentViews / SelectableTextViews / ArticleCommentsView
     ├── FavoritesListView
@@ -89,9 +95,9 @@ IosRss/
 |------|------|
 | 阅读 | 标题模式、显示已读、订阅源排序 |
 | 外观 | 跟随系统/浅/深、阅读主题、字体、字号 |
-| 翻译与 AI | 翻译引擎与 Key/区域测试、AI Provider、黑名单 |
+| 翻译与 AI | 引擎顺序、Key/区域、AI Provider 与经济模型、Prompt 预设、兴趣过滤、模型路由、黑名单 |
 | 朗读 | Edge TTS 音色与语速 |
-| 数据与清理 | 已读保留、全文缓存、清除离线缓存 |
+| 数据与清理 | 已读保留、全文缓存、**全文 URL 前缀**、清除离线缓存 |
 | 备份 | 导出 / 导入 JSON（默认不含 Key） |
 | 关于 | 版本号与默认引擎摘要 |
 
@@ -99,8 +105,8 @@ IosRss/
 
 | 场景 | 显示 |
 |------|------|
-| 本地 Xcode | `v1.3-38` |
-| GitHub Actions | `v1.3-38-build{N}` |
+| 本地 Xcode | `v1.3-54` |
+| GitHub Actions | `v1.3-54-build{N}` |
 
 ## Changelog
 

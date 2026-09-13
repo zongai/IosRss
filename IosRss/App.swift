@@ -1,4 +1,25 @@
 import SwiftUI
+#if canImport(Translation)
+import Translation
+#endif
+
+#if canImport(Translation)
+@available(iOS 18.0, *)
+struct SystemTranslationAnchor: View {
+    private let host = SystemTranslationHost.shared
+
+    var body: some View {
+        let config = host.configuration
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .translationTask(config) { session in
+                await SystemTranslationHost.shared.handle(session: session)
+            }
+    }
+}
+#endif
+
 
 @main
 struct IosRssApp: App {

@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// 翻译专用 URLSession：提高同主机并发连接，减少排队
 enum TranslationHTTP {
@@ -1089,19 +1090,4 @@ final class SystemTranslationHost {
     }
 }
 
-/// 挂在根视图上，为系统翻译提供 Session
-@available(iOS 18.0, *)
-struct SystemTranslationAnchor: View {
-    private let host = SystemTranslationHost.shared
-
-    var body: some View {
-        let config = host.configuration
-        Color.clear
-            .frame(width: 0, height: 0)
-            .accessibilityHidden(true)
-            .translationTask(config) { session in
-                await SystemTranslationHost.shared.handle(session: session)
-            }
-    }
-}
 #endif

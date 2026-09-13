@@ -51,6 +51,8 @@ struct ArticleContentView: View {
                         }
                         .frame(maxWidth: .infinity)
                     }
+                case .table(let headers, let rows):
+                    ArticleTableView(headers: headers, rows: rows, fontSize: fontSize)
                 }
             }
         }
@@ -105,6 +107,8 @@ enum ContentBlock {
     case paragraph(AttributedString, ReaderTypography)
     case image(String)
     case audio(String)
+    /// 数据表（Visual Capitalist 等）：首行可为表头
+    case table(headers: [String], rows: [[String]])
 }
 
 enum ContentBlockParser {
@@ -198,6 +202,28 @@ enum ContentBlockParser {
             }
         }
 
+        // 表格：先抽出，避免被去标签打成散行
+        var tablePlaceholders: [(token: String, headers: [String], rows: [[String]])] = []
+        if let tableRe = try? NSRegularExpression(
+            pattern: #"<table\b[\s\S]*?</table>"#,
+            options: [.caseInsensitive]
+        ) {
+            let ns = working as NSString
+            let matches = tableRe.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed()
+            for (ti, match) in matches.enumerated() {
+                guard let full = Range(match.range, in: working) else { continue }
+                let tableHTML = String(working[full])
+                let parsed = parseHTMLTable(tableHTML)
+                guard !parsed.rows.isEmpty || !parsed.headers.isEmpty else {
+                    working.replaceSubrange(full, with: "\n")
+                    continue
+                }
+                let token = "__TABLE_\(ti)__"
+                tablePlaceholders.append((token, parsed.headers, parsed.rows))
+                working.replaceSubrange(full, with: "\n\(token)\n")
+            }
+        }
+
         // 去掉 script/style/注释与全部标签，避免界面出现 <div> 等字面量
         if let re = try? NSRegularExpression(pattern: #"<!--([\s\S]*?)-->"#, options: []) {
             working = re.stringByReplacingMatches(in: working, range: NSRange(working.startIndex..., in: working), withTemplate: "")
@@ -231,6 +257,11 @@ enum ContentBlockParser {
                     if lastImageURL == url { continue }
                     lastImageURL = url
                     blocks.append(.image(url))
+                }
+            } else if part.hasPrefix("__TABLE_"), part.hasSuffix("__") {
+                lastImageURL = nil
+                if let found = tablePlaceholders.first(where: { $0.token == part }) {
+                    blocks.append(.table(headers: found.headers, rows: found.rows))
                 }
             } else if isJunkParagraph(part) {
                 lastImageURL = nil
@@ -442,5 +473,118 @@ struct AudioLinkPlayerCard: View {
         player?.pause()
         player = nil
         isPlaying = false
+    }
+}
+
+
+// MARK: - HTML table → rows
+
+private func parseHTMLTable(_ html: String) -> (headers: [String], rows: [[String]]) {
+    func cellTexts(in fragment: String, tag: String) -> [String] {
+        let pattern = "<\(tag)\\b[^>]*>([\\s\\S]*?)</\(tag)>"
+        guard let re = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return [] }
+        let ns = fragment as NSString
+        return re.matches(in: fragment, range: NSRange(location: 0, length: ns.length)).compactMap { m in
+            guard m.numberOfRanges >= 2, let r = Range(m.range(at: 1), in: fragment) else { return nil }
+            var t = String(fragment[r])
+            t = t.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            t = HTMLUtils.decodeEntities(t)
+            t = t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            return t.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+    }
+
+    var headers: [String] = []
+    // thead th first
+    if let theadRange = html.range(of: #"<thead[\s\S]*?</thead>"#, options: [.regularExpression, .caseInsensitive]) {
+        headers = cellTexts(in: String(html[theadRange]), tag: "th")
+        if headers.isEmpty {
+            headers = cellTexts(in: String(html[theadRange]), tag: "td")
+        }
+    }
+    var rows: [[String]] = []
+    let rowPattern = #"<tr\b[^>]*>([\s\S]*?)</tr>"#
+    guard let rowRe = try? NSRegularExpression(pattern: rowPattern, options: .caseInsensitive) else {
+        return (headers, rows)
+    }
+    let ns = html as NSString
+    let trMatches = rowRe.matches(in: html, range: NSRange(location: 0, length: ns.length))
+    for (i, m) in trMatches.enumerated() {
+        guard let r = Range(m.range(at: 1), in: html) else { continue }
+        let rowHTML = String(html[r])
+        // skip header row already taken from thead
+        if i == 0 && headers.isEmpty {
+            let ths = cellTexts(in: rowHTML, tag: "th")
+            if !ths.isEmpty {
+                headers = ths
+                continue
+            }
+        }
+        if rowHTML.lowercased().contains("<th") && headers.isEmpty {
+            headers = cellTexts(in: rowHTML, tag: "th")
+            if !headers.isEmpty { continue }
+        }
+        var cells = cellTexts(in: rowHTML, tag: "td")
+        if cells.isEmpty {
+            cells = cellTexts(in: rowHTML, tag: "th")
+        }
+        // 过滤分页提示行
+        let joined = cells.joined(separator: " ").lowercased()
+        if joined.contains("showing") && joined.contains("entries") { continue }
+        if cells.isEmpty { continue }
+        rows.append(cells)
+    }
+    return (headers, rows)
+}
+
+/// 横向可滚动数据表（适配 Visual Capitalist 等宽表）
+struct ArticleTableView: View {
+    let headers: [String]
+    let rows: [[String]]
+    var fontSize: Double = 15
+
+    private var columnCount: Int {
+        max(headers.count, rows.map(\.count).max() ?? 0, 1)
+    }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 0) {
+                if !headers.isEmpty {
+                    HStack(alignment: .top, spacing: 0) {
+                        ForEach(0..<columnCount, id: \.self) { i in
+                            Text(i < headers.count ? headers[i] : "")
+                                .font(.system(size: max(12, fontSize - 1), weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .frame(minWidth: 88, maxWidth: 220, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                        }
+                    }
+                    .background(Color(.secondarySystemBackground))
+                }
+                ForEach(Array(rows.enumerated()), id: \.offset) { idx, row in
+                    HStack(alignment: .top, spacing: 0) {
+                        ForEach(0..<columnCount, id: \.self) { i in
+                            Text(i < row.count ? row[i] : "")
+                                .font(.system(size: max(12, fontSize - 1)))
+                                .foregroundStyle(.primary)
+                                .frame(minWidth: 88, maxWidth: 220, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                        }
+                    }
+                    .background(idx % 2 == 0 ? Color.clear : Color(.secondarySystemBackground).opacity(0.45))
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color(.separator).opacity(0.5), lineWidth: 0.5)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("数据表")
     }
 }

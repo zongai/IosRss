@@ -13,7 +13,18 @@
 （自上次成功构建以来的改动，将在下次成功构建时归入正式条目。）
 
 ### Added
-- RSSHub 兼容：Cloudflare 时自动尝试公共镜像；`rsshub://path` 展开为 `https://rsshub.app/path`
+- 阅读页 HTML 表格渲染（`ContentBlock.table` + `ArticleTableView`）
+- Visual Capitalist 等图表站：WordPress REST 按 slug 取全文；增强图/表抽取
+
+---
+
+## [v1.3-61] — 2026-09-13
+
+成功构建：`v1.3-61-build-20260913042456`  
+相对：`v1.3-60-build-20260913040559`
+
+### Fixed
+- 设置高级选项开关、阅读页崩溃、列表卡顿、缓存界面相关修复
 
 ---
 

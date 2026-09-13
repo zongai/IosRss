@@ -52,13 +52,25 @@ enum ArticleContentFetcher {
             }
         }
 
+        // WordPress 站点（如 Visual Capitalist）：优先 slug REST，常可绕过部分前端门禁
+        if isWordPressChartHost(url.host),
+           let wp = await fetchWordPressBySlug(pageURL: url) {
+            OfflineCache.saveArticleHTML(link: urlString, html: wp.content)
+            let len = HTMLUtils.stripTags(wp.content).count
+            if len >= 80 {
+                return Result(title: wp.title, contentHTML: wp.content, textLength: len)
+            }
+        }
+
         var request = URLRequest(url: url, timeoutInterval: 25)
         request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
             forHTTPHeaderField: "User-Agent"
         )
-        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        request.setValue("zh-CN,zh;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.setValue("en-US,en;q=0.9,zh-CN;q=0.8", forHTTPHeaderField: "Accept-Language")
+        request.setValue("https://www.google.com/", forHTTPHeaderField: "Referer")
+        request.setValue("1", forHTTPHeaderField: "Upgrade-Insecure-Requests")
         request.cachePolicy = .returnCacheDataElseLoad
 
         let (data, response): (Data, URLResponse)
@@ -429,12 +441,12 @@ enum ArticleContentFetcher {
     private static func extractByKnownSite(_ html: String, host: String) -> String? {
         let selectors: [String]
         if host == "foreignaffairs.com" || host.hasSuffix(".foreignaffairs.com") {
+            // 正文在 paywall-content / article-dropcap--inner；外层含分享与订阅 CTA
             selectors = [
-                "article__body-content",
-                "article-dropcap--inner",
                 "paywall-content",
-                "rich-text__inner",
-                "article__body"
+                "article-dropcap--inner",
+                "article__body-content",
+                "rich-text__inner"
             ]
         } else if host == "foreignpolicy.com" || host.hasSuffix(".foreignpolicy.com") {
             selectors = [
@@ -443,6 +455,15 @@ enum ArticleContentFetcher {
                 "post-content-main",
                 "content-ungated",
                 "post-content"
+            ]
+        } else if host == "visualcapitalist.com" || host.hasSuffix(".visualcapitalist.com") {
+            selectors = [
+                "entry-content",
+                "post-content",
+                "wp-block-post-content",
+                "article-content",
+                "single-content",
+                "content-inner"
             ]
         } else if host == "sspai.com" || host.hasSuffix(".sspai.com") {
             selectors = [
@@ -484,7 +505,34 @@ enum ArticleContentFetcher {
                 }
             }
         }
+        if let best, host == "foreignaffairs.com" || host.hasSuffix(".foreignaffairs.com") {
+            return sanitizeForeignAffairsBody(best)
+        }
         return bestLen >= 200 ? best : nil
+    }
+
+    /// Foreign Affairs：去掉订阅 CTA、JS 提示，保留段落正文
+    private static func sanitizeForeignAffairsBody(_ html: String) -> String {
+        var work = truncateArticleTail(html)
+        // 去掉文末 Loading / enable JavaScript 行
+        work = work.replacingOccurrences(
+            of: #"<p[^>]*>\s*Loading\.\.\.\s*</p>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        work = work.replacingOccurrences(
+            of: #"<[^>]+>\s*Please enable JavaScript[\s\S]*?function properly\.?\s*</[^>]+>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        // 去掉仅含 Share / Subscribe 工具条短段
+        work = work.replacingOccurrences(
+            of: #"<p[^>]*>\s*(?:Share|Subscribe|Sign In|Sign in)\s*</p>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        let textLen = HTMLUtils.stripTags(work).trimmingCharacters(in: .whitespacesAndNewlines).count
+        return textLen >= 200 ? work : html
     }
 
     /// 去掉正文末尾的推荐阅读、评论、邮件订阅等尾巴（仅截后半段命中，避免误伤正文）
@@ -498,6 +546,14 @@ enum ArticleContentFetcher {
             "Bundle into one email per day",
             "Join our Telegram",
             "Follow us on Google News",
+            "Subscribe to Foreign Affairs",
+            "Already a subscriber?",
+            "Please enable JavaScript for this site",
+            "Unlock access to the Foreign Affairs",
+            "Paywall-free reading",
+            "Sign up to our free newsletter",
+            "If you found this post interesting",
+            "Continue reading on the free Voronoi",
             "class=\"comments\"",
             "id=\"comments\"",
             "class=\"related",
@@ -717,7 +773,10 @@ enum ArticleContentFetcher {
         work = removeBlocksWithClassTokens(work, tokens: [
             "ad__horizontal", "ad__in_article", "adsbygoogle", "ad-slot",
             "membership", "become-member", "newsletter-signup",
-            "content__membership", "paywall", "subscribe-box"
+            "content__membership", "subscribe-box",
+            // Foreign Affairs：订阅墙/弹层；勿用裸 "paywall"（会误删 paywall-content 正文）
+            "paywall-free-article", "paywall-modal", "paywall-overlay",
+            "js--fa-overlay", "newsletter-backdrop", "article-tools"
         ])
         // 去掉仅含空白的标签与连续空段落，减少阅读页大片留白
         work = work.replacingOccurrences(
@@ -746,18 +805,9 @@ enum ArticleContentFetcher {
             with: "",
             options: [.regularExpression, .caseInsensitive]
         )
+        work = promoteLazyAndSrcsetImages(work)
         work = absolutizeAttributes(work, attr: "src", baseURL: baseURL)
         work = absolutizeAttributes(work, attr: "href", baseURL: baseURL)
-        work = work.replacingOccurrences(
-            of: #"<(img[^>]+)data-src=[\"']([^\"']+)[\"']"#,
-            with: #"<$1src=\"$2\""#,
-            options: .regularExpression
-        )
-        work = work.replacingOccurrences(
-            of: #"<(img[^>]+)data-original=[\"']([^\"']+)[\"']"#,
-            with: #"<$1src=\"$2\""#,
-            options: .regularExpression
-        )
         work = HTMLUtils.decodeEntities(work)
         work = work.replacingOccurrences(of: #"\n{3,}"# , with: "\n\n", options: .regularExpression)
         return work.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -818,6 +868,186 @@ enum ArticleContentFetcher {
         }
         return result
     }
+
+
+    private static func isWordPressChartHost(_ host: String?) -> Bool {
+        guard let host = host?.lowercased() else { return false }
+        return host == "visualcapitalist.com"
+            || host.hasSuffix(".visualcapitalist.com")
+            || host == "voronoiapp.com"
+            || host.hasSuffix(".voronoiapp.com")
+    }
+
+    /// 按 slug 拉 WP REST：`/wp-json/wp/v2/posts?slug=...&_embed=1`
+    private static func fetchWordPressBySlug(pageURL: URL) async -> Extracted? {
+        let path = pageURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !path.isEmpty else { return nil }
+        // /cp/slug/ 或 /year/month/slug/ → 取最后一段
+        let slug = path.split(separator: "/").last.map(String.init) ?? path
+        guard !slug.isEmpty, slug != "cp" else { return nil }
+        guard var comps = URLComponents(url: pageURL, resolvingAgainstBaseURL: false) else { return nil }
+        comps.path = "/wp-json/wp/v2/posts"
+        comps.queryItems = [
+            URLQueryItem(name: "slug", value: slug),
+            URLQueryItem(name: "_embed", value: "1")
+        ]
+        comps.fragment = nil
+        guard let apiURL = comps.url else { return nil }
+
+        var request = URLRequest(url: apiURL, timeoutInterval: 18)
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(pageURL.absoluteString, forHTTPHeaderField: "Referer")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                return nil
+            }
+            guard let arr = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                  let obj = arr.first else { return nil }
+            var contentHTML = (obj["content"] as? [String: Any])?["rendered"] as? String ?? ""
+            let title: String? = {
+                if let t = obj["title"] as? [String: Any], let rendered = t["rendered"] as? String {
+                    return HTMLUtils.stripTags(rendered).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                return nil
+            }()
+            // 特色图：图表站正文常依赖首图
+            if let featured = featuredImageURL(fromWordPress: obj) {
+                if !contentHTML.lowercased().contains(featured.lowercased()) {
+                    contentHTML = "<p><img src=\"" + featured + "\" alt=\"\"></p>" + contentHTML
+                }
+            }
+            guard !contentHTML.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            let cleaned = cleanContentHTML(contentHTML, baseURL: pageURL)
+            let len = HTMLUtils.stripTags(cleaned).count
+            let imgCount = cleaned.lowercased().components(separatedBy: "<img").count - 1
+            // 图表文：允许正文偏短但有图
+            guard len >= 80 || imgCount >= 1 else { return nil }
+            return Extracted(title: title, content: cleaned)
+        } catch {
+            return nil
+        }
+    }
+
+    private static func featuredImageURL(fromWordPress obj: [String: Any]) -> String? {
+        if let emb = obj["_embedded"] as? [String: Any],
+           let media = emb["wp:featuredmedia"] as? [[String: Any]],
+           let first = media.first {
+            if let src = first["source_url"] as? String, !src.isEmpty { return src }
+            if let details = first["media_details"] as? [String: Any],
+               let sizes = details["sizes"] as? [String: Any] {
+                for key in ["full", "large", "medium_large", "medium"] {
+                    if let s = sizes[key] as? [String: Any],
+                       let u = s["source_url"] as? String, !u.isEmpty {
+                        return u
+                    }
+                }
+            }
+        }
+        if let id = obj["featured_media"] as? Int, id > 0 {
+            // 无 embed 时无法直接拿 URL
+            return nil
+        }
+        return nil
+    }
+
+    /// 将 data-src / data-lazy-src / srcset 提升为可用的 src（取最大宽度）
+    private static func promoteLazyAndSrcsetImages(_ html: String) -> String {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"<img\b[^>]*>"#,
+            options: .caseInsensitive
+        ) else { return html }
+        let ns = html as NSString
+        let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length)).reversed()
+        var result = html
+        for m in matches {
+            guard let range = Range(m.range, in: result) else { continue }
+            let tag = String(result[range])
+            let promoted = promoteSingleImageTag(tag)
+            if promoted != tag {
+                result.replaceSubrange(range, with: promoted)
+            }
+        }
+        return result
+    }
+
+    private static func promoteSingleImageTag(_ tag: String) -> String {
+        func attr(_ name: String) -> String? {
+            let pat = name + #"=[\"']([^\"']+)[\"']"#
+            guard let re = try? NSRegularExpression(pattern: pat, options: .caseInsensitive) else { return nil }
+            let ns = tag as NSString
+            guard let m = re.firstMatch(in: tag, range: NSRange(location: 0, length: ns.length)),
+                  m.numberOfRanges >= 2,
+                  let r = Range(m.range(at: 1), in: tag) else { return nil }
+            return String(tag[r])
+        }
+        let existingSrc = attr("src")
+        let candidates = [
+            attr("data-src"),
+            attr("data-lazy-src"),
+            attr("data-original"),
+            attr("data-full-url"),
+            attr("data-large_image"),
+            bestURLFromSrcset(attr("data-srcset")),
+            bestURLFromSrcset(attr("srcset")),
+            existingSrc
+        ].compactMap { $0 }.filter { !$0.isEmpty && !$0.hasPrefix("data:") }
+
+        // 现有 src 若是 1x1 / placeholder，优先换掉
+        let srcIsPlaceholder: Bool = {
+            guard let s = existingSrc?.lowercased() else { return true }
+            if s.contains("placeholder") || s.contains("data:image") { return true }
+            if s.contains("1x1") || s.contains("blank.gif") || s.contains("pixel") { return true }
+            return false
+        }()
+
+        guard let best = candidates.first else { return tag }
+        if let existingSrc, !srcIsPlaceholder,
+           existingSrc.hasPrefix("http"),
+           candidates.first == existingSrc {
+            return tag
+        }
+        // 重写 src，保留其它属性（去掉空 src）
+        var out = tag
+        if let re = try? NSRegularExpression(pattern: #"\s+src=[\"'][^\"']*[\"']"#, options: .caseInsensitive) {
+            out = re.stringByReplacingMatches(in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "")
+        }
+        if out.lowercased().hasPrefix("<img") {
+            out = "<img src=\"\(best)\"" + out.dropFirst(4)
+        }
+        return out
+    }
+
+    private static func bestURLFromSrcset(_ srcset: String?) -> String? {
+        guard let srcset, !srcset.isEmpty else { return nil }
+        var bestURL: String?
+        var bestW = -1
+        for part in srcset.split(separator: ",") {
+            let bits = part.trimmingCharacters(in: .whitespaces).split(separator: " ")
+            guard let url = bits.first.map(String.init), !url.isEmpty else { continue }
+            var w = 0
+            if bits.count >= 2 {
+                let desc = bits[1].lowercased()
+                if desc.hasSuffix("w") {
+                    w = Int(desc.dropLast()) ?? 0
+                } else if desc.hasSuffix("x") {
+                    w = Int((Double(desc.dropLast()) ?? 1) * 1000)
+                }
+            }
+            if w >= bestW {
+                bestW = w
+                bestURL = url
+            } else if bestURL == nil {
+                bestURL = url
+            }
+        }
+        return bestURL
+    }
+
 
     private static func matchFirst(_ pattern: String, in text: String) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }

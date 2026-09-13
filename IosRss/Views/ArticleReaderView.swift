@@ -333,7 +333,7 @@ struct ArticleReaderView: View {
                         Button { Task { await toggleTranslation() } } label: {
                             Label("翻译", systemImage: "translate")
                         }
-                        .accessibilityHint("翻译正文（默认系统翻译）")
+                        .accessibilityHint("翻译正文")
                     }
                 }
             }
@@ -653,11 +653,11 @@ struct ArticleReaderView: View {
             if currentArticle.translatedTitle == nil { Task { await translateTitleIfNeeded() } }
             return
         }
-        // 尚无译文 → 按引擎链翻译（默认系统翻译优先）
+        // 尚无译文 → 按引擎链翻译
         await performBodyTranslation(excluding: [], progressLabel: "正在翻译…")
     }
 
-    /// 重新翻译：清空缓存后重跑引擎链；高质量模式跳过系统翻译
+    /// 重新翻译：清空缓存后重跑引擎链；高质量模式跳过免费引擎
     private func retranslate(preferHigherQuality: Bool) async {
         translatedContent = nil
         var cleared = currentArticle
@@ -666,7 +666,7 @@ struct ArticleReaderView: View {
         cleared.translationEngineName = nil
         store.updateArticle(cleared)
         showTranslated = false
-        let excluding: Set<TranslationEngine> = preferHigherQuality ? [.system] : []
+        let excluding: Set<TranslationEngine> = preferHigherQuality ? [.google, .mymemory, .lingva] : []
         let label = preferHigherQuality ? "正在用更高质量引擎翻译…" : "正在重新翻译…"
         await performBodyTranslation(excluding: excluding, progressLabel: label)
     }

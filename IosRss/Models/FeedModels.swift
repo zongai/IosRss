@@ -171,7 +171,7 @@ struct Article: Identifiable, Codable, Hashable {
     var translatedTitle: String?
     var translatedSummary: String?
     var translatedContent: String?
-    /// 正文译文实际使用的翻译引擎展示名（如「系统翻译」）
+    /// 正文译文实际使用的翻译引擎展示名（如「Google 翻译」）
     var translationEngineName: String?
     var aiSummary: String?
     /// 生成该摘要时使用的 AI Provider 名称
@@ -403,7 +403,6 @@ enum TitleDisplayMode: String, CaseIterable, Codable {
 }
 
 enum TranslationEngine: String, CaseIterable, Codable {
-    case system = "系统翻译"
     case google = "Google 翻译"
     case mymemory = "MyMemory（免 Key）"
     case lingva = "Lingva（免 Key）"
@@ -414,7 +413,7 @@ enum TranslationEngine: String, CaseIterable, Codable {
     /// 无需 API Key 的引擎
     var isFreeNoKey: Bool {
         switch self {
-        case .system, .google, .mymemory, .lingva: return true
+        case .google, .mymemory, .lingva: return true
         default: return false
         }
     }

@@ -75,7 +75,7 @@ struct TranslationSettingsView: View {
             } header: {
                 Text("翻译引擎顺序")
             } footer: {
-                Text("默认优先系统翻译（本地）。遇限流自动切换下一个；未配置 Key 的引擎会跳过。阅读页可「更高质量重新翻译」跳过系统翻译。可拖动排序。")
+                Text("按列表从上到下使用。遇限流自动切换下一个；未配置 Key 的引擎会跳过。可拖动排序。")
             }
 
             Section {
@@ -91,14 +91,6 @@ struct TranslationSettingsView: View {
                 Text("同时请求数。自动：Google 3、MyMemory 4、AI 4。遇 429 请降到 1～2 或换引擎。")
             }
 
-            // 系统翻译
-            Section {
-                engineHeader("系统翻译", selected: store.translationEngineChain.first == .system)
-                testButton(for: .system)
-            } header: { Text("系统翻译（本地）") }
-            footer: {
-                Text("调用 iOS 自带翻译（Translation 框架），无需 API Key。首次使用某语言对时系统可能下载语言包；不支持的语言会自动跳到链中下一引擎。")
-            }
 
             // Google
             Section {

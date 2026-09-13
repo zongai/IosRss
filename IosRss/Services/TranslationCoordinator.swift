@@ -57,7 +57,6 @@ final class TranslationCoordinator: @unchecked Sendable {
         if let o = override, o > 0 { return min(8, o) }
         if userSetting > 0 { return min(8, userSetting) }
         switch engine {
-        case .system: return 1
         case .ai: return 4
         case .google: return 1
         case .mymemory, .lingva: return 3

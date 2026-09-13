@@ -302,6 +302,22 @@ enum RSSHubSupport {
         "rsshub.rss.tips",
     ]
 
+    /// Folo 客户端标识（rsshub.app 等对非浏览器 UA 更友好）
+    static let foloUserAgent =
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Folo/0.5.7.152"
+
+    /// 为 RSSHub 请求写入 UA / App 头（无具体 Cookie 值时不设 Cookie）
+    static func applyRequestHeaders(to request: inout URLRequest) {
+        request.setValue(foloUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("Folo Mobile", forHTTPHeaderField: "X-App-Name")
+        request.setValue("mobile/ios/iphone", forHTTPHeaderField: "X-App-Platform")
+        request.setValue(
+            "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8",
+            forHTTPHeaderField: "Accept"
+        )
+        request.setValue("https://rsshub.app/", forHTTPHeaderField: "Referer")
+    }
+
     static func isRSSHubURL(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased(), !host.isEmpty else { return false }
         if host == "rsshub.app" || host.hasPrefix("rsshub.") { return true }
@@ -400,14 +416,7 @@ struct FeedDiscovery {
         for candidate in RSSHubSupport.candidateURLs(for: url) {
             do {
                 var request = URLRequest(url: candidate, timeoutInterval: 20)
-                request.setValue(
-                    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
-                    forHTTPHeaderField: "User-Agent"
-                )
-                request.setValue(
-                    "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8",
-                    forHTTPHeaderField: "Accept"
-                )
+                RSSHubSupport.applyRequestHeaders(to: &request)
                 request.cachePolicy = .reloadIgnoringLocalCacheData
                 let (data, response) = try await URLSession.shared.data(for: request)
                 if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {

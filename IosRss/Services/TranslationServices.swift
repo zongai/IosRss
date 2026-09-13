@@ -852,24 +852,47 @@ enum HTMLUtils {
             .joined(separator: " ")
     }
 
-    /// 提取 img 标签，用占位符替换，便于翻译纯文本后再还原图片
+    /// 翻译前抽出表格与图片：表格整块原样保留（不送译），避免结构被破坏
     static func extractImagesForTranslation(_ html: String) -> (text: String, images: [String]) {
+        let extracted = extractMediaForTranslation(html)
+        return (extracted.text, extracted.images)
+    }
+
+    /// 抽出 table / img，用占位符替换后送译；表格跳过翻译以保留样式
+    static func extractMediaForTranslation(_ html: String) -> (text: String, images: [String], tables: [String]) {
         var working = html
+        var tables: [String] = []
         var images: [String] = []
-        let imgPattern = #"<img\b[^>]*>"#
-        guard let regex = try? NSRegularExpression(pattern: imgPattern, options: .caseInsensitive) else {
-            return (stripTags(html), [])
+
+        // 1) 整表抽出（从后往前）
+        if let tableRe = try? NSRegularExpression(
+            pattern: #"<table\b[\s\S]*?</table>"#,
+            options: [.caseInsensitive]
+        ) {
+            let ns = working as NSString
+            let matches = tableRe.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed()
+            for match in matches {
+                guard let fullRange = Range(match.range, in: working) else { continue }
+                let tableHTML = String(working[fullRange])
+                tables.insert(tableHTML, at: 0)
+                let placeholder = "\n\n[[TABLE_\(tables.count - 1)]]\n\n"
+                working.replaceSubrange(fullRange, with: placeholder)
+            }
         }
-        let ns = working as NSString
-        let matches = regex.matches(in: working, range: NSRange(location: 0, length: ns.length))
-        // 从后往前替换，保持 range 有效
-        for match in matches.reversed() {
-            guard let fullRange = Range(match.range, in: working) else { continue }
-            let tag = String(working[fullRange])
-            images.insert(tag, at: 0)
-            let placeholder = "\n\n[[IMG_\(images.count - 1)]]\n\n"
-            working.replaceSubrange(fullRange, with: placeholder)
+
+        // 2) 图片
+        if let imgRe = try? NSRegularExpression(pattern: #"<img\b[^>]*>"#, options: .caseInsensitive) {
+            let ns = working as NSString
+            let matches = imgRe.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed()
+            for match in matches {
+                guard let fullRange = Range(match.range, in: working) else { continue }
+                let tag = String(working[fullRange])
+                images.insert(tag, at: 0)
+                let placeholder = "\n\n[[IMG_\(images.count - 1)]]\n\n"
+                working.replaceSubrange(fullRange, with: placeholder)
+            }
         }
+
         // 去掉其余标签，保留占位符与段落结构
         working = working.replacingOccurrences(of: "<![CDATA[", with: "")
         working = working.replacingOccurrences(of: "]]>", with: "")
@@ -877,13 +900,34 @@ enum HTMLUtils {
         working = working.replacingOccurrences(of: #"</p>|</div>|</li>|</h[1-6]>"#, with: "\n\n", options: .regularExpression)
         working = working.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
         working = decodeEntities(working)
-        return (working.trimmingCharacters(in: .whitespacesAndNewlines), images)
+        return (
+            working.trimmingCharacters(in: .whitespacesAndNewlines),
+            images,
+            tables
+        )
     }
 
-    /// 将翻译结果中的 [[IMG_n]] 占位还原为原始 img 标签
+    /// 将翻译结果中的 [[IMG_n]] / [[TABLE_n]] 还原为原始标签
     static func restoreImagesAfterTranslation(_ text: String, images: [String]) -> String {
-        guard !images.isEmpty else { return text }
+        restoreMediaAfterTranslation(text, images: images, tables: [])
+    }
+
+    static func restoreMediaAfterTranslation(_ text: String, images: [String], tables: [String]) -> String {
         var result = text
+        for (i, tag) in tables.enumerated() {
+            let patterns = [
+                "[[TABLE_\(i)]]",
+                "【TABLE_\(i)】",
+                "[TABLE_\(i)]",
+                "TABLE_\(i)"
+            ]
+            for p in patterns {
+                if result.contains(p) {
+                    result = result.replacingOccurrences(of: p, with: "\n\n\(tag)\n\n")
+                    break
+                }
+            }
+        }
         for (i, tag) in images.enumerated() {
             let patterns = [
                 "[[IMG_\(i)]]",

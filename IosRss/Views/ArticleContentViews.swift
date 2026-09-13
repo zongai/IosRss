@@ -152,21 +152,21 @@ enum ContentBlockParser {
             }
         }
 
-        let imgPattern = #"<img\b[^>]*(?:src|data-src|data-original)=[\"']([^\"']+)[\"'][^>]*/?>"#
+        // 整标签匹配，再从 src / data-src / srcset 等解析真实 URL（VC 等懒加载站）
+        let imgPattern = #"<img\b[^>]*>"#
         var imageURLs: [String] = []
         if let regex = try? NSRegularExpression(pattern: imgPattern, options: .caseInsensitive) {
             let ns = working as NSString
             let matches = regex.matches(in: working, range: NSRange(location: 0, length: ns.length))
-            // 先收集有效图，再按原顺序写入占位，跳过追踪图/极小图以免留下大块空白占位
             var keepIndexByMatch: [Int: Int] = [:]
             for (mi, match) in matches.enumerated() {
-                if match.numberOfRanges >= 2, let urlRange = Range(match.range(at: 1), in: working) {
-                    var u = String(working[urlRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if u.hasPrefix("//") { u = "https:" + u }
-                    guard u.count > 8, !isIgnorableImageURL(u) else { continue }
-                    keepIndexByMatch[mi] = imageURLs.count
-                    imageURLs.append(u)
-                }
+                guard let fullRange = Range(match.range, in: working) else { continue }
+                let tag = String(working[fullRange])
+                guard var u = resolveImageURL(fromImgTag: tag) else { continue }
+                if u.hasPrefix("//") { u = "https:" + u }
+                guard u.count > 8, !isIgnorableImageURL(u) else { continue }
+                keepIndexByMatch[mi] = imageURLs.count
+                imageURLs.append(u)
             }
             for (mi, match) in matches.enumerated().reversed() {
                 if let fullRange = Range(match.range, in: working) {
@@ -322,11 +322,64 @@ enum ContentBlockParser {
     }
 
     /// 追踪图、推荐缩略图等，渲染只会留下空白占位
+    /// 从 img 标签解析最佳 URL（src / data-* / srcset）
+    private static func resolveImageURL(fromImgTag tag: String) -> String? {
+        func attr(_ name: String) -> String? {
+            let pat = name + #"\s*=\s*[\"']([^\"']+)[\"']"#
+            guard let re = try? NSRegularExpression(pattern: pat, options: .caseInsensitive) else { return nil }
+            let ns = tag as NSString
+            guard let m = re.firstMatch(in: tag, range: NSRange(location: 0, length: ns.length)),
+                  m.numberOfRanges >= 2,
+                  let r = Range(m.range(at: 1), in: tag) else { return nil }
+            return String(tag[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        func bestFromSrcset(_ srcset: String?) -> String? {
+            guard let srcset, !srcset.isEmpty else { return nil }
+            var best: String?
+            var bestW = -1
+            for part in srcset.split(separator: ",") {
+                let bits = part.trimmingCharacters(in: .whitespaces).split(separator: " ")
+                guard let url = bits.first.map(String.init), !url.isEmpty else { continue }
+                var w = 0
+                if bits.count >= 2 {
+                    let d = bits[1].lowercased()
+                    if d.hasSuffix("w") { w = Int(d.dropLast()) ?? 0 }
+                    else if d.hasSuffix("x") { w = Int((Double(d.dropLast()) ?? 1) * 1000) }
+                }
+                if w >= bestW { bestW = w; best = url }
+                else if best == nil { best = url }
+            }
+            return best
+        }
+        let src = attr("src")
+        let srcIsPlaceholder: Bool = {
+            guard let s = src?.lowercased() else { return true }
+            if s.hasPrefix("data:") { return true }
+            if s.contains("placeholder") || s.contains("1x1") || s.contains("blank.gif") { return true }
+            return false
+        }()
+        let candidates = [
+            attr("data-src"),
+            attr("data-lazy-src"),
+            attr("data-original"),
+            attr("data-full-url"),
+            attr("data-large_image"),
+            attr("data-url"),
+            bestFromSrcset(attr("data-srcset")),
+            bestFromSrcset(attr("srcset")),
+            srcIsPlaceholder ? nil : src,
+            src
+        ].compactMap { $0 }.filter { !$0.isEmpty && !$0.hasPrefix("data:") }
+        return candidates.first
+    }
+
     private static func isIgnorableImageURL(_ url: String) -> Bool {
         let u = url.lowercased()
+        if u.hasPrefix("data:") { return true }
         if u.contains("fly-images/") { return true }
         if u.contains("1x1") || u.contains("pixel") || u.contains("spacer") { return true }
         if u.contains("doubleclick") || u.contains("googlesyndication") { return true }
+        if u.contains("gravatar.com") { return true }
         // 常见极小尺寸后缀
         if u.range(of: #"-80x42\.(webp|png|jpg|jpeg)"#, options: .regularExpression) != nil { return true }
         if u.range(of: #"-1x1\.(gif|png|jpg)"#, options: .regularExpression) != nil { return true }

@@ -915,12 +915,16 @@ enum ArticleContentFetcher {
                 }
                 return nil
             }()
-            // 特色图：图表站正文常依赖首图
+            // 特色图 / Jetpack 图：图表站正文常依赖首图
             if let featured = featuredImageURL(fromWordPress: obj) {
-                if !contentHTML.lowercased().contains(featured.lowercased()) {
-                    contentHTML = "<p><img src=\"" + featured + "\" alt=\"\"></p>" + contentHTML
+                let lower = contentHTML.lowercased()
+                let featuredKey = featured.split(separator: "?").first.map(String.init) ?? featured
+                if !lower.contains(featuredKey.lowercased()) {
+                    contentHTML = "<p><img src=\"" + featured + "\" alt=\"\"></p>\n" + contentHTML
                 }
             }
+            // 正文里再扫一遍 figure/img 懒加载字段
+            contentHTML = promoteLazyAndSrcsetImages(contentHTML)
             guard !contentHTML.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             let cleaned = cleanContentHTML(contentHTML, baseURL: pageURL)
             let len = HTMLUtils.stripTags(cleaned).count
@@ -934,6 +938,9 @@ enum ArticleContentFetcher {
     }
 
     private static func featuredImageURL(fromWordPress obj: [String: Any]) -> String? {
+        if let jet = obj["jetpack_featured_media_url"] as? String, !jet.isEmpty {
+            return jet
+        }
         if let emb = obj["_embedded"] as? [String: Any],
            let media = emb["wp:featuredmedia"] as? [[String: Any]],
            let first = media.first {
@@ -947,10 +954,16 @@ enum ArticleContentFetcher {
                     }
                 }
             }
+            // 部分主题把大图放在 guid
+            if let guid = first["guid"] as? [String: Any],
+               let rendered = guid["rendered"] as? String, !rendered.isEmpty {
+                return rendered
+            }
         }
-        if let id = obj["featured_media"] as? Int, id > 0 {
-            // 无 embed 时无法直接拿 URL
-            return nil
+        if let yoast = obj["yoast_head_json"] as? [String: Any],
+           let og = yoast["og_image"] as? [[String: Any]],
+           let url = og.first?["url"] as? String, !url.isEmpty {
+            return url
         }
         return nil
     }
@@ -992,6 +1005,8 @@ enum ArticleContentFetcher {
             attr("data-original"),
             attr("data-full-url"),
             attr("data-large_image"),
+            attr("data-url"),
+            attr("data-lazy-srcset").flatMap { bestURLFromSrcset($0) },
             bestURLFromSrcset(attr("data-srcset")),
             bestURLFromSrcset(attr("srcset")),
             existingSrc

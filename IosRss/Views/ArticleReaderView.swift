@@ -549,19 +549,12 @@ struct ArticleReaderView: View {
                 guard !t.isEmpty else { return nil }
                 return try? await store.translateText(t)
             }
-            let (plainWithPlaceholders, images) = HTMLUtils.extractImagesForTranslation(currentArticle.content)
-            let result = try await store.translateLongText(plainWithPlaceholders, maxChunkChars: 1800)
-            let restored = HTMLUtils.restoreImagesAfterTranslation(result, images: images)
-            let htmlResult = restored
-                .components(separatedBy: "\n\n")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .map { part -> String in
-                    if part.localizedCaseInsensitiveContains("<img") { return part }
-                    return "<p>\(part)</p>"
-                }
-                .joined()
-            translatedContent = htmlResult.isEmpty ? "<p>\(restored)</p>" : htmlResult
+            let media = HTMLUtils.extractMediaForTranslation(currentArticle.content)
+            let result = try await store.translateLongText(media.text, maxChunkChars: 1800)
+            let restored = HTMLUtils.restoreMediaAfterTranslation(
+                result, images: media.images, tables: media.tables
+            )
+            translatedContent = Self.wrapTranslatedHTML(restored)
             let translatedTitle = await titleTask.value
             var updated = currentArticle
             updated.translatedContent = translatedContent
@@ -576,6 +569,22 @@ struct ArticleReaderView: View {
             translationProgress = nil
         }
         isTranslating = false
+    }
+
+    /// 译文拼回 HTML：表格/图片原样保留，其余包 <p>
+    private static func wrapTranslatedHTML(_ restored: String) -> String {
+        let htmlResult = restored
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map { part -> String in
+                let lower = part.lowercased()
+                if lower.contains("<table") || lower.contains("<img") { return part }
+                if part.hasPrefix("[[TABLE_") || part.hasPrefix("[[IMG_") { return part }
+                return "<p>\(part)</p>"
+            }
+            .joined()
+        return htmlResult.isEmpty ? "<p>\(restored)</p>" : htmlResult
     }
 
     private func toggleTranslation() async {
@@ -602,19 +611,12 @@ struct ArticleReaderView: View {
                 guard !t.isEmpty else { return nil }
                 return try? await store.translateText(t)
             }
-            let (plainWithPlaceholders, images) = HTMLUtils.extractImagesForTranslation(currentArticle.content)
-            let result = try await store.translateLongText(plainWithPlaceholders, maxChunkChars: 1800)
-            let restored = HTMLUtils.restoreImagesAfterTranslation(result, images: images)
-            let htmlResult = restored
-                .components(separatedBy: "\n\n")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .map { part -> String in
-                    if part.localizedCaseInsensitiveContains("<img") { return part }
-                    return "<p>\(part)</p>"
-                }
-                .joined()
-            translatedContent = htmlResult.isEmpty ? "<p>\(restored)</p>" : htmlResult
+            let media = HTMLUtils.extractMediaForTranslation(currentArticle.content)
+            let result = try await store.translateLongText(media.text, maxChunkChars: 1800)
+            let restored = HTMLUtils.restoreMediaAfterTranslation(
+                result, images: media.images, tables: media.tables
+            )
+            translatedContent = Self.wrapTranslatedHTML(restored)
             let translatedTitle = await titleTask.value
             var updated = currentArticle
             updated.translatedContent = translatedContent

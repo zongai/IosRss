@@ -948,8 +948,9 @@ enum HTMLUtils {
 }
 
 
-// MARK: - 系统翻译（Apple Translation，iOS 18+）
-// 根视图 `.translationTask` + 超时，避免 Session 未触发时一直卡住。
+// MARK: - 系统翻译（Apple Translation）
+// iOS 18–25：SwiftUI `.translationTask` + Configuration（官方推荐）
+// iOS 26+：可直接 `TranslationSession(installedSource:target:)`
 
 #if canImport(Translation)
 import Translation
@@ -969,13 +970,63 @@ enum SystemTranslate {
             throw TranslationError.apiError("系统翻译需要 iOS 18 或更高版本")
         }
         #if canImport(Translation)
-        return try await withTimeout(seconds: 45) {
-            try await SystemTranslationHost.shared.translate(text: trimmed, target: target)
+        let sourceID = guessSourceLanguageIdentifier(for: trimmed, target: target)
+        let sourceLang = Locale.Language(identifier: sourceID)
+        let targetLang = Locale.Language(identifier: target.translationLanguageIdentifier)
+
+        // 1) 新系统：直接 Session（需语言包已安装）
+        if #available(iOS 26.0, *) {
+            do {
+                return try await translateWithInstalledSession(
+                    text: trimmed, source: sourceLang, target: targetLang
+                )
+            } catch {
+                // 未安装语言包等 → 走 translationTask（可触发下载/准备）
+            }
+        }
+
+        // 2) 官方 UI 任务路径（参考：configuration + translationTask + session.translate）
+        return try await withTimeout(seconds: 20) {
+            try await SystemTranslationHost.shared.translate(
+                text: trimmed,
+                source: sourceLang,
+                target: targetLang
+            )
         }
         #else
         throw TranslationError.apiError("当前 SDK 不支持 Translation 框架")
         #endif
     }
+
+    #if canImport(Translation)
+    @available(iOS 26.0, *)
+    private static func translateWithInstalledSession(
+        text: String,
+        source: Locale.Language,
+        target: Locale.Language
+    ) async throws -> String {
+        let availability = LanguageAvailability()
+        let status = await availability.status(from: source, to: target)
+        if status == .unsupported {
+            throw TranslationError.apiError("系统翻译不支持该语言对")
+        }
+        // 仅已安装时用直接 Session；supported 需下载，交给 translationTask
+        if status != .installed {
+            throw TranslationError.apiError("语言包未安装")
+        }
+        let session = TranslationSession(installedSource: source, target: target)
+        let chunks = chunkText(text, maxChars: 800)
+        var parts: [String] = []
+        for chunk in chunks {
+            let response = try await session.translate(chunk)
+            let out = response.targetText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !out.isEmpty { parts.append(out) }
+        }
+        let joined = parts.joined(separator: "\n")
+        guard !joined.isEmpty else { throw TranslationError.apiError("系统翻译返回空译文") }
+        return joined
+    }
+    #endif
 
     private static func withTimeout<T: Sendable>(
         seconds: Double,
@@ -985,6 +1036,11 @@ enum SystemTranslate {
             group.addTask { try await operation() }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                await MainActor.run {
+                    SystemTranslationHost.shared.cancelActive(
+                        reason: "系统翻译超时（\(Int(seconds))s），将尝试其他引擎"
+                    )
+                }
                 throw TranslationError.apiError("系统翻译超时（\(Int(seconds))s），将尝试其他引擎")
             }
             let result = try await group.next()!
@@ -992,120 +1048,29 @@ enum SystemTranslate {
             return result
         }
     }
-}
 
-#if canImport(Translation)
-@available(iOS 18.0, *)
-@MainActor
-final class SystemTranslationHost: ObservableObject {
-    static let shared = SystemTranslationHost()
-
-    /// 根视图观察此属性以驱动 translationTask
-    @Published var configuration: TranslationSession.Configuration?
-    /// 宿主是否已出现在视图树
-    private(set) var isAnchored = false
-
-    private struct Job {
-        let text: String
-        let target: AppLanguage
-        let continuation: CheckedContinuation<String, Error>
-    }
-
-    private var queue: [Job] = []
-    private var isRunning = false
-    private var activeContinuation: CheckedContinuation<String, Error>?
-    private var activeText: String?
-
-    func markAnchored(_ anchored: Bool) {
-        isAnchored = anchored
-        if anchored { startNextIfNeeded() }
-    }
-
-    func translate(text: String, target: AppLanguage) async throws -> String {
-        try await withCheckedThrowingContinuation { cont in
-            queue.append(Job(text: text, target: target, continuation: cont))
-            startNextIfNeeded()
+    /// 粗略判断源语言 BCP-47
+    static func guessSourceLanguageIdentifier(for text: String, target: AppLanguage) -> String {
+        let sample = String(text.prefix(800))
+        var cjk = 0, kana = 0, hangul = 0, latin = 0
+        for ch in sample.unicodeScalars {
+            let v = ch.value
+            if (0x4E00...0x9FFF).contains(v) || (0x3400...0x4DBF).contains(v) { cjk += 1 }
+            else if (0x3040...0x30FF).contains(v) { kana += 1 }
+            else if (0xAC00...0xD7AF).contains(v) { hangul += 1 }
+            else if (0x0041...0x007A).contains(v) || (0x00C0...0x024F).contains(v) { latin += 1 }
         }
+        let total = max(1, cjk + kana + hangul + latin)
+        func avoidTarget(_ id: String) -> String {
+            id == target.translationLanguageIdentifier ? "en" : id
+        }
+        if kana * 3 > cjk { return avoidTarget("ja") }
+        if hangul > total / 5 { return avoidTarget("ko") }
+        if cjk > total / 5 { return avoidTarget("zh-Hans") }
+        return avoidTarget("en")
     }
 
-    private func startNextIfNeeded() {
-        guard !isRunning, let job = queue.first else { return }
-        guard isAnchored else {
-            // 视图未挂载时不占坑；等 onAppear 再开
-            return
-        }
-        isRunning = true
-        activeContinuation = job.continuation
-        activeText = job.text
-
-        let targetLang = Locale.Language(identifier: job.target.translationLanguageIdentifier)
-        let config = TranslationSession.Configuration(source: nil, target: targetLang)
-
-        // 先清空再赋值，强制 translationTask 重新调度
-        configuration = nil
-        DispatchQueue.main.async { [weak self] in
-            self?.configuration = config
-        }
-
-        // 兜底：若 8s 内 translationTask 仍未回调，失败当前任务
-        let expectedText = job.text
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
-            guard let self else { return }
-            guard self.isRunning, self.activeText == expectedText else { return }
-            self.failActive(with: TranslationError.apiError("系统翻译未响应，请确认已下载语言包或换引擎"))
-        }
-    }
-
-    func handle(session: TranslationSession) async {
-        let text = activeText
-        let cont = activeContinuation
-        activeText = nil
-        activeContinuation = nil
-
-        defer { finishCurrentAndPump() }
-
-        guard let text, let cont else { return }
-
-        do {
-            try? await session.prepareTranslation()
-            let chunks = chunkText(text, maxChars: 800)
-            var parts: [String] = []
-            parts.reserveCapacity(chunks.count)
-            for chunk in chunks {
-                try Task.checkCancellation()
-                let response = try await session.translate(chunk)
-                let out = response.targetText
-                    .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                if !out.isEmpty { parts.append(out) }
-            }
-            let joined = parts.joined(separator: "\n")
-            guard !joined.isEmpty else {
-                cont.resume(throwing: TranslationError.apiError("系统翻译返回空译文"))
-                return
-            }
-            cont.resume(returning: joined)
-        } catch {
-            cont.resume(throwing: error)
-        }
-    }
-
-    private func failActive(with error: Error) {
-        if let cont = activeContinuation {
-            activeContinuation = nil
-            activeText = nil
-            cont.resume(throwing: error)
-        }
-        finishCurrentAndPump()
-    }
-
-    private func finishCurrentAndPump() {
-        if !queue.isEmpty { queue.removeFirst() }
-        isRunning = false
-        configuration = nil
-        startNextIfNeeded()
-    }
-
-    private func chunkText(_ text: String, maxChars: Int) -> [String] {
+    static func chunkText(_ text: String, maxChars: Int) -> [String] {
         guard text.count > maxChars else { return [text] }
         var result: [String] = []
         var current = ""
@@ -1126,21 +1091,138 @@ final class SystemTranslationHost: ObservableObject {
                 current += "\n" + para
             } else {
                 result.append(current)
-                if para.count <= maxChars {
-                    current = para
-                } else {
+                current = para.count <= maxChars ? para : {
                     var rest = para
+                    var local: [String] = []
                     while rest.count > maxChars {
                         let idx = rest.index(rest.startIndex, offsetBy: maxChars)
-                        result.append(String(rest[..<idx]))
+                        local.append(String(rest[..<idx]))
                         rest = String(rest[idx...])
                     }
-                    current = rest
-                }
+                    result.append(contentsOf: local)
+                    return rest
+                }()
             }
         }
         if !current.isEmpty { result.append(current) }
         return result.isEmpty ? [text] : result
+    }
+}
+
+#if canImport(Translation)
+/// 与官方示例一致：View 持有 Configuration，translationTask 内 session.translate
+@available(iOS 18.0, *)
+@MainActor
+final class SystemTranslationHost: ObservableObject {
+    static let shared = SystemTranslationHost()
+
+    @Published var configuration: TranslationSession.Configuration?
+    /// 当前待译文本（translationTask 闭包读取）
+    private(set) var pendingText: String = ""
+
+    private struct Job {
+        let text: String
+        let source: Locale.Language
+        let target: Locale.Language
+        let continuation: CheckedContinuation<String, Error>
+    }
+
+    private var queue: [Job] = []
+    private var isRunning = false
+    private var activeContinuation: CheckedContinuation<String, Error>?
+    private var isAnchored = false
+
+    func markAnchored(_ anchored: Bool) {
+        isAnchored = anchored
+        if anchored { startNextIfNeeded() }
+    }
+
+    func translate(
+        text: String,
+        source: Locale.Language,
+        target: Locale.Language
+    ) async throws -> String {
+        try await withCheckedThrowingContinuation { cont in
+            queue.append(Job(text: text, source: source, target: target, continuation: cont))
+            startNextIfNeeded()
+        }
+    }
+
+    func cancelActive(reason: String) {
+        resumeActive(.failure(TranslationError.apiError(reason)))
+        finishCurrentAndPump(clearConfig: true)
+    }
+
+    private func resumeActive(_ result: Result<String, Error>) {
+        guard let cont = activeContinuation else { return }
+        activeContinuation = nil
+        switch result {
+        case .success(let value): cont.resume(returning: value)
+        case .failure(let error): cont.resume(throwing: error)
+        }
+    }
+
+    private func startNextIfNeeded() {
+        guard !isRunning, let job = queue.first else { return }
+        guard isAnchored else { return }
+
+        isRunning = true
+        activeContinuation = job.continuation
+        pendingText = job.text
+
+        // 官方写法：设置 Configuration 触发 translationTask
+        let config = TranslationSession.Configuration(
+            source: job.source,
+            target: job.target
+        )
+        if configuration != nil {
+            // 同语言对再次翻译时需 invalidate
+            configuration?.invalidate()
+            configuration = config
+        } else {
+            configuration = config
+        }
+    }
+
+    /// 由根视图 `.translationTask` 调用 —— 与参考代码相同
+    func handle(session: TranslationSession) async {
+        let text = pendingText
+        pendingText = ""
+        guard !text.isEmpty, activeContinuation != nil else {
+            finishCurrentAndPump(clearConfig: true)
+            return
+        }
+
+        do {
+            try? await session.prepareTranslation()
+            let chunks = SystemTranslate.chunkText(text, maxChars: 800)
+            var parts: [String] = []
+            for chunk in chunks {
+                let response = try await session.translate(chunk)
+                let out = response.targetText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !out.isEmpty { parts.append(out) }
+            }
+            let joined = parts.joined(separator: "\n")
+            guard !joined.isEmpty else {
+                resumeActive(.failure(TranslationError.apiError("系统翻译返回空译文")))
+                finishCurrentAndPump(clearConfig: true)
+                return
+            }
+            resumeActive(.success(joined))
+            finishCurrentAndPump(clearConfig: true)
+        } catch {
+            resumeActive(.failure(error))
+            finishCurrentAndPump(clearConfig: true)
+        }
+    }
+
+    private func finishCurrentAndPump(clearConfig: Bool) {
+        if !queue.isEmpty { queue.removeFirst() }
+        isRunning = false
+        if clearConfig {
+            configuration = nil
+        }
+        startNextIfNeeded()
     }
 }
 #endif

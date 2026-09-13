@@ -30,6 +30,9 @@ struct ArticleReaderView: View {
     @State private var currentID: UUID?
     @State private var dragOffset: CGFloat = 0
     @State private var lastScrollY: CGFloat = 0
+    @State private var localReadProgress: Double = 0
+    @State private var scrollContentHeight: CGFloat = 1
+    @State private var scrollViewportHeight: CGFloat = 1
 
     private var activeID: UUID { currentID ?? article.id }
 
@@ -106,9 +109,9 @@ struct ArticleReaderView: View {
                                 .font(.system(size: max(11, store.readerTitleFontSize - 12), weight: .medium))
                                 .foregroundStyle(Color.secondary)
                         }
-                        if currentArticle.readingProgress > 0.05 {
+                        if max(localReadProgress, currentArticle.readingProgress) > 0.05 {
                             Text("·").foregroundStyle(Color.secondary.opacity(0.6))
-                            Text(String(format: "已读 %.0f%%", currentArticle.readingProgress * 100))
+                            Text(String(format: "已读 %.0f%%", max(localReadProgress, currentArticle.readingProgress) * 100))
                                 .font(.system(size: max(11, store.readerTitleFontSize - 12), weight: .medium))
                                 .foregroundStyle(Color.secondary)
                         } else if fullContentError != nil {
@@ -194,18 +197,10 @@ struct ArticleReaderView: View {
         }
         .background(Color(.systemBackground))
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            let contentH = max(geometry.contentSize.height, 1)
-            let visible = geometry.containerSize.height
-            let offset = geometry.contentOffset.y
-            // 同时用于工具栏显隐；返回 offset 保持兼容
-            let progress = contentH > visible + 1
-                ? min(1, max(0, (offset + visible) / contentH))
-                : 1
-            store.updateReadingProgress(articleID: currentArticle.id, progress: progress)
-            return offset
+            // 禁止在此闭包写 AppStore，否则会在布局阶段触发观察更新导致闪退
+            geometry.contentOffset.y
         } action: { oldY, newY in
             let delta = newY - oldY
-            // 向下滑（offset 增大）隐藏；向上滑或接近顶部显示
             if newY > 28, delta > 1.5 {
                 if showChrome {
                     withAnimation(.easeInOut(duration: 0.2)) { showChrome = false }
@@ -216,6 +211,25 @@ struct ArticleReaderView: View {
                 }
             }
             lastScrollY = newY
+            let h = max(scrollContentHeight, scrollViewportHeight + 1)
+            let p = min(1, max(0, Double((newY + scrollViewportHeight) / h)))
+            if p > localReadProgress + 0.02 {
+                localReadProgress = p
+            }
+        }
+        .onScrollGeometryChange(for: CGSize.self) { geometry in
+            CGSize(width: geometry.containerSize.height, height: max(geometry.contentSize.height, 1))
+        } action: { _, newSize in
+            scrollViewportHeight = newSize.width
+            scrollContentHeight = newSize.height
+        }
+        .onAppear {
+            localReadProgress = currentArticle.readingProgress
+        }
+        .onDisappear {
+            if localReadProgress > 0.05 {
+                store.updateReadingProgress(articleID: currentArticle.id, progress: localReadProgress, persist: true)
+            }
         }
         .navigationTitle("")
         .appScreenBackground()

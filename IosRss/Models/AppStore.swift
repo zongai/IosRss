@@ -2134,6 +2134,8 @@ class AppStore: AIService.Runtime {
     /// 兴趣分可解释：命中的正/负向词
     func interestExplanation(for article: Article) -> String? {
         guard smartInterestFilterEnabled, !interestWeights.isEmpty else { return nil }
+        // 高分且非低分场景不计算，降低列表滚动开销
+        if let s = article.interestScore, s >= lowInterestThreshold + 0.05 { return nil }
         let tokens = Self.interestTokens(from: article.title + " " + article.summary)
         var pos: [(String, Double)] = []
         var neg: [(String, Double)] = []
@@ -2386,16 +2388,15 @@ class AppStore: AIService.Runtime {
         }
     }
 
-    func updateReadingProgress(articleID: UUID, progress: Double) {
+    func updateReadingProgress(articleID: UUID, progress: Double, persist: Bool = true) {
         let p = min(1, max(0, progress))
         for i in feeds.indices {
             if let j = feeds[i].articles.firstIndex(where: { $0.id == articleID }) {
                 let old = feeds[i].articles[j].readingProgress
-                if abs(old - p) < 0.03, p < 0.95 { return }
+                if abs(old - p) < 0.05, p < 0.98 { return }
                 feeds[i].articles[j].readingProgress = p
-                if p >= 0.95 || Int(old * 5) != Int(p * 5) {
-                    saveToStorage()
-                }
+                // 默认仅在离开阅读页等时机 persist，避免滚动写盘卡顿
+                if persist { saveToStorage() }
                 return
             }
         }

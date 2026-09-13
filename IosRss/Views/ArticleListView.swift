@@ -538,15 +538,17 @@ struct ArticleRow: View {
                     }
                 }
                 if store.smartInterestFilterEnabled,
-                   let reason = store.interestExplanation(for: live),
-                   live.interestScore != nil,
-                   (live.interestScore! < store.lowInterestThreshold || reason.contains("降权")) {
+                   let score = live.interestScore,
+                   score < store.lowInterestThreshold,
+                   let reason = store.interestExplanation(for: live) {
                     Text(reason)
                         .font(.system(size: max(10, store.listSummaryFontSize - 3)))
                         .foregroundStyle(.orange.opacity(0.9))
                         .lineLimit(2)
                 }
-                if let bl = store.articleBlacklistReason(for: live) {
+                // 仅对已读且配置了黑名单的条目计算，避免列表滚动时全量扫描
+                if live.isRead, !store.articleBlacklistTerms.isEmpty,
+                   let bl = store.articleBlacklistReason(for: live) {
                     Text(bl)
                         .font(.system(size: max(10, store.listSummaryFontSize - 3)))
                         .foregroundStyle(.red.opacity(0.85))

@@ -23,6 +23,20 @@ struct SettingsView: View {
         @Bindable var store = store
         NavigationStack {
             Form {
+                // MARK: 显示模式
+                Section {
+                    Toggle(isOn: $showAdvancedSettings) {
+                        Label(
+                            showAdvancedSettings ? "高级选项：已开启" : "显示高级选项",
+                            systemImage: showAdvancedSettings ? "slider.horizontal.3" : "line.3.horizontal.decrease.circle"
+                        )
+                    }
+                } footer: {
+                    Text(showAdvancedSettings
+                          ? "已显示：文章黑名单、已读保留天数、全文缓存策略、URL 前缀、设置导入导出等。"
+                          : "默认只显示常用设置。打开后可管理黑名单、缓存策略与备份。")
+                }
+
                 // MARK: 阅读
                 Section {
                     Picker("标题显示", selection: $store.titleDisplayMode) {
@@ -158,7 +172,7 @@ struct SettingsView: View {
                 } footer: {
                     Text(showAdvancedSettings
                           ? "翻译目标语言、引擎与 Key 在「翻译」；模型、Prompt、AI 黑名单在「AI」。文章黑名单命中后自动标已读。"
-                          : "常用：设置翻译语言与一键翻译引擎。更多 AI / 黑名单请点右上角「高级」。")
+                          : "常用：设置翻译语言与一键翻译引擎。更多 AI / 黑名单请打开上方「显示高级选项」，或点右上角「高级」。")
                 }
 
                 // MARK: 朗读
@@ -192,6 +206,38 @@ struct SettingsView: View {
                 } footer: {
                     Text("使用 Microsoft Edge 在线语音，无需 API Key。语速在合成时生效，切换后需重新点朗读。")
                 }
+
+
+                // MARK: 缓存（始终可见）
+                Section {
+                    HStack {
+                        Label("内容缓存", systemImage: "internaldrive")
+                        Spacer()
+                        Text(cacheSizeText).foregroundStyle(.secondary)
+                    }
+                    if store.isClearingCache {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ProgressView(value: store.cacheClearProgress)
+                            Text(store.cacheClearStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Button(role: .destructive) {
+                        Task {
+                            await store.clearOfflineContentCacheAsync()
+                            cacheSizeText = store.cacheSizeDescription()
+                        }
+                    } label: {
+                        Label("清除离线缓存", systemImage: "trash")
+                    }
+                    .disabled(store.isClearingCache)
+                } header: {
+                    Text("缓存")
+                } footer: {
+                    Text("只清除全文、Feed 快照与正文图片；订阅与已读状态保留。更多保留天数等选项请打开「显示高级选项」。")
+                }
+                .onAppear { cacheSizeText = store.cacheSizeDescription() }
 
                 if showAdvancedSettings {
                 // MARK: 数据与清理
@@ -233,34 +279,11 @@ struct SettingsView: View {
                                 store.persistSettings()
                             }
                     }
-                    HStack {
-                        Label("内容缓存", systemImage: "internaldrive")
-                        Spacer()
-                        Text(cacheSizeText).foregroundStyle(.secondary)
-                    }
-                    if store.isClearingCache {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ProgressView(value: store.cacheClearProgress)
-                            Text(store.cacheClearStatus)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Button(role: .destructive) {
-                        Task {
-                            await store.clearOfflineContentCacheAsync()
-                            cacheSizeText = store.cacheSizeDescription()
-                        }
-                    } label: {
-                        Label("清除离线缓存", systemImage: "trash")
-                    }
-                    .disabled(store.isClearingCache)
                 } header: {
                     Text("数据与清理")
                 } footer: {
-                    Text("订阅列表、已读标记与源图标始终保留。清除缓存只删全文、Feed 快照与正文图片。开启「全文 URL 前缀」后，在订阅源菜单中勾选对应源，抓取全文时会在文章链接前加上所填前缀（例如 archive.is / 12ft.io）。")
+                    Text("已读保留与全文缓存天数、URL 前缀等。清除缓存入口在上方「缓存」分区。")
                 }
-                .onAppear { cacheSizeText = store.cacheSizeDescription() }
 
                 // MARK: 备份
                 Section {
@@ -319,6 +342,17 @@ struct SettingsView: View {
             }
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showAdvancedSettings.toggle()
+                    } label: {
+                        Text(showAdvancedSettings ? "精简" : "高级")
+                            .fontWeight(.medium)
+                    }
+                    .accessibilityLabel(showAdvancedSettings ? "切换到精简设置" : "显示高级设置")
+                }
+            }
             .sheet(isPresented: $showSettingsExport) {
                 if let url = settingsExportURL {
                     SettingsExportPicker(url: url) { showSettingsExport = false }

@@ -26,6 +26,10 @@ class AppStore {
 
     var titleDisplayMode: TitleDisplayMode = .original
     var defaultTranslationEngine: TranslationEngine = .google
+    /// 翻译时按此顺序尝试引擎；遇限流/不可用自动切下一个
+    var translationEngineChain: [TranslationEngine] = TranslationEngine.allCases
+    /// 引擎级限流冷却（引擎 rawValue → 冷却截止时间）
+    private var translationEngineCooldownUntil: [String: Date] = [:]
     var aiProviders: [AIProvider] = [
         AIProvider(id: UUID(), name: "OpenAI", baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini", kind: "openai"),
         AIProvider(id: UUID(), name: "Anthropic", baseURL: "https://api.anthropic.com/v1", model: "claude-3-haiku-20240307", kind: "openai"),
@@ -44,6 +48,10 @@ class AppStore {
     var explainPrompt: String = AppStore.defaultExplainPrompt
     var readRetentionDays: Int = 7
     var fullContentCacheDays: Int = 30
+    /// 全文抓取时是否启用 URL 前缀（仅对勾选了「使用前缀」的源生效）
+    var fullContentURLPrefixEnabled: Bool = false
+    /// 全文抓取 URL 前缀，例如 https://archive.is/ 或 https://12ft.io/
+    var fullContentURLPrefix: String = ""
     /// Edge TTS 音色；空则按正文语言自动选择
     var ttsVoice: String = ""
     /// TTS 语速倍数，1.0 为正常（0.5～2.0）
@@ -1490,12 +1498,84 @@ class AppStore {
         throw lastError
     }
 
-    func translateText(_ text: String) async throws -> String {
+    /// 实际用于翻译的引擎顺序（去重、过滤冷却中的引擎；空则回退全部）
+    func effectiveTranslationChain() -> [TranslationEngine] {
+        var seen = Set<TranslationEngine>()
+        var list: [TranslationEngine] = []
+        let source = translationEngineChain.isEmpty ? TranslationEngine.allCases : translationEngineChain
+        for e in source {
+            guard seen.insert(e).inserted else { continue }
+            if isTranslationEngineCooling(e) { continue }
+            list.append(e)
+        }
+        // 全部在冷却时忽略冷却，按链顺序硬试
+        if list.isEmpty {
+            seen.removeAll()
+            for e in source {
+                guard seen.insert(e).inserted else { continue }
+                list.append(e)
+            }
+        }
+        return list
+    }
+
+    /// 将某引擎移到链中指定位置 / 增删后同步 defaultTranslationEngine
+    func setTranslationEngineChain(_ chain: [TranslationEngine]) {
+        var seen = Set<TranslationEngine>()
+        translationEngineChain = chain.filter { seen.insert($0).inserted }
+        if translationEngineChain.isEmpty {
+            translationEngineChain = [.google]
+        }
+        defaultTranslationEngine = translationEngineChain[0]
+        persistSettings()
+    }
+
+    func moveTranslationEngine(from source: IndexSet, to destination: Int) {
+        var chain = translationEngineChain
+        chain.move(fromOffsets: source, toOffset: destination)
+        setTranslationEngineChain(chain)
+    }
+
+    func toggleTranslationEngineInChain(_ engine: TranslationEngine) {
+        var chain = translationEngineChain
+        if let idx = chain.firstIndex(of: engine) {
+            guard chain.count > 1 else { return } // 至少保留一个
+            chain.remove(at: idx)
+        } else {
+            chain.append(engine)
+        }
+        setTranslationEngineChain(chain)
+    }
+
+    private func isTranslationEngineCooling(_ engine: TranslationEngine) -> Bool {
+        guard let until = translationEngineCooldownUntil[engine.rawValue] else { return false }
+        if until > Date() { return true }
+        translationEngineCooldownUntil[engine.rawValue] = nil
+        return false
+    }
+
+    private func markTranslationEngineLimited(_ engine: TranslationEngine, minutes: Double = 5) {
+        translationEngineCooldownUntil[engine.rawValue] = Date().addingTimeInterval(minutes * 60)
+    }
+
+    /// 引擎是否已配置到可调用（缺 Key 的引擎跳过）
+    func isTranslationEngineReady(_ engine: TranslationEngine) -> Bool {
+        switch engine {
+        case .google, .mymemory, .lingva: return true
+        case .microsoft: return !loadMicrosoftKeys().isEmpty
+        case .deepl: return !loadDeepLKeys().isEmpty
+        case .ai:
+            return aiProviders.contains { !loadAIKeys(for: $0.id).isEmpty }
+        }
+    }
+
+    private func translateWithEngine(_ engine: TranslationEngine, text: String) async throws -> String {
         let lang = targetLanguage
-        switch defaultTranslationEngine {
+        switch engine {
         case .google:
             return try await translateWithGoogle(text, targetLang: lang.googleCode)
-        case .mymemory: return try await MyMemoryTranslate.translate(text: text, targetLang: lang.mymemoryCode)
+        case .mymemory:
+            return try await MyMemoryTranslate.translate(text: text, targetLang: lang.mymemoryCode)
         case .lingva:
             return try await LingvaTranslate.translate(
                 text: text,
@@ -1524,6 +1604,26 @@ class AppStore {
         }
     }
 
+    func translateText(_ text: String) async throws -> String {
+        let chain = effectiveTranslationChain()
+        var lastError: Error = TranslationError.apiError("没有可用的翻译引擎")
+        for engine in chain {
+            guard isTranslationEngineReady(engine) else { continue }
+            do {
+                return try await translateWithEngine(engine, text: text)
+            } catch {
+                lastError = error
+                if Self.keyFailureKind(error) == .limited {
+                    markTranslationEngineLimited(engine)
+                    continue
+                }
+                // 配置/鉴权类错误：跳过该引擎；其它错误也尝试下一个以提高成功率
+                continue
+            }
+        }
+        throw lastError
+    }
+
     /// 解析实际并发度：显式参数 > 用户设置 > 引擎默认（偏稳，避免限流导致大片失败）
     func resolvedTranslationConcurrency(for engine: TranslationEngine, override: Int? = nil) -> Int {
         if let o = override, o > 0 { return min(8, o) }
@@ -1539,39 +1639,10 @@ class AppStore {
 
     func translateTexts(_ texts: [String], concurrency: Int? = nil) async -> [String?] {
         guard !texts.isEmpty else { return [] }
-        let engine = defaultTranslationEngine
-        let limit = resolvedTranslationConcurrency(for: engine, override: concurrency)
-        switch engine {
-        case .deepl:
-            return await translateTextsWithDeepL(texts, targetLang: targetLanguage.deeplCode)
-        case .microsoft:
-            let msLang = targetLanguage.microsoftCode
-            let msRegion = microsoftTranslateRegion
-            let keys = loadMicrosoftKeys()
-            return await translateNativeBatchParallel(texts, chunkSize: 25, parallelism: min(3, max(1, keys.count))) { chunk in
-                let ks = self.microsoftKeyCooldown.availableKeys(from: self.loadMicrosoftKeys())
-                guard !ks.isEmpty else { throw TranslationError.apiError("未配置 Microsoft API Key") }
-                let start = self.microsoftKeyRoundRobin % ks.count
-                var last: Error = TranslationError.apiError("Microsoft 全部 Key 失败")
-                for offset in 0..<ks.count {
-                    let idx = (start + offset) % ks.count
-                    let key = ks[idx]
-                    do {
-                        let r = try await MicrosoftTranslate.translate(texts: chunk, apiKey: key, region: msRegion, targetLang: msLang)
-                        self.microsoftKeyRoundRobin = idx + 1
-                        return r
-                    } catch {
-                        last = error
-                        self.microsoftKeyCooldown.mark(key, kind: Self.keyFailureKind(error))
-                        continue
-                    }
-                }
-                throw last
-            }
-        case .google, .mymemory, .lingva, .ai:
-            // 统一走 translateText（含 AI failover / 多 Key），不再跨 Provider 分片，避免质量与失败率变差
-            return await translateConcurrently(texts, concurrency: limit)
-        }
+        // 批量路径统一走 translateText，以便按引擎链限流自动切换
+        let primary = effectiveTranslationChain().first ?? defaultTranslationEngine
+        let limit = resolvedTranslationConcurrency(for: primary, override: concurrency)
+        return await translateConcurrently(texts, concurrency: limit)
     }
 
     /// AI 多 Provider：轮询分片，每 Provider 独立并发，总吞吐 ≈ Provider数 × 每路并发
@@ -1959,6 +2030,27 @@ class AppStore {
         saveToStorage()
     }
 
+    func setFeedUseFullContentURLPrefix(_ feedID: UUID, enabled: Bool) {
+        guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
+        var feed = feeds[idx]
+        feed.useFullContentURLPrefix = enabled
+        feeds[idx] = feed
+        saveToStorage()
+    }
+
+    /// 根据全局开关、源开关与前缀，生成实际抓取 URL；缓存仍用原始 article.link
+    func fullContentFetchURL(for article: Article) -> String {
+        let original = article.link.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard fullContentURLPrefixEnabled else { return original }
+        guard let feed = feeds.first(where: { $0.id == article.feedID }),
+              feed.useFullContentURLPrefix else { return original }
+        let prefix = fullContentURLPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prefix.isEmpty, !original.isEmpty else { return original }
+        // 避免重复拼接
+        if original.hasPrefix(prefix) { return original }
+        return prefix + original
+    }
+
     func markFaviconFetchDone(_ feedID: UUID) {
         guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
         guard !feeds[idx].faviconFetchDone else { return }
@@ -1993,10 +2085,12 @@ class AppStore {
             updateArticle(updated)
             return updated
         }
-        let result = try await ArticleContentFetcher.fetchFullContent(from: article.link)
+        let fetchURL = fullContentFetchURL(for: article)
+        let result = try await ArticleContentFetcher.fetchFullContent(from: fetchURL)
         var updated = article
         updated.content = result.contentHTML
         updated.hasFullContent = true
+        // 始终用原始链接做缓存键，避免前缀变化导致缓存失效/重复
         OfflineCache.saveArticleHTML(link: article.link, html: result.contentHTML)
         updateArticle(updated)
         return updated
@@ -2093,12 +2187,15 @@ class AppStore {
         UserDefaults.standard.set(groupTitleFontSize, forKey: "groupTitleFontSize")
         UserDefaults.standard.set(titleDisplayMode.rawValue, forKey: "titleDisplayMode")
         UserDefaults.standard.set(defaultTranslationEngine.rawValue, forKey: "defaultTranslationEngine")
+        UserDefaults.standard.set(translationEngineChain.map(\.rawValue), forKey: "translationEngineChain")
         UserDefaults.standard.set(showReadArticles, forKey: "showReadArticles")
         UserDefaults.standard.set(translationPrompt, forKey: "translationPrompt")
         UserDefaults.standard.set(summaryPrompt, forKey: "summaryPrompt")
         UserDefaults.standard.set(explainPrompt, forKey: "explainPrompt")
         UserDefaults.standard.set(readRetentionDays, forKey: "readRetentionDays")
         UserDefaults.standard.set(fullContentCacheDays, forKey: "fullContentCacheDays")
+        UserDefaults.standard.set(fullContentURLPrefixEnabled, forKey: "fullContentURLPrefixEnabled")
+        UserDefaults.standard.set(fullContentURLPrefix, forKey: "fullContentURLPrefix")
         UserDefaults.standard.set(ttsVoice, forKey: "ttsVoice")
         UserDefaults.standard.set(ttsRate, forKey: "ttsRate")
         UserDefaults.standard.set(colorTheme.rawValue, forKey: "colorTheme")
@@ -2157,6 +2254,23 @@ class AppStore {
                 defaultTranslationEngine = engine
             }
         }
+        if let arr = UserDefaults.standard.array(forKey: "translationEngineChain") as? [String] {
+            let parsed = arr.compactMap { TranslationEngine(rawValue: $0) }
+            if !parsed.isEmpty {
+                var seen = Set<TranslationEngine>()
+                translationEngineChain = parsed.filter { seen.insert($0).inserted }
+            }
+        } else {
+            // 兼容旧版：默认引擎放首位，其余按 allCases 补齐
+            var chain = [defaultTranslationEngine]
+            for e in TranslationEngine.allCases where e != defaultTranslationEngine {
+                chain.append(e)
+            }
+            translationEngineChain = chain
+        }
+        if let first = translationEngineChain.first {
+            defaultTranslationEngine = first
+        }
         showReadArticles = UserDefaults.standard.object(forKey: "showReadArticles") as? Bool ?? false
         if let p = UserDefaults.standard.string(forKey: "translationPrompt") { translationPrompt = p }
         if let p = UserDefaults.standard.string(forKey: "summaryPrompt") { summaryPrompt = p }
@@ -2169,6 +2283,8 @@ class AppStore {
         )
         readRetentionDays = UserDefaults.standard.object(forKey: "readRetentionDays") as? Int ?? 7
         fullContentCacheDays = UserDefaults.standard.object(forKey: "fullContentCacheDays") as? Int ?? 30
+        fullContentURLPrefixEnabled = UserDefaults.standard.object(forKey: "fullContentURLPrefixEnabled") as? Bool ?? false
+        fullContentURLPrefix = UserDefaults.standard.string(forKey: "fullContentURLPrefix") ?? ""
         ttsVoice = UserDefaults.standard.string(forKey: "ttsVoice") ?? ""
         if UserDefaults.standard.object(forKey: "ttsRate") != nil {
             ttsRate = min(2.0, max(0.5, UserDefaults.standard.double(forKey: "ttsRate")))

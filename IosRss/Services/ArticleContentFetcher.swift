@@ -425,7 +425,7 @@ enum ArticleContentFetcher {
         return nil
     }
 
-    /// 已知站点正文容器（Foreign Affairs 等）
+    /// 已知站点正文容器（Foreign Affairs / CarNewsChina 等）
     private static func extractByKnownSite(_ html: String, host: String) -> String? {
         let selectors: [String]
         if host == "foreignaffairs.com" || host.hasSuffix(".foreignaffairs.com") {
@@ -451,6 +451,13 @@ enum ArticleContentFetcher {
                 "prime__story__body",
                 "article-body",
                 "normal-article"
+            ]
+        } else if host == "carnewschina.com" || host.hasSuffix(".carnewschina.com") {
+            // WP REST 常需鉴权；正文在 js-main-post（比整篇 <article> 少侧栏/订阅页脚）
+            selectors = [
+                "js-main-post",
+                "post_detail__content",
+                "post-detail__content"
             ]
         } else {
             selectors = []
@@ -552,7 +559,8 @@ enum ArticleContentFetcher {
                      "post_content", "single-content", "rich-content", "article-body", "post-body",
                      "article__body", "body-content", "paywall-content", "rich-text", "dropcap",
                      "content-gated", "content-ungated", "post-content-main",
-                     "wangEditor", "article__main", "prime__story"] {
+                     "wangEditor", "article__main", "prime__story",
+                     "js-main-post", "post_detail__content", "post-detail__content"] {
             if openAttrs.lowercased().contains(good) { score *= 2.5; break }
         }
         if openAttrs.lowercased().contains("class=\"article\"")
@@ -661,6 +669,11 @@ enum ArticleContentFetcher {
         for tag in ["script", "style", "noscript", "iframe", "button", "input", "select", "textarea"] {
             work = removeTagBlocks(work, tag: tag)
         }
+        // 去掉文内广告 / 会员推广块（CarNewsChina 等）
+        work = removeBlocksWithClassTokens(work, tokens: [
+            "ad__horizontal", "ad__in_article", "adsbygoogle", "ad-slot",
+            "membership", "become-member", "newsletter-signup"
+        ])
         work = absolutizeAttributes(work, attr: "src", baseURL: baseURL)
         work = absolutizeAttributes(work, attr: "href", baseURL: baseURL)
         work = work.replacingOccurrences(
@@ -676,6 +689,39 @@ enum ArticleContentFetcher {
         work = HTMLUtils.decodeEntities(work)
         work = work.replacingOccurrences(of: #"\n{3,}"# , with: "\n\n", options: .regularExpression)
         return work.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 删除 class 含指定 token 的 div/section/aside 块（平衡标签）
+    private static func removeBlocksWithClassTokens(_ html: String, tokens: [String]) -> String {
+        guard !tokens.isEmpty else { return html }
+        let tokenAlt = tokens.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|")
+        let openPattern = "<(div|section|aside)([^>]*class=[\"'][^\"']*(?:" + tokenAlt + ")[^\"']*[\"'][^>]*)>"
+        guard let regex = try? NSRegularExpression(pattern: openPattern, options: .caseInsensitive) else { return html }
+        var work = html
+        var guardCounter = 0
+        while guardCounter < 40 {
+            guardCounter += 1
+            let ns = work as NSString
+            guard let match = regex.firstMatch(in: work, range: NSRange(location: 0, length: ns.length)),
+                  match.numberOfRanges >= 2,
+                  let tagRange = Range(match.range(at: 1), in: work),
+                  let fullOpen = Range(match.range, in: work) else { break }
+            let tag = String(work[tagRange])
+            let openStart = fullOpen.lowerBound
+            let afterOpen = fullOpen.upperBound
+            if let inner = extractBalancedFromOpen(work, openEnd: afterOpen, tag: tag) {
+                let contentEnd = work.index(afterOpen, offsetBy: inner.count)
+                let closePattern = "</\(tag)>"
+                if let close = work.range(of: closePattern, options: .caseInsensitive, range: contentEnd..<work.endIndex) {
+                    work.removeSubrange(openStart..<close.upperBound)
+                } else {
+                    work.removeSubrange(openStart..<contentEnd)
+                }
+            } else {
+                work.removeSubrange(fullOpen)
+            }
+        }
+        return work
     }
 
     private static func absolutizeAttributes(_ html: String, attr: String, baseURL: URL) -> String {

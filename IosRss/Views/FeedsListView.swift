@@ -106,6 +106,15 @@ struct FeedsListView: View {
                                             Label(autoOn ? "关闭自动翻译" : "开启自动翻译",
                                                   systemImage: autoOn ? "translate" : "character.textbox")
                                         }
+                                        if store.fullContentURLPrefixEnabled {
+                                            let prefixOn = store.feeds.first(where: { $0.id == feed.id })?.useFullContentURLPrefix ?? false
+                                            Button {
+                                                store.setFeedUseFullContentURLPrefix(feed.id, enabled: !prefixOn)
+                                            } label: {
+                                                Label(prefixOn ? "关闭全文 URL 前缀" : "开启全文 URL 前缀",
+                                                      systemImage: prefixOn ? "link.badge.plus" : "link")
+                                            }
+                                        }
                                         Button { moveFeedTarget = feed } label: {
                                             Label("移动到分组…", systemImage: "folder")
                                         }
@@ -147,33 +156,32 @@ struct FeedsListView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 18) {
                         if store.feedSortMode == .manual {
-                            Button {
+                            Button(editMode == .active ? "完成排序" : "排序",
+                                   systemImage: editMode == .active ? "checkmark" : "arrow.up.arrow.down") {
                                 withAnimation { editMode = editMode == .active ? .inactive : .active }
-                            } label: {
-                                Image(systemName: editMode == .active ? "checkmark" : "arrow.up.arrow.down")
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundStyle(.primary)
                             }
-                            .accessibilityLabel(editMode == .active ? "完成排序" : "排序")
+                            .labelStyle(.iconOnly)
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(.primary)
                         }
-                        Button { showGroupManager = true } label: {
-                            Image(systemName: "folder.badge.gearshape")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(.primary)
+                        Button("管理分组", systemImage: "folder.badge.gearshape") {
+                            showGroupManager = true
                         }
-                        .accessibilityLabel("管理分组")
-                        Button { showAddFeed = true } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 18, weight: .medium))
-                                .foregroundStyle(.primary)
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.primary)
+                        Button("添加订阅", systemImage: "plus") {
+                            showAddFeed = true
                         }
-                        .accessibilityLabel("添加订阅")
-                        Button { showOPMLMenu = true } label: {
-                            Image(systemName: "square.and.arrow.down.on.square")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(.primary)
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.primary)
+                        Button("导入导出", systemImage: "square.and.arrow.down.on.square") {
+                            showOPMLMenu = true
                         }
-                        .accessibilityLabel("导入导出")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.primary)
                     }
                 }
             }
@@ -210,14 +218,20 @@ struct FeedsListView: View {
             .animation(.easeInOut(duration: 0.35), value: store.isLoading)
             .safeAreaInset(edge: .bottom) {
                 if let msg = store.errorMessage, !msg.isEmpty {
-                    Text(msg)
-                        .font(AppTypography.caption())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.red.opacity(0.9))
-                        .onTapGesture { store.errorMessage = nil }
+                    Button {
+                        store.errorMessage = nil
+                    } label: {
+                        Text(msg)
+                            .font(AppTypography.caption())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.red.opacity(0.9))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("关闭错误提示")
+                    .accessibilityHint(msg)
                 }
             }
 
@@ -552,16 +566,23 @@ struct GroupManagerView: View {
             List {
                 Section {
                     ForEach(store.groups.sorted(by: { $0.sortOrder < $1.sortOrder })) { group in
-                        HStack {
-                            Image(systemName: "folder").foregroundStyle(.secondary)
-                            Text(group.name)
-                                .font(.system(size: store.groupTitleFontSize, weight: .medium))
-                            Spacer()
-                            Text("\(store.feeds.filter { $0.groupID == group.id }.count)")
-                                .foregroundStyle(.secondary).monospacedDigit()
+                        Button {
+                            renameTarget = group
+                            renameText = group.name
+                        } label: {
+                            HStack {
+                                Image(systemName: "folder").foregroundStyle(.secondary)
+                                Text(group.name)
+                                    .font(.system(size: store.groupTitleFontSize, weight: .medium))
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                Text("\(store.feeds.filter { $0.groupID == group.id }.count)")
+                                    .foregroundStyle(.secondary).monospacedDigit()
+                            }
+                            .contentShape(Rectangle())
                         }
-                        .contentShape(Rectangle())
-                        .onTapGesture { renameTarget = group; renameText = group.name }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("重命名分组")
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) { store.deleteGroup(group.id) } label: {
                                 Label("删除", systemImage: "trash")
@@ -611,12 +632,14 @@ struct FeedRow: View {
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     if CommentFetcher.isSubstackLike(feed: live) {
-                        Text("Substack")
+                        Label("Substack", systemImage: "newspaper")
+                            .labelStyle(.titleAndIcon)
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(Color(.systemBackground))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.orange.opacity(0.9), in: Capsule())
+                            .accessibilityLabel("Substack 源")
                     }
                     if let last = live.lastFetched {
                         Text(Self.relativeString(last))
@@ -625,6 +648,11 @@ struct FeedRow: View {
                     }
                     if !live.fetchFullContentEnabled {
                         Text("全文关")
+                            .font(AppTypography.caption())
+                            .foregroundStyle(theme.muted)
+                    }
+                    if store.fullContentURLPrefixEnabled && live.useFullContentURLPrefix {
+                        Text("前缀")
                             .font(AppTypography.caption())
                             .foregroundStyle(theme.muted)
                     }
@@ -674,9 +702,16 @@ struct FeedIcon: View {
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image).resizable().scaledToFill().frame(width: size, height: size).clipShape(Circle())
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+                    .accessibilityLabel("\(feed.title) 图标")
             } else if loading {
-                ProgressView().frame(width: size, height: size)
+                ProgressView()
+                    .frame(width: size, height: size)
+                    .accessibilityLabel("正在加载图标")
             } else { letterFallback }
         }
         .task(id: "\(feed.id.uuidString)-\(live.faviconURL ?? "")-\(live.faviconFetchDone)") {
@@ -694,6 +729,7 @@ struct FeedIcon: View {
                 .font(.system(size: size * 0.45, weight: .bold))
                 .foregroundStyle(Color(.systemBackground))
         }
+        .accessibilityLabel("\(feed.title) 图标占位")
     }
     private func loadIcon() async {
         if image != nil { return }

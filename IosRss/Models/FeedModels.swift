@@ -63,12 +63,15 @@ struct RSSFeed: Identifiable, Codable, Hashable {
     var faviconFetchDone: Bool = false
     /// 列表进入时是否自动翻译非目标语言且未译条目
     var autoTranslateEnabled: Bool = true
+    /// 全文抓取时是否对该源使用全局 URL 前缀（需在设置中开启并配置前缀）
+    var useFullContentURLPrefix: Bool = false
     /// 同组内排序（越小越靠前）
     var sortOrder: Int = 0
 
     enum CodingKeys: String, CodingKey {
         case id, title, url, faviconURL, unreadCount, articles, lastFetched, groupID
-        case fetchFullContentEnabled, fetchCommentsEnabled, faviconFetchDone, autoTranslateEnabled, sortOrder
+        case fetchFullContentEnabled, fetchCommentsEnabled, faviconFetchDone, autoTranslateEnabled
+        case useFullContentURLPrefix, sortOrder
     }
 
     init(id: UUID = UUID(), title: String, url: String, faviconURL: String? = nil,
@@ -77,6 +80,7 @@ struct RSSFeed: Identifiable, Codable, Hashable {
          fetchCommentsEnabled: Bool = false,
          faviconFetchDone: Bool = false,
          autoTranslateEnabled: Bool = true,
+         useFullContentURLPrefix: Bool = false,
          sortOrder: Int = 0) {
         self.id = id
         self.title = title
@@ -90,6 +94,7 @@ struct RSSFeed: Identifiable, Codable, Hashable {
         self.fetchCommentsEnabled = fetchCommentsEnabled
         self.faviconFetchDone = faviconFetchDone
         self.autoTranslateEnabled = autoTranslateEnabled
+        self.useFullContentURLPrefix = useFullContentURLPrefix
         self.sortOrder = sortOrder
     }
 
@@ -107,6 +112,7 @@ struct RSSFeed: Identifiable, Codable, Hashable {
         fetchCommentsEnabled = try c.decodeIfPresent(Bool.self, forKey: .fetchCommentsEnabled) ?? false
         faviconFetchDone = try c.decodeIfPresent(Bool.self, forKey: .faviconFetchDone) ?? false
         autoTranslateEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoTranslateEnabled) ?? true
+        useFullContentURLPrefix = try c.decodeIfPresent(Bool.self, forKey: .useFullContentURLPrefix) ?? false
         sortOrder = try c.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0
     }
 

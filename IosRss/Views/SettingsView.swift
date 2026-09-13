@@ -212,6 +212,21 @@ struct SettingsView: View {
                         store.persistSettings()
                         store.pruneFullContentCache()
                     }
+                    Toggle(isOn: $store.fullContentURLPrefixEnabled) {
+                        Label("全文 URL 前缀", systemImage: "link.badge.plus")
+                    }
+                    .onChange(of: store.fullContentURLPrefixEnabled) { _, _ in
+                        store.persistSettings()
+                    }
+                    if store.fullContentURLPrefixEnabled {
+                        TextField("前缀，如 https://archive.is/", text: $store.fullContentURLPrefix)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                            .onChange(of: store.fullContentURLPrefix) { _, _ in
+                                store.persistSettings()
+                            }
+                    }
                     HStack {
                         Label("内容缓存", systemImage: "internaldrive")
                         Spacer()
@@ -226,7 +241,7 @@ struct SettingsView: View {
                 } header: {
                     Text("数据与清理")
                 } footer: {
-                    Text("订阅列表、已读标记与源图标始终保留。清除缓存只删全文、Feed 快照与正文图片。")
+                    Text("订阅列表、已读标记与源图标始终保留。清除缓存只删全文、Feed 快照与正文图片。开启「全文 URL 前缀」后，在订阅源菜单中勾选对应源，抓取全文时会在文章链接前加上所填前缀（例如 archive.is / 12ft.io）。")
                 }
                 .onAppear { cacheSizeText = store.cacheSizeDescription() }
 
@@ -276,7 +291,9 @@ struct SettingsView: View {
                     HStack {
                         Text("翻译引擎")
                         Spacer()
-                        Text(store.defaultTranslationEngine.rawValue).foregroundStyle(.secondary)
+                        Text(store.translationEngineChain.map(\.rawValue).joined(separator: " → "))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                 } header: {
                     Text("关于")

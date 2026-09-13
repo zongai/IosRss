@@ -206,7 +206,12 @@ struct ArticleReaderView: View {
             store.markAsRead(currentArticle)
         }
         .task(id: currentArticle.id) {
-            await autoTranslateBodyIfNeeded()
+            // 需要抓全文时：先全文，完成前不做自动翻译（避免译到半截摘要）
+            if shouldOfferFullContent {
+                await fetchFullContent(silent: true)
+            } else {
+                await autoTranslateBodyIfNeeded()
+            }
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -301,9 +306,7 @@ struct ArticleReaderView: View {
             } else if let t = currentArticle.translatedTitle, !t.isEmpty {
                 showTranslated = true
             }
-            if shouldOfferFullContent {
-                Task { await fetchFullContent(silent: true) }
-            }
+            // 全文自动抓取与自动翻译统一由 .task(id:) 串行处理，避免抓取过程中翻译摘要
         }
         .onChange(of: activeID) { _, _ in
             // 左滑/右滑换篇后回到文章开头
@@ -350,22 +353,30 @@ struct ArticleReaderView: View {
             showTranslated = false
             translatedContent = nil
             fullContentHint = silent ? nil : "已获取全文（约 \(HTMLUtils.stripTags(updated.content).count) 字）"
-            // 全文到位后：若源开启自动翻译且正文非目标语言，自动译新正文（与标题是否已译无关）
+            // 全文完成后再自动翻译（抓取过程中不翻译）
+            isFetchingFull = false
             await autoTranslateBodyIfNeeded()
             if !silent {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 if fullContentHint?.contains("已获取全文") == true { fullContentHint = nil }
             }
+            return
         } catch {
             if !silent { fullContentError = error.localizedDescription }
             fullContentHint = nil
         }
         isFetchingFull = false
+        // 抓取失败时仍可按摘要尝试自动翻译
+        if silent {
+            await autoTranslateBodyIfNeeded()
+        }
     }
 
     /// 源开启自动翻译时：打开阅读页自动译正文（已有译文则直接显示）。
     /// 不依赖标题是否已译：列表可能已译标题，正文仍需在打开时翻译。
+    /// 全文抓取进行中不翻译。
     private func autoTranslateBodyIfNeeded() async {
+        guard !isFetchingFull else { return }
         let feed = store.feeds.first(where: { $0.id == currentArticle.feedID })
         guard feed?.autoTranslateEnabled == true else { return }
         guard !isTranslating else { return }

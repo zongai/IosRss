@@ -285,6 +285,7 @@ struct AIChatDetailView: View {
                 } label: {
                     Label("选项", systemImage: "ellipsis.circle")
                 }
+                .labelStyle(.iconOnly)
             }
         }
         .alert("清空本对话消息？", isPresented: $showClearConfirm) {

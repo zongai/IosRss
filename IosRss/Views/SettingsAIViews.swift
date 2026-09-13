@@ -12,21 +12,27 @@ struct AISettingsView: View {
         Form {
             Section {
                 ForEach(store.aiProviders) { provider in
-                    VStack(alignment: .leading, spacing: 4) {
-                        AIProviderRow(provider: provider)
-                        if testingProviderID == provider.id {
-                            HStack(spacing: 6) {
-                                ProgressView().scaleEffect(0.75)
-                                Text("测试中…").font(.caption).foregroundStyle(.secondary)
+                    Button {
+                        editingProvider = provider
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            AIProviderRow(provider: provider)
+                            if testingProviderID == provider.id {
+                                HStack(spacing: 6) {
+                                    ProgressView().scaleEffect(0.75)
+                                    Text("测试中…").font(.caption).foregroundStyle(.secondary)
+                                }
+                            } else if let result = providerTestResults[provider.id] {
+                                Text(result)
+                                    .font(.caption)
+                                    .foregroundStyle(result.hasPrefix("失败") ? .red : .secondary)
                             }
-                        } else if let result = providerTestResults[provider.id] {
-                            Text(result)
-                                .font(.caption)
-                                .foregroundStyle(result.hasPrefix("失败") ? .red : .secondary)
                         }
-                    }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
-                        .onTapGesture { editingProvider = provider }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("编辑 Provider")
                         .swipeActions(edge: .leading) {
                             Button {
                                 Task { await testProvider(provider) }

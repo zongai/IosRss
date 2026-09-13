@@ -34,15 +34,48 @@ struct TranslationSettingsView: View {
             }
 
             Section {
-                Picker("默认翻译引擎", selection: $store.defaultTranslationEngine) {
-                    ForEach(TranslationEngine.allCases, id: \.self) { engine in
-                        Text(engine.rawValue).tag(engine)
+                ForEach(store.translationEngineChain, id: \.self) { engine in
+                    HStack(spacing: 10) {
+                        Image(systemName: "line.3.horizontal")
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(engine.rawValue)
+                            if !store.isTranslationEngineReady(engine) {
+                                Text("未配置 Key，将自动跳过")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        Spacer()
+                        if store.translationEngineChain.count > 1 {
+                            Button(role: .destructive) {
+                                store.toggleTranslationEngineInChain(engine)
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("从列表移除")
+                        }
                     }
                 }
-                .pickerStyle(.inline)
-                .labelsHidden()
+                .onMove { source, dest in
+                    store.moveTranslationEngine(from: source, to: dest)
+                }
+                Menu {
+                    ForEach(TranslationEngine.allCases, id: \.self) { engine in
+                        if !store.translationEngineChain.contains(engine) {
+                            Button(engine.rawValue) {
+                                store.toggleTranslationEngineInChain(engine)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("添加引擎", systemImage: "plus")
+                }
             } header: {
-                Text("选择默认翻译引擎")
+                Text("翻译引擎顺序")
+            } footer: {
+                Text("按列表从上到下使用。遇限流（如 429）自动切换下一个；未配置 Key 的引擎会跳过。可拖动排序。")
             }
 
             Section {
@@ -60,7 +93,7 @@ struct TranslationSettingsView: View {
 
             // Google
             Section {
-                engineHeader("Google 翻译", selected: store.defaultTranslationEngine == .google)
+                engineHeader("Google 翻译", selected: store.translationEngineChain.first == .google)
                 testButton(for: .google)
             } header: { Text("Google（免 Key）") }
             footer: { Text("使用免费接口 client=gtx，无需 API Key。并发固定为串行，降低 429 限流。") }
@@ -68,7 +101,7 @@ struct TranslationSettingsView: View {
 
             // Microsoft
             Section {
-                engineHeader("Microsoft 翻译", selected: store.defaultTranslationEngine == .microsoft)
+                engineHeader("Microsoft 翻译", selected: store.translationEngineChain.first == .microsoft)
                 ForEach(Array(microsoftKeys.enumerated()), id: \.offset) { idx, key in
                     HStack {
                         Text(maskSecret(key)).font(.system(.body, design: .monospaced))
@@ -102,7 +135,7 @@ struct TranslationSettingsView: View {
 
             // DeepL
             Section {
-                engineHeader("DeepL", selected: store.defaultTranslationEngine == .deepl)
+                engineHeader("DeepL", selected: store.translationEngineChain.first == .deepl)
                 ForEach(Array(deeplKeys.enumerated()), id: \.offset) { idx, key in
                     HStack {
                         Text(maskSecret(key)).font(.system(.body, design: .monospaced))
@@ -133,14 +166,14 @@ struct TranslationSettingsView: View {
 
             // MyMemory
             Section {
-                engineHeader("MyMemory（免 Key）", selected: store.defaultTranslationEngine == .mymemory)
+                engineHeader("MyMemory（免 Key）", selected: store.translationEngineChain.first == .mymemory)
                 testButton(for: .mymemory)
             } header: { Text("MyMemory") }
             footer: { Text("按 IP 有日配额；限流时请换引擎或稍后再试。") }
 
             // Lingva
             Section {
-                engineHeader("Lingva（免 Key）", selected: store.defaultTranslationEngine == .lingva)
+                engineHeader("Lingva（免 Key）", selected: store.translationEngineChain.first == .lingva)
                 TextField("自定义实例 URL（可选）", text: $store.lingvaCustomBase)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
@@ -152,7 +185,7 @@ struct TranslationSettingsView: View {
 
             // AI
             Section {
-                engineHeader("AI 翻译", selected: store.defaultTranslationEngine == .ai)
+                engineHeader("AI 翻译", selected: store.translationEngineChain.first == .ai)
                 Text("在「AI 设置」中配置 Provider 与 Key，可对单个 Provider 左滑测试。")
                     .font(.system(size: 13)).foregroundStyle(.secondary)
                 testButton(for: .ai)
@@ -170,8 +203,8 @@ struct TranslationSettingsView: View {
         .navigationTitle("翻译设置")
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear { store.persistSettings() }
-        .onChange(of: store.defaultTranslationEngine) { _, _ in store.persistSettings() }
         .onChange(of: store.translationConcurrency) { _, _ in store.persistSettings() }
+        .environment(\.editMode, .constant(.active))
         .onChange(of: store.microsoftTranslateRegion) { _, _ in store.persistSettings() }
         .onChange(of: store.lingvaCustomBase) { _, _ in store.persistSettings() }
         .onAppear {

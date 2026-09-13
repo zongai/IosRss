@@ -117,9 +117,11 @@ struct ArticleReaderView: View {
                         .padding(.horizontal, 20).padding(.top, 16)
                 }
                 if let notes = backgroundNotes ?? currentArticle.backgroundNotes,
-                   !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                   !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   !notes.contains("无明显背景"),
+                   notes.count > 8 {
                     VStack(alignment: .leading, spacing: 6) {
-                        Label("背景补全", systemImage: "person.and.background.dotted")
+                        Label("背景缺口 / 待核实", systemImage: "person.and.background.dotted")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.secondary)
                         Text(notes)

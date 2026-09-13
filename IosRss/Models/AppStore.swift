@@ -52,8 +52,10 @@ class AppStore {
     var fullContentURLPrefixEnabled: Bool = false
     /// 全文抓取 URL 前缀，例如 https://archive.is/ 或 https://12ft.io/
     var fullContentURLPrefix: String = ""
-    /// 全局摘要 Prompt 预设（源级可覆盖）
-    var globalSummaryPreset: PromptPreset = .standard
+    /// 全局摘要 Prompt 预设 ID（源级可覆盖）
+    var globalSummaryPresetID: String = SummaryPromptPreset.standardID
+    /// 摘要 Prompt 预设列表（内置 + 自定义）
+    var summaryPromptPresets: [SummaryPromptPreset] = SummaryPromptPreset.builtInDefaults
     /// 智能兴趣过滤
     var smartInterestFilterEnabled: Bool = false
     /// 低分文章自动标已读（否则仅沉底）
@@ -110,14 +112,14 @@ class AppStore {
 """
 
     static let defaultSummaryPrompt = """
-你是资讯编辑。用{{lang}}概括下面文章，帮助读者快速抓住要点。
+你是资讯编辑。用{{lang}}按 5W1H 压缩下文核心信息。
 
+覆盖（有则写，无则跳过）：谁、什么时间、做了什么、为什么、影响是什么。
 要求：
-- 输出 3～5 条要点，每条单独一行
-- 不要使用 1. 2. 3.、-、• 等序号或项目符号
-- 不要标题、不要「总结如下」等套话
-- 优先写事实与结论，少写修辞；有争议观点时注明是谁的看法
-- 总长控制在约 120～220 字（或等量信息）
+- 3～5 句，每句一行；不要序号、不要「摘要如下」
+- 只写原文能支撑的事实；观点须归因（如「作者认为」「据该报道」）
+- 时间尽量具体；不要用「最近」「据悉」代替原文已有日期
+- 总长约 120～220 字
 
 标题：{{title}}
 
@@ -1954,15 +1956,91 @@ class AppStore {
         return final
     }
 
+    /// 合并内置默认与已存预设（保证内置始终存在）
+    func ensureSummaryPromptPresets() {
+        var byID = Dictionary(uniqueKeysWithValues: summaryPromptPresets.map { ($0.id, $0) })
+        for built in SummaryPromptPreset.builtInDefaults {
+            if byID[built.id] == nil {
+                byID[built.id] = built
+            } else if var existing = byID[built.id] {
+                existing.isBuiltIn = true
+                if existing.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    existing.name = built.name
+                }
+                byID[built.id] = existing
+            }
+        }
+        // 内置在前，自定义在后
+        let builtIDs = SummaryPromptPreset.builtInDefaults.map(\.id)
+        var ordered: [SummaryPromptPreset] = []
+        for id in builtIDs {
+            if let p = byID[id] { ordered.append(p) }
+        }
+        for p in summaryPromptPresets where !builtIDs.contains(p.id) {
+            ordered.append(p)
+        }
+        summaryPromptPresets = ordered
+        if !summaryPromptPresets.contains(where: { $0.id == globalSummaryPresetID }) {
+            globalSummaryPresetID = SummaryPromptPreset.standardID
+        }
+    }
+
+    func preset(forID id: String) -> SummaryPromptPreset? {
+        if id == SummaryPromptPreset.globalID { return nil }
+        return summaryPromptPresets.first(where: { $0.id == id })
+    }
+
+    func displayName(forPresetID id: String) -> String {
+        if id == SummaryPromptPreset.globalID { return SummaryPromptPreset.globalName }
+        return preset(forID: id)?.name ?? id
+    }
+
     /// 解析源级 / 全局摘要 Prompt
     func resolvedSummaryPrompt(for article: Article) -> String {
-        let feedPreset = feeds.first(where: { $0.id == article.feedID })?.summaryPromptPreset ?? .global
-        let preset: PromptPreset = (feedPreset == .global) ? globalSummaryPreset : feedPreset
-        if preset == .standard || preset == .global {
-            let custom = summaryPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !custom.isEmpty { return custom }
+        ensureSummaryPromptPresets()
+        var presetID = feeds.first(where: { $0.id == article.feedID })?.summaryPromptPresetID
+            ?? SummaryPromptPreset.globalID
+        if presetID.isEmpty || presetID == SummaryPromptPreset.globalID {
+            presetID = globalSummaryPresetID
         }
-        return preset.template
+        if let preset = preset(forID: presetID) {
+            let t = preset.template.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { return t }
+        }
+        // 标准预设且用户改过全局 summaryPrompt 时回退
+        let custom = summaryPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !custom.isEmpty { return custom }
+        return SummaryPromptPreset.builtInDefaults.first(where: { $0.id == SummaryPromptPreset.standardID })?.template
+            ?? AppStore.defaultSummaryPrompt
+    }
+
+    func upsertSummaryPreset(_ preset: SummaryPromptPreset) {
+        ensureSummaryPromptPresets()
+        if let idx = summaryPromptPresets.firstIndex(where: { $0.id == preset.id }) {
+            summaryPromptPresets[idx] = preset
+        } else {
+            summaryPromptPresets.append(preset)
+        }
+        persistSettings()
+    }
+
+    func deleteSummaryPreset(id: String) {
+        ensureSummaryPromptPresets()
+        guard let p = summaryPromptPresets.first(where: { $0.id == id }), !p.isBuiltIn else { return }
+        summaryPromptPresets.removeAll { $0.id == id }
+        if globalSummaryPresetID == id {
+            globalSummaryPresetID = SummaryPromptPreset.standardID
+        }
+        for i in feeds.indices where feeds[i].summaryPromptPresetID == id {
+            feeds[i].summaryPromptPresetID = SummaryPromptPreset.globalID
+        }
+        persistSettings()
+        saveToStorage()
+    }
+
+    func resetSummaryPresetToDefault(id: String) {
+        guard let built = SummaryPromptPreset.builtInDefaults.first(where: { $0.id == id }) else { return }
+        upsertSummaryPreset(built)
     }
 
     func generateSummary(for article: Article) async throws -> (text: String, providerName: String) {
@@ -1970,7 +2048,7 @@ class AppStore {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
-        let content = String(HTMLUtils.stripTags(article.content).prefix(2500))
+        let content = String(HTMLUtils.stripTags(article.content.isEmpty ? article.summary : article.content).prefix(2500))
         let template = resolvedSummaryPrompt(for: article)
         var prompt = template
             .replacingOccurrences(of: "{{lang}}", with: aiOutputLanguage.promptLabel)
@@ -1987,32 +2065,121 @@ class AppStore {
             preferStrongModel: strong,
             buildPrompt: { prompt }
         )
-        return (Self.cleanSummaryText(raw), provider.name)
+        let base = Self.cleanSummaryText(raw)
+        // 第二～四步：缺口扫描 + 高优先级背景轻量嵌入摘要
+        if let enriched = try? await enrichSummaryWithBackground(
+            summary: base,
+            article: article,
+            content: content,
+            preferredID: provider.id
+        ), !enriched.isEmpty {
+            return (enriched, provider.name)
+        }
+        return (base, provider.name)
     }
 
-    /// 背景补全：人物 / 公司 / 事件各一句「是谁、为何重要」
-    func generateBackgroundNotes(for article: Article) async throws -> String {
-        let content = String(HTMLUtils.stripTags(article.content.isEmpty ? article.summary : article.content).prefix(1800))
+    /// 背景缺口扫描（专有名词 / 模糊时间 / 前情依赖）
+    func scanBackgroundGaps(summary: String, article: Article, content: String) async throws -> String {
+        let lang = aiOutputLanguage.promptLabel
         let prompt = """
-从下面文章中识别重要的人物、公司、组织或事件。对每一项用{{lang}}写一句「这是谁/是什么 + 为何在此文中重要」。
-要求：
-- 最多 4 条，每条一行
-- 不要序号、不要标题、不要重复原文整句
-- 若无明显实体，输出「（无明显背景实体）」
+请对以下新闻/博客摘要做背景补全检查（用\(lang)回答）：
+
+1. 找出首次出现但未说明身份的人名、机构名、专有名词
+2. 找出时间表述模糊、可能引起误解的地方（如「最近」「据悉」；若原文有具体日期应指出）
+3. 判断是否需要补充「前情提要」（是否为连续报道的后续）
+4. 对以上问题，给出简短（不超过一句话）的背景补充建议，并标注建议插入的原句位置
+5. 如果某项背景信息你不确定是否为最新/准确，标注「需核实」而不要直接编写
+
+约束：
+- 高优先级：直接影响理解主干事实的「这是谁 / 何时发生」
+- 低优先级可省略：读者可自行检索且不影响结论的细节
+- 博客主观观点须归因，勿写成客观事实
+- 涉及现任职位、公司现状等「当前状态」若无原文依据，一律「需核实」
+- 不要输出与摘要无关的长篇百科
 
 标题：\(article.title)
 
-正文：\(content)
+摘要：
+\(summary)
+
+原文摘录：
+\(String(content.prefix(1600)))
 """
-            .replacingOccurrences(of: "{{lang}}", with: aiOutputLanguage.promptLabel)
         let (raw, _) = try await callAIWithFailover(
             preferredID: defaultExplainProviderID ?? defaultSummaryProviderID,
-            probeText: content,
-            maxTokens: 400,
+            probeText: summary + content,
+            maxTokens: 500,
             preferStrongModel: true,
             buildPrompt: { prompt }
         )
         return Self.cleanSummaryText(raw)
+    }
+
+    /// 将高优先级背景以括号/同位语/从句嵌入摘要，而非另起背景段
+    func enrichSummaryWithBackground(
+        summary: String,
+        article: Article,
+        content: String,
+        preferredID: UUID?
+    ) async throws -> String {
+        let gaps = try await scanBackgroundGaps(summary: summary, article: article, content: content)
+        let lower = gaps.lowercased()
+        if gaps.contains("无明显") || gaps.contains("无需补充") || gaps.count < 12 {
+            return summary
+        }
+        let lang = aiOutputLanguage.promptLabel
+        let prompt = """
+你是新闻编辑。在保持原意与篇幅的前提下，把「背景补充建议」中的高优先级信息，用\(lang)以轻量方式嵌入摘要原句。
+
+嵌入方式（优先）：
+- 括号、同位语、定语从句（例：这家总部位于上海、2015年成立的电商平台宣布了…）
+- 不要写成单独的「背景：……」大段
+- 低优先级细节可省略
+- 标注了「需核实」的条目：不要编造写入摘要，可在文末单独用一行「待核实：…」列出（最多 2 条）
+- 博客观点保持归因；不要把作者立场写成客观事实
+- 连续报道若需要，用一句极简「前情：…」放在摘要最前
+- 输出完整修订后的摘要正文；不要解释你的修改过程
+
+原摘要：
+\(summary)
+
+背景补充建议：
+\(gaps)
+
+原文摘录（仅供核对，勿扩写原文没有的事实）：
+\(String(content.prefix(1200)))
+"""
+        let (raw, _) = try await callAIWithFailover(
+            preferredID: preferredID ?? defaultSummaryProviderID,
+            probeText: summary,
+            maxTokens: 700,
+            preferStrongModel: true,
+            buildPrompt: { prompt }
+        )
+        let cleaned = Self.cleanSummaryText(raw)
+        return cleaned.isEmpty ? summary : cleaned
+    }
+
+    /// 仅返回「需核实」与未嵌入的缺口提示（供阅读页次要展示）
+    func generateBackgroundNotes(for article: Article) async throws -> String {
+        let content = String(HTMLUtils.stripTags(article.content.isEmpty ? article.summary : article.content).prefix(1800))
+        let summary = article.aiSummary
+            ?? String(HTMLUtils.stripTags(article.summary).prefix(400))
+        let gaps = try await scanBackgroundGaps(
+            summary: summary.isEmpty ? article.title : summary,
+            article: article,
+            content: content
+        )
+        // 提取需核实与高优先级短提示
+        let lines = gaps.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let important = lines.filter {
+            $0.contains("需核实") || $0.contains("前情") || $0.contains("人名") || $0.contains("机构")
+        }
+        let picked = (important.isEmpty ? lines : important).prefix(5)
+        let text = picked.joined(separator: "\n")
+        return text.isEmpty ? gaps : text
     }
 
     static func migrateLegacyDefaultPrompts(translation: inout String, summary: inout String, explain: inout String) {
@@ -2184,10 +2351,10 @@ class AppStore {
         persistSettings()
     }
 
-    func setFeedSummaryPreset(_ feedID: UUID, preset: PromptPreset) {
+    func setFeedSummaryPreset(_ feedID: UUID, presetID: String) {
         guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
         var feed = feeds[idx]
-        feed.summaryPromptPreset = preset
+        feed.summaryPromptPresetID = presetID
         feeds[idx] = feed
         saveToStorage()
     }
@@ -2395,7 +2562,10 @@ class AppStore {
         UserDefaults.standard.set(fullContentCacheDays, forKey: "fullContentCacheDays")
         UserDefaults.standard.set(fullContentURLPrefixEnabled, forKey: "fullContentURLPrefixEnabled")
         UserDefaults.standard.set(fullContentURLPrefix, forKey: "fullContentURLPrefix")
-        UserDefaults.standard.set(globalSummaryPreset.rawValue, forKey: "globalSummaryPreset")
+        UserDefaults.standard.set(globalSummaryPresetID, forKey: "globalSummaryPresetID")
+        if let data = try? JSONEncoder().encode(summaryPromptPresets) {
+            UserDefaults.standard.set(data, forKey: "summaryPromptPresets")
+        }
         UserDefaults.standard.set(smartInterestFilterEnabled, forKey: "smartInterestFilterEnabled")
         UserDefaults.standard.set(autoMarkLowInterestRead, forKey: "autoMarkLowInterestRead")
         UserDefaults.standard.set(lowInterestThreshold, forKey: "lowInterestThreshold")
@@ -2494,9 +2664,18 @@ class AppStore {
         fullContentCacheDays = UserDefaults.standard.object(forKey: "fullContentCacheDays") as? Int ?? 30
         fullContentURLPrefixEnabled = UserDefaults.standard.object(forKey: "fullContentURLPrefixEnabled") as? Bool ?? false
         fullContentURLPrefix = UserDefaults.standard.string(forKey: "fullContentURLPrefix") ?? ""
-        if let raw = UserDefaults.standard.string(forKey: "globalSummaryPreset"),
-           let p = PromptPreset(rawValue: raw) {
-            globalSummaryPreset = p == .global ? .standard : p
+        if let data = UserDefaults.standard.data(forKey: "summaryPromptPresets"),
+           let list = try? JSONDecoder().decode([SummaryPromptPreset].self, from: data), !list.isEmpty {
+            summaryPromptPresets = list
+        }
+        ensureSummaryPromptPresets()
+        if let raw = UserDefaults.standard.string(forKey: "globalSummaryPresetID"), !raw.isEmpty {
+            globalSummaryPresetID = raw == SummaryPromptPreset.globalID ? SummaryPromptPreset.standardID : raw
+        } else if let legacy = UserDefaults.standard.string(forKey: "globalSummaryPreset"), !legacy.isEmpty {
+            globalSummaryPresetID = legacy == "global" ? SummaryPromptPreset.standardID : legacy
+        }
+        if !summaryPromptPresets.contains(where: { $0.id == globalSummaryPresetID }) {
+            globalSummaryPresetID = SummaryPromptPreset.standardID
         }
         smartInterestFilterEnabled = UserDefaults.standard.object(forKey: "smartInterestFilterEnabled") as? Bool ?? false
         autoMarkLowInterestRead = UserDefaults.standard.object(forKey: "autoMarkLowInterestRead") as? Bool ?? false

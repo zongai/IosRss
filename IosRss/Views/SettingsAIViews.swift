@@ -120,22 +120,20 @@ struct AISettingsView: View {
             }
 
             Section {
-                Picker("全局摘要模板", selection: $store.globalSummaryPreset) {
-                    ForEach(PromptPreset.assignable) { p in
-                        Text(p.displayName).tag(p)
+                Picker("全局摘要模板", selection: $store.globalSummaryPresetID) {
+                    ForEach(store.summaryPromptPresets) { p in
+                        Text(p.name).tag(p.id)
                     }
                 }
-                TextEditor(text: $store.summaryPrompt)
-                    .font(.system(size: 14, design: .monospaced))
-                    .frame(minHeight: 130)
-                Button("恢复默认摘要 Prompt") {
-                    store.summaryPrompt = AppStore.defaultSummaryPrompt
-                    store.persistSettings()
+                NavigationLink {
+                    SummaryPromptPresetsView()
+                } label: {
+                    Label("管理 Prompt 预设…", systemImage: "list.bullet.rectangle")
                 }
             } header: {
-                Text("摘要 Prompt")
+                Text("摘要 Prompt 预设")
             } footer: {
-                Text("全局模板：科技速览 / 学术精读 / 投资要点。选「标准摘要」时使用下方自定义 Prompt。各订阅源可在长按菜单单独指定模板。{{title}}/{{content}}/{{lang}} 可用。")
+                Text("按类型优化的模板（科技/学术/投资/新闻/评测等），可编辑或添加自定义类型。各订阅源可在长按菜单单独指定。占位符：{{title}} {{content}} {{lang}}。")
             }
 
             Section {
@@ -193,7 +191,7 @@ struct AISettingsView: View {
         .onChange(of: store.translationPrompt) { _, _ in store.persistSettings() }
         .onChange(of: store.summaryPrompt) { _, _ in store.persistSettings() }
         .onChange(of: store.explainPrompt) { _, _ in store.persistSettings() }
-        .onChange(of: store.globalSummaryPreset) { _, _ in store.persistSettings() }
+        .onChange(of: store.globalSummaryPresetID) { _, _ in store.persistSettings() }
         .onChange(of: store.smartInterestFilterEnabled) { _, _ in store.persistSettings() }
         .onChange(of: store.autoMarkLowInterestRead) { _, _ in store.persistSettings() }
         .onChange(of: store.sortByInterestScore) { _, _ in store.persistSettings() }
@@ -632,6 +630,174 @@ struct EditProviderView: View {
             store.aiProviders.append(updated)
         }
         store.persistSettings()
+        dismiss()
+    }
+}
+
+
+// MARK: - Prompt 预设管理
+
+struct SummaryPromptPresetsView: View {
+    @Environment(AppStore.self) private var store
+    @State private var editing: SummaryPromptPreset?
+    @State private var showAdd = false
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(store.summaryPromptPresets) { preset in
+                    Button {
+                        editing = preset
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(preset.name)
+                                    .foregroundStyle(.primary)
+                                Text(preset.isBuiltIn ? "内置" : "自定义")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if store.globalSummaryPresetID == preset.id {
+                                Text("全局")
+                                    .font(.caption2.weight(.semibold))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color.accentColor.opacity(0.15), in: Capsule())
+                            }
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        if !preset.isBuiltIn {
+                            Button(role: .destructive) {
+                                store.deleteSummaryPreset(id: preset.id)
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        }
+                        Button {
+                            store.globalSummaryPresetID = preset.id
+                            store.persistSettings()
+                        } label: {
+                            Label("设为全局", systemImage: "star")
+                        }
+                        .tint(.orange)
+                    }
+                }
+            } footer: {
+                Text("左滑可设为全局默认；自定义类型可删除。内置类型可改模板，也可恢复默认文案。")
+            }
+        }
+        .navigationTitle("Prompt 预设")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("添加", systemImage: "plus") { showAdd = true }
+            }
+        }
+        .sheet(item: $editing) { preset in
+            EditSummaryPromptPresetView(preset: preset)
+        }
+        .sheet(isPresented: $showAdd) {
+            EditSummaryPromptPresetView(preset: nil)
+        }
+        .onAppear { store.ensureSummaryPromptPresets() }
+    }
+}
+
+struct EditSummaryPromptPresetView: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let preset: SummaryPromptPreset?
+
+    @State private var name = ""
+    @State private var template = ""
+
+    private var isNew: Bool { preset == nil }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("名称", text: $name)
+                        .disabled(preset?.isBuiltIn == true)
+                } header: {
+                    Text("类型名称")
+                } footer: {
+                    if preset?.isBuiltIn == true {
+                        Text("内置类型名称固定，可修改下方模板。")
+                    }
+                }
+                Section {
+                    TextEditor(text: $template)
+                        .font(.system(size: 14, design: .monospaced))
+                        .frame(minHeight: 220)
+                } header: {
+                    Text("Prompt 模板")
+                } footer: {
+                    Text("可用 {{title}}、{{content}}、{{lang}}。")
+                }
+                if let p = preset, p.isBuiltIn {
+                    Section {
+                        Button("恢复该类型默认模板") {
+                            if let built = SummaryPromptPreset.builtInDefaults.first(where: { $0.id == p.id }) {
+                                template = built.template
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle(isNew ? "添加类型" : "编辑类型")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { save() }
+                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                  || template.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .onAppear {
+                if let p = preset {
+                    name = p.name
+                    template = p.template
+                } else {
+                    name = ""
+                    template = """
+用{{lang}}总结以下内容：
+
+标题：{{title}}
+
+内容：{{content}}
+"""
+                }
+            }
+        }
+    }
+
+    private func save() {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTemplate = template.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, !trimmedTemplate.isEmpty else { return }
+        if let p = preset {
+            var updated = p
+            if !p.isBuiltIn { updated.name = trimmedName }
+            updated.template = trimmedTemplate
+            store.upsertSummaryPreset(updated)
+        } else {
+            let custom = SummaryPromptPreset(
+                id: UUID().uuidString,
+                name: trimmedName,
+                isBuiltIn: false,
+                template: trimmedTemplate
+            )
+            store.upsertSummaryPreset(custom)
+        }
         dismiss()
     }
 }

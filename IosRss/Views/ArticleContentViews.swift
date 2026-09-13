@@ -19,7 +19,7 @@ struct ArticleContentView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: prefersChineseTypography ? 18 : 14) {
+        VStack(alignment: .leading, spacing: prefersChineseTypography ? 12 : 10) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 switch block {
                 case .paragraph(let attributed, let style):
@@ -38,14 +38,12 @@ struct ArticleContentView: View {
                         AsyncImage(url: url) { phase in
                             switch phase {
                             case .empty:
-                                RoundedRectangle(cornerRadius: 8).fill(Color(.secondarySystemBackground))
-                                    .frame(height: 180).overlay(ProgressView())
+                                // 避免原文大量图片加载时出现成片 180pt 灰块留白
+                                Color.clear.frame(height: 1)
                             case .success(let image):
                                 image.resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 8))
                             case .failure:
-                                RoundedRectangle(cornerRadius: 8).fill(Color(.secondarySystemBackground))
-                                    .frame(height: 80)
-                                    .overlay(Image(systemName: "photo").foregroundStyle(Color.secondary))
+                                EmptyView()
                             @unknown default: EmptyView()
                             }
                         }
@@ -111,8 +109,11 @@ enum ContentBlockParser {
     static func parse(_ html: String, prefersChineseTypography: Bool = false) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var working = HTMLUtils.decodePercentEncodings(HTMLUtils.decodeEntities(html))
+        working = normalizeHTMLWhitespace(working)
         working = working.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
-        working = working.replacingOccurrences(of: #"</p>|</div>|</li>|</h[1-6]>"#, with: "\n\n", options: .regularExpression)
+        // 仅块级闭合换段，避免每个嵌套 </div> 都制造空段
+        working = working.replacingOccurrences(of: #"</p>|</li>|</h[1-6]>|</blockquote>|</section>|</article>"#, with: "\n\n", options: .regularExpression)
+        working = working.replacingOccurrences(of: #"</div>"#, with: "\n", options: .regularExpression)
 
         let audioPattern = #"<a[^>]+href=[\"']([^\"']+\.(?:mp3|m4a|wav|aac)(?:\?[^\"']*)?)[\"'][^>]*>.*?</a>|<(?:audio|source)[^>]+src=[\"']([^\"']+)[\"'][^>]*>"#
         if let aregex = try? NSRegularExpression(pattern: audioPattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) {
@@ -213,19 +214,27 @@ enum ContentBlockParser {
         }
         working = HTMLUtils.decodeEntities(working)
 
-        let parts = working.components(separatedBy: "\n")
+        let parts = working.components(separatedBy: CharacterSet.newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map { $0.replacingOccurrences(of: "\u{00A0}", with: " ").trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
+        var lastImageURL: String?
         for part in parts {
             if part.hasPrefix("__IMG_"), part.hasSuffix("__") {
                 let idxStr = String(part.dropFirst(6).dropLast(2))
                 if let idx = Int(idxStr), idx >= 0, idx < imageURLs.count {
-                    blocks.append(.image(imageURLs[idx]))
+                    let url = imageURLs[idx]
+                    // 连续相同图片只保留一张，减少原文大图重复占位
+                    if lastImageURL == url { continue }
+                    lastImageURL = url
+                    blocks.append(.image(url))
                 }
             } else if isJunkParagraph(part) {
+                lastImageURL = nil
                 continue
             } else {
+                lastImageURL = nil
                 let style = ReaderTypography.resolve(text: part, preferChinese: prefersChineseTypography)
                 blocks.append(.paragraph(
                     makeAttributedParagraph(part, linkHrefs: linkHrefs, linkTexts: linkTexts),
@@ -243,6 +252,42 @@ enum ContentBlockParser {
         return blocks
     }
 
+    /// 去掉空标签、注释、多余空白，减轻原文大片留白
+    private static func normalizeHTMLWhitespace(_ html: String) -> String {
+        var work = html
+        work = work.replacingOccurrences(of: #"<!--[\s\S]*?-->"#, with: "", options: .regularExpression)
+        work = work.replacingOccurrences(of: "\u{200B}", with: "")
+        work = work.replacingOccurrences(of: "\u{200C}", with: "")
+        work = work.replacingOccurrences(of: "\u{200D}", with: "")
+        work = work.replacingOccurrences(of: "\u{FEFF}", with: "")
+        work = work.replacingOccurrences(
+            of: #"<p[^>]*>\s*(?:&nbsp;|&#160;|\u{00A0}|\s)*\s*</p>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        work = work.replacingOccurrences(
+            of: #"<div[^>]*>\s*(?:&nbsp;|&#160;|\u{00A0}|\s)*\s*</div>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        work = work.replacingOccurrences(
+            of: #"<span[^>]*>\s*(?:&nbsp;|&#160;|\u{00A0}|\s)*\s*</span>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        work = work.replacingOccurrences(
+            of: #"(?:<br\s*/?\s*>\s*){2,}"#,
+            with: "<br>",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        work = work.replacingOccurrences(
+            of: #"</?(?:font|center|o:p)[^>]*>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        return work
+    }
+
     /// 追踪图、推荐缩略图等，渲染只会留下空白占位
     private static func isIgnorableImageURL(_ url: String) -> Bool {
         let u = url.lowercased()
@@ -258,7 +303,11 @@ enum ContentBlockParser {
     /// 广告脚本残留、订阅页脚碎片等，不应单独成段
     private static func isJunkParagraph(_ text: String) -> Bool {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\u{00A0}", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { return true }
+        // 纯符号/分隔线
+        if t.count <= 3, t.allSatisfy({ !$0.isLetter && !$0.isNumber }) { return true }
         if t.count <= 2, t.allSatisfy({ $0.isNumber || $0 == "." || $0 == "·" }) { return true }
         let lower = t.lowercased()
         if lower.contains("adsbygoogle") { return true }

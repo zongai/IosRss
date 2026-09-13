@@ -65,15 +65,15 @@ struct RSSFeed: Identifiable, Codable, Hashable {
     var autoTranslateEnabled: Bool = true
     /// 全文抓取时是否对该源使用全局 URL 前缀（需在设置中开启并配置前缀）
     var useFullContentURLPrefix: Bool = false
-    /// 该源摘要 Prompt 预设；nil / .global 表示跟随全局
-    var summaryPromptPreset: PromptPreset = .global
+    /// 该源摘要 Prompt 预设 ID；`"global"` 表示跟随全局
+    var summaryPromptPresetID: String = SummaryPromptPreset.globalID
     /// 同组内排序（越小越靠前）
     var sortOrder: Int = 0
 
     enum CodingKeys: String, CodingKey {
         case id, title, url, faviconURL, unreadCount, articles, lastFetched, groupID
         case fetchFullContentEnabled, fetchCommentsEnabled, faviconFetchDone, autoTranslateEnabled
-        case useFullContentURLPrefix, summaryPromptPreset, sortOrder
+        case useFullContentURLPrefix, summaryPromptPresetID, summaryPromptPreset, sortOrder
     }
 
     init(id: UUID = UUID(), title: String, url: String, faviconURL: String? = nil,
@@ -83,7 +83,7 @@ struct RSSFeed: Identifiable, Codable, Hashable {
          faviconFetchDone: Bool = false,
          autoTranslateEnabled: Bool = true,
          useFullContentURLPrefix: Bool = false,
-         summaryPromptPreset: PromptPreset = .global,
+         summaryPromptPresetID: String = SummaryPromptPreset.globalID,
          sortOrder: Int = 0) {
         self.id = id
         self.title = title
@@ -98,7 +98,7 @@ struct RSSFeed: Identifiable, Codable, Hashable {
         self.faviconFetchDone = faviconFetchDone
         self.autoTranslateEnabled = autoTranslateEnabled
         self.useFullContentURLPrefix = useFullContentURLPrefix
-        self.summaryPromptPreset = summaryPromptPreset
+        self.summaryPromptPresetID = summaryPromptPresetID
         self.sortOrder = sortOrder
     }
 
@@ -117,11 +117,12 @@ struct RSSFeed: Identifiable, Codable, Hashable {
         faviconFetchDone = try c.decodeIfPresent(Bool.self, forKey: .faviconFetchDone) ?? false
         autoTranslateEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoTranslateEnabled) ?? true
         useFullContentURLPrefix = try c.decodeIfPresent(Bool.self, forKey: .useFullContentURLPrefix) ?? false
-        if let raw = try c.decodeIfPresent(String.self, forKey: .summaryPromptPreset),
-           let p = PromptPreset(rawValue: raw) {
-            summaryPromptPreset = p
+        if let id = try c.decodeIfPresent(String.self, forKey: .summaryPromptPresetID), !id.isEmpty {
+            summaryPromptPresetID = id
+        } else if let legacy = try c.decodeIfPresent(String.self, forKey: .summaryPromptPreset), !legacy.isEmpty {
+            summaryPromptPresetID = legacy
         } else {
-            summaryPromptPreset = .global
+            summaryPromptPresetID = SummaryPromptPreset.globalID
         }
         sortOrder = try c.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0
     }
@@ -366,75 +367,138 @@ enum TranslationEngine: String, CaseIterable, Codable {
     }
 }
 
-// MARK: - Prompt 预设
+// MARK: - Prompt 预设（内置 + 可自定义）
 
-enum PromptPreset: String, Codable, CaseIterable, Identifiable {
-    case global
-    case standard
-    case techBrief
-    case academic
-    case investment
+struct SummaryPromptPreset: Identifiable, Codable, Hashable {
+    /// 稳定 ID：内置为 fixed 字符串，自定义为 UUID 字符串
+    var id: String
+    var name: String
+    var template: String
+    /// 内置不可删除；模板可改，恢复默认时写回 builtInDefaults
+    var isBuiltIn: Bool
 
-    var id: String { rawValue }
+    static let globalID = "global"
+    static let standardID = "standard"
+    static let techBriefID = "techBrief"
+    static let academicID = "academic"
+    static let investmentID = "investment"
+    static let newsBriefID = "newsBrief"
+    static let productReviewID = "productReview"
 
-    var displayName: String {
-        switch self {
-        case .global: return "跟随全局"
-        case .standard: return "标准摘要"
-        case .techBrief: return "科技速览"
-        case .academic: return "学术精读"
-        case .investment: return "投资要点"
-        }
+    static let globalName = "跟随全局"
+
+    static var builtInDefaults: [SummaryPromptPreset] {
+        [
+            SummaryPromptPreset(
+                id: standardID,
+                name: "标准摘要",
+                isBuiltIn: true,
+                template: """
+你是资深编辑。用{{lang}}按 5W1H 压缩核心信息（谁、何时、做了什么、为何、影响）。
+
+要求：
+- 3～5 句，每句一行；不要序号、不要「摘要如下」
+- 只写原文可支撑的事实；观点须归因
+- 时间尽量具体；专有名词可保留原文
+
+标题：{{title}}
+
+内容：{{content}}
+"""
+            ),
+            SummaryPromptPreset(
+                id: techBriefID,
+                name: "科技速览",
+                isBuiltIn: true,
+                template: """
+你是科技媒体编辑。用{{lang}}写「科技速览」。
+
+结构（每条一行，无序号）：
+- 发生了什么（产品/技术/公司）
+- 相对现状的变化点
+- 谁推动、影响谁
+- 若有时间表/参数，单独点出
+
+禁止复述标题；专有名词可中英并存。
+
+标题：{{title}}
+
+内容：{{content}}
+"""
+            ),
+            SummaryPromptPreset(
+                id: academicID,
+                name: "学术精读",
+                isBuiltIn: true,
+                template: """
+你是学术助理。用{{lang}}做精读摘要，覆盖：
+问题与动机 → 方法/数据 → 主要发现 → 局限或待验证点。
+每部分 1～2 句，分行输出，无序号标题。术语准确，必要处保留英文。
+
+标题：{{title}}
+
+内容：{{content}}
+"""
+            ),
+            SummaryPromptPreset(
+                id: investmentID,
+                name: "投资要点",
+                isBuiltIn: true,
+                template: """
+你是买方分析助理。用{{lang}}提炼投资相关信息（非投资建议）：
+- 标的/公司与事件类型（业绩、融资、产品、监管、人事等）
+- 对收入、成本、竞争或估值的可能含义
+- 关键数字与时间点
+- 主要风险与不确定因素
+每条一行，3～6 条，无序号，不写「建议买入/卖出」。
+
+标题：{{title}}
+
+内容：{{content}}
+"""
+            ),
+            SummaryPromptPreset(
+                id: newsBriefID,
+                name: "新闻简报",
+                isBuiltIn: true,
+                template: """
+你是通讯社编辑。用{{lang}}写客观新闻简报（5W1H）：
+- 导语：何人、何时、何地、做了什么
+- 原因与直接影响（原文有则写）
+- 各方立场须归因，勿写成定论
+- 连续报道可在首句用极简「前情」
+共 3～5 句，每句一行；不用「最近」「据悉」代替原文日期。
+
+标题：{{title}}
+
+内容：{{content}}
+"""
+            ),
+            SummaryPromptPreset(
+                id: productReviewID,
+                name: "产品评测",
+                isBuiltIn: true,
+                template: """
+你是数码/产品编辑。用{{lang}}整理评测要点：
+- 产品定位与核心卖点
+- 关键规格/体验结论（性能、续航、影像、系统等有则写）
+- 优点与槽点
+- 适合谁、不适合谁
+每条一行，无序号，不写购买链接话术。
+
+标题：{{title}}
+
+内容：{{content}}
+"""
+            )
+        ]
     }
 
-    /// 可分配给源的预设（不含「跟随全局」）
-    static var assignable: [PromptPreset] { [.standard, .techBrief, .academic, .investment] }
-
-    var template: String {
-        switch self {
-        case .global, .standard:
-            return """
-请用3-5句话概括以下文章的核心内容，用{{lang}}回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：
-
-标题：{{title}}
-
-内容：{{content}}
-"""
-        case .techBrief:
-            return """
-用{{lang}}写科技速览（3～5 条要点）：
-- 只输出要点，每条一行，不加序号标题
-- 突出产品/技术变化、谁做的、影响谁
-- 专有名词可保留英文
-
-标题：{{title}}
-
-内容：{{content}}
-"""
-        case .academic:
-            return """
-用{{lang}}做学术精读摘要：
-- 研究问题 / 方法 / 主要发现 / 局限各用一两句
-- 只输出正文，不要「摘要如下」之类套话
-- 术语准确，可保留必要英文
-
-标题：{{title}}
-
-内容：{{content}}
-"""
-        case .investment:
-            return """
-用{{lang}}提炼投资要点：
-- 公司/标的、事件性质（业绩/融资/产品/监管）
-- 对收入、竞争或估值的可能影响
-- 风险与不确定点
-- 3～5 句，每句一行，无序号
-
-标题：{{title}}
-
-内容：{{content}}
-"""
-        }
+    init(id: String, name: String, isBuiltIn: Bool, template: String) {
+        self.id = id
+        self.name = name
+        self.isBuiltIn = isBuiltIn
+        self.template = template
     }
 }
 

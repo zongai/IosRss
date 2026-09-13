@@ -116,15 +116,25 @@ struct FeedsListView: View {
                                             }
                                         }
                                         Menu {
-                                            ForEach(PromptPreset.allCases) { preset in
+                                            let currentID = store.feeds.first(where: { $0.id == feed.id })?.summaryPromptPresetID
+                                                ?? SummaryPromptPreset.globalID
+                                            Button {
+                                                store.setFeedSummaryPreset(feed.id, presetID: SummaryPromptPreset.globalID)
+                                            } label: {
+                                                if currentID == SummaryPromptPreset.globalID {
+                                                    Label(SummaryPromptPreset.globalName, systemImage: "checkmark")
+                                                } else {
+                                                    Text(SummaryPromptPreset.globalName)
+                                                }
+                                            }
+                                            ForEach(store.summaryPromptPresets) { preset in
                                                 Button {
-                                                    store.setFeedSummaryPreset(feed.id, preset: preset)
+                                                    store.setFeedSummaryPreset(feed.id, presetID: preset.id)
                                                 } label: {
-                                                    let current = store.feeds.first(where: { $0.id == feed.id })?.summaryPromptPreset ?? .global
-                                                    if current == preset {
-                                                        Label(preset.displayName, systemImage: "checkmark")
+                                                    if currentID == preset.id {
+                                                        Label(preset.name, systemImage: "checkmark")
                                                     } else {
-                                                        Text(preset.displayName)
+                                                        Text(preset.name)
                                                     }
                                                 }
                                             }

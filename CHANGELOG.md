@@ -12,6 +12,16 @@
 
 （自上次成功构建以来的改动，将在下次成功构建时归入正式条目。）
 
+### Fixed
+- 翻译时整表占位跳过，保留表格样式；增强懒加载/srcset 图片解析与 VC 特色图
+
+---
+
+## [v1.3-62] — 2026-09-13
+
+成功构建：`v1.3-62-build-20260913044842`  
+相对：`v1.3-61-build-20260913042456`
+
 ### Added
 - 阅读页 HTML 表格渲染（`ContentBlock.table` + `ArticleTableView`）
 - Visual Capitalist 等图表站：WordPress REST 按 slug 取全文；增强图/表抽取

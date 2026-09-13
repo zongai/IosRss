@@ -121,31 +121,8 @@ struct ArticleReaderView: View {
                 }
                 .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 16)
 
-                if !currentArticle.highlights.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("高亮 \(currentArticle.highlights.count)", systemImage: "highlighter")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        ForEach(currentArticle.highlights.prefix(8)) { h in
-                            HStack(alignment: .top) {
-                                Text(h.text)
-                                    .font(.system(size: max(13, store.fontSize - 2)))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                Button {
-                                    store.removeHighlight(articleID: currentArticle.id, highlightID: h.id)
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(8)
-                            .background(Color.yellow.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 8)
-                }
+                readerHighlightsSection()
+
 
                 Divider()
 
@@ -182,44 +159,7 @@ struct ArticleReaderView: View {
                     Text(err).font(.system(size: 13)).foregroundStyle(.red)
                         .padding(.horizontal, 20).padding(.top, 8)
                 }
-                if let err = fullContentError {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("全文抓取失败 · 当前仅摘要", systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.orange)
-                        Text(err)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                        HStack(spacing: 12) {
-                            Button {
-                                Task { await fetchFullContent() }
-                            } label: {
-                                Label("重试", systemImage: "arrow.clockwise")
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(isFetchingFull || !fullContentAllowed)
-                            if store.fullContentURLPrefixEnabled {
-                                Button {
-                                    Task {
-                                        // 临时用前缀再试：若源未开前缀则先打开再抓
-                                        if let fid = store.feeds.first(where: { $0.id == currentArticle.feedID })?.id {
-                                            store.setFeedUseFullContentURLPrefix(fid, enabled: true)
-                                        }
-                                        await fetchFullContent()
-                                    }
-                                } label: {
-                                    Label("用前缀重试", systemImage: "link")
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(isFetchingFull)
-                            }
-                        }
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-                    .padding(.horizontal, 20).padding(.top, 8)
-                }
+                readerFullContentErrorBanner()
                 if let progress = translationProgress {
                     Text(progress).font(.system(size: 13)).foregroundStyle(Color.secondary)
                         .padding(.horizontal, 20).padding(.top, 8)
@@ -432,6 +372,77 @@ struct ArticleReaderView: View {
 
     private var shouldOfferFullContent: Bool {
         fullContentAllowed && currentArticle.needsFullContentFetch
+    }
+
+
+    @ViewBuilder
+    private func readerHighlightsSection() -> some View {
+        if !currentArticle.highlights.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("高亮 \(currentArticle.highlights.count)", systemImage: "highlighter")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(currentArticle.highlights.prefix(8)) { h in
+                    HStack(alignment: .top) {
+                        Text(h.text)
+                            .font(.system(size: max(13, store.fontSize - 2)))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button {
+                            store.removeHighlight(articleID: currentArticle.id, highlightID: h.id)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(8)
+                    .background(Color.yellow.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 8)
+        }
+    }
+
+    @ViewBuilder
+    private func readerFullContentErrorBanner() -> some View {
+        if let err = fullContentError {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("全文抓取失败 · 当前仅摘要", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.orange)
+                Text(err)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 12) {
+                    Button {
+                        Task { await fetchFullContent() }
+                    } label: {
+                        Label("重试", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isFetchingFull || !fullContentAllowed)
+                    if store.fullContentURLPrefixEnabled {
+                        Button {
+                            Task {
+                                if let fid = store.feeds.first(where: { $0.id == currentArticle.feedID })?.id {
+                                    store.setFeedUseFullContentURLPrefix(fid, enabled: true)
+                                }
+                                await fetchFullContent()
+                            }
+                        } label: {
+                            Label("用前缀重试", systemImage: "link")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isFetchingFull)
+                    }
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 20).padding(.top, 8)
+        }
     }
 
     private func fetchFullContent(silent: Bool = false) async {

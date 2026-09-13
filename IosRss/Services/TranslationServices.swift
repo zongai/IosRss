@@ -973,13 +973,13 @@ enum SystemTranslate {
     private static func translateUsingSystem(text: String, target: AppLanguage) async throws -> String {
         #if canImport(Translation)
         let targetLang = Locale.Language(identifier: target.translationLanguageIdentifier)
-        // 源语言自动检测
-        let sourceLang: Locale.Language? = nil
+        // TranslationSession 需要已安装的源语言（非 optional）；按文本粗判
+        let sourceLang = Locale.Language(identifier: guessSourceLanguageIdentifier(for: text, target: target))
 
         let availability = LanguageAvailability()
         let status = await availability.status(from: sourceLang, to: targetLang)
         if status == .unsupported {
-            throw TranslationError.apiError("系统翻译不支持目标语言：\(target.displayName)")
+            throw TranslationError.apiError("系统翻译不支持该语言对：→ \(target.displayName)")
         }
 
         let session = TranslationSession(installedSource: sourceLang, target: targetLang)
@@ -991,7 +991,8 @@ enum SystemTranslate {
         let chunks = chunkText(text, maxChars: 1200)
         if chunks.count == 1 {
             let response = try await session.translate(chunks[0])
-            let out = response.targetText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let out = response.targetText
+                .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             guard !out.isEmpty else { throw TranslationError.apiError("系统翻译返回空译文") }
             return out
         }
@@ -1000,7 +1001,8 @@ enum SystemTranslate {
         parts.reserveCapacity(chunks.count)
         for chunk in chunks {
             let response = try await session.translate(chunk)
-            let out = response.targetText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let out = response.targetText
+                .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             if !out.isEmpty { parts.append(out) }
         }
         let joined = parts.joined(separator: "\n")
@@ -1009,6 +1011,32 @@ enum SystemTranslate {
         #else
         throw TranslationError.apiError("当前 SDK 不支持 Translation 框架")
         #endif
+    }
+
+    /// 粗略判断源语言 BCP-47（系统 Translation 要求明确源语言）
+    private static func guessSourceLanguageIdentifier(for text: String, target: AppLanguage) -> String {
+        let sample = String(text.prefix(800))
+        var cjk = 0, kana = 0, hangul = 0, latin = 0
+        for ch in sample.unicodeScalars {
+            let v = ch.value
+            if (0x4E00...0x9FFF).contains(v) || (0x3400...0x4DBF).contains(v) { cjk += 1 }
+            else if (0x3040...0x30FF).contains(v) { kana += 1 }
+            else if (0xAC00...0xD7AF).contains(v) { hangul += 1 }
+            else if (0x0041...0x007A).contains(v) || (0x00C0...0x024F).contains(v) { latin += 1 }
+        }
+        let total = max(1, cjk + kana + hangul + latin)
+        // 目标已是该语言时换一个常见对照源，避免同源同目标
+        func avoidTarget(_ id: String) -> String {
+            id == target.translationLanguageIdentifier ? "en" : id
+        }
+        if kana * 3 > cjk { return avoidTarget("ja") }
+        if hangul > total / 5 { return avoidTarget("ko") }
+        if cjk > total / 5 {
+            // 简繁粗分：繁体常用字比例低时仍用 zh-Hans 作为源包更常见
+            return avoidTarget("zh-Hans")
+        }
+        if latin > 0 { return avoidTarget("en") }
+        return avoidTarget("en")
     }
 
     private static func chunkText(_ text: String, maxChars: Int) -> [String] {

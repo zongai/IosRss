@@ -15,6 +15,9 @@
 ### Added
 - 系统翻译（Apple Translation）：默认优先本地；支持重新翻译 / 更高质量重译（跳过系统引擎）
 
+### Fixed
+- 系统翻译编译：`TranslationSession` 源语言非 Optional；目标文本去空白类型推断
+
 ### Removed
 - 背景补全：阅读页展示、摘要后自动生成、摘要嵌入与相关 AIService/AppStore API
 

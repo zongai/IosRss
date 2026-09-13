@@ -945,3 +945,108 @@ enum HTMLUtils {
         return result
     }
 }
+
+
+// MARK: - 系统翻译（Apple Translation，iOS 18+，本地/设备端）
+
+#if canImport(Translation)
+import Translation
+#endif
+
+/// 调用系统翻译框架；语言包未下载时会尝试 `prepareTranslation`
+enum SystemTranslate {
+    static var isAvailable: Bool {
+        if #available(iOS 18.0, *) { return true }
+        return false
+    }
+
+    static func translate(text: String, target: AppLanguage) async throws -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        guard #available(iOS 18.0, *) else {
+            throw TranslationError.apiError("系统翻译需要 iOS 18 或更高版本")
+        }
+        return try await translateUsingSystem(text: trimmed, target: target)
+    }
+
+    @available(iOS 18.0, *)
+    private static func translateUsingSystem(text: String, target: AppLanguage) async throws -> String {
+        #if canImport(Translation)
+        let targetLang = Locale.Language(identifier: target.translationLanguageIdentifier)
+        // 源语言自动检测
+        let sourceLang: Locale.Language? = nil
+
+        let availability = LanguageAvailability()
+        let status = await availability.status(from: sourceLang, to: targetLang)
+        if status == .unsupported {
+            throw TranslationError.apiError("系统翻译不支持目标语言：\(target.displayName)")
+        }
+
+        let session = TranslationSession(installedSource: sourceLang, target: targetLang)
+        if status == .supported {
+            // 语言包未安装：触发下载（需网络）
+            try await session.prepareTranslation()
+        }
+
+        let chunks = chunkText(text, maxChars: 1200)
+        if chunks.count == 1 {
+            let response = try await session.translate(chunks[0])
+            let out = response.targetText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !out.isEmpty else { throw TranslationError.apiError("系统翻译返回空译文") }
+            return out
+        }
+
+        var parts: [String] = []
+        parts.reserveCapacity(chunks.count)
+        for chunk in chunks {
+            let response = try await session.translate(chunk)
+            let out = response.targetText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !out.isEmpty { parts.append(out) }
+        }
+        let joined = parts.joined(separator: "\n")
+        guard !joined.isEmpty else { throw TranslationError.apiError("系统翻译返回空译文") }
+        return joined
+        #else
+        throw TranslationError.apiError("当前 SDK 不支持 Translation 框架")
+        #endif
+    }
+
+    private static func chunkText(_ text: String, maxChars: Int) -> [String] {
+        guard text.count > maxChars else { return [text] }
+        var result: [String] = []
+        var current = ""
+        let paragraphs = text.components(separatedBy: "\n")
+        for para in paragraphs {
+            if current.isEmpty {
+                if para.count <= maxChars {
+                    current = para
+                } else {
+                    var rest = para
+                    while rest.count > maxChars {
+                        let idx = rest.index(rest.startIndex, offsetBy: maxChars)
+                        result.append(String(rest[..<idx]))
+                        rest = String(rest[idx...])
+                    }
+                    current = rest
+                }
+            } else if current.count + para.count + 1 <= maxChars {
+                current += "\n" + para
+            } else {
+                result.append(current)
+                if para.count <= maxChars {
+                    current = para
+                } else {
+                    var rest = para
+                    while rest.count > maxChars {
+                        let idx = rest.index(rest.startIndex, offsetBy: maxChars)
+                        result.append(String(rest[..<idx]))
+                        rest = String(rest[idx...])
+                    }
+                    current = rest
+                }
+            }
+        }
+        if !current.isEmpty { result.append(current) }
+        return result.isEmpty ? [text] : result
+    }
+}

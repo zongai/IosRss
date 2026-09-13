@@ -293,19 +293,37 @@ struct ArticleReaderView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 if showTranslationButton {
-                    Button { Task { await toggleTranslation() } } label: {
-                        if isTranslating {
-                            ProgressView().scaleEffect(0.75)
-                        } else if showTranslated {
-                            Label("原文", systemImage: "doc.plaintext")
-                        } else if hasUsableTranslation {
-                            Label("译文", systemImage: "translate")
-                        } else {
+                    if isTranslating {
+                        ProgressView().scaleEffect(0.75)
+                    } else if hasUsableTranslation {
+                        // 已有译文：点按切换原文/译文；打开菜单可重新翻译
+                        Menu {
+                            Button {
+                                Task { await retranslate(preferHigherQuality: false) }
+                            } label: {
+                                Label("重新翻译", systemImage: "arrow.clockwise")
+                            }
+                            Button {
+                                Task { await retranslate(preferHigherQuality: true) }
+                            } label: {
+                                Label("更高质量重新翻译", systemImage: "sparkles")
+                            }
+                        } primaryAction: {
+                            Task { await toggleTranslation() }
+                        } label: {
+                            if showTranslated {
+                                Label("原文", systemImage: "doc.plaintext")
+                            } else {
+                                Label("译文", systemImage: "translate")
+                            }
+                        }
+                        .accessibilityHint("轻点切换原文/译文；长按可重新翻译")
+                    } else {
+                        Button { Task { await toggleTranslation() } } label: {
                             Label("翻译", systemImage: "translate")
                         }
+                        .accessibilityHint("翻译正文（默认系统翻译）")
                     }
-                    .disabled(isTranslating)
-                    .accessibilityHint(showTranslated ? "切换到原文" : (hasUsableTranslation ? "切换到译文" : "翻译正文"))
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -622,19 +640,42 @@ struct ArticleReaderView: View {
             if currentArticle.translatedTitle == nil { Task { await translateTitleIfNeeded() } }
             return
         }
-        // 尚无译文 → 发起翻译
+        // 尚无译文 → 按引擎链翻译（默认系统翻译优先）
+        await performBodyTranslation(excluding: [], progressLabel: "正在翻译…")
+    }
+
+    /// 重新翻译：清空缓存后重跑引擎链；高质量模式跳过系统翻译
+    private func retranslate(preferHigherQuality: Bool) async {
+        translatedContent = nil
+        var cleared = currentArticle
+        cleared.translatedContent = nil
+        cleared.translatedTitle = nil
+        store.updateArticle(cleared)
+        showTranslated = false
+        let excluding: Set<TranslationEngine> = preferHigherQuality ? [.system] : []
+        let label = preferHigherQuality ? "正在用更高质量引擎翻译…" : "正在重新翻译…"
+        await performBodyTranslation(excluding: excluding, progressLabel: label)
+    }
+
+    private func performBodyTranslation(
+        excluding: Set<TranslationEngine>,
+        progressLabel: String
+    ) async {
         translationError = nil
         isTranslating = true
-        translationProgress = "正在翻译…"
+        translationProgress = progressLabel
         do {
             let titleTask = Task { () -> String? in
-                if let existing = currentArticle.translatedTitle, !existing.isEmpty { return existing }
                 let t = currentArticle.title.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !t.isEmpty else { return nil }
-                return try? await store.translateText(t)
+                return try? await store.translateText(t, excluding: excluding)
             }
             let media = HTMLUtils.extractMediaForTranslation(currentArticle.content)
-            let result = try await store.translateLongText(media.text, maxChunkChars: 1800)
+            let result = try await store.translateLongText(
+                media.text,
+                maxChunkChars: 1800,
+                excluding: excluding
+            )
             let restored = HTMLUtils.restoreMediaAfterTranslation(
                 result, images: media.images, tables: media.tables
             )

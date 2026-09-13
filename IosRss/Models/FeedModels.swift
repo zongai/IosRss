@@ -353,6 +353,20 @@ enum AppLanguage: String, CaseIterable, Codable, Identifiable {
         }
     }
 
+    /// 系统 Translation 框架用的 BCP-47 标识
+    var translationLanguageIdentifier: String {
+        switch self {
+        case .zhHans: return "zh-Hans"
+        case .zhHant: return "zh-Hant"
+        case .en: return "en"
+        case .ja: return "ja"
+        case .ko: return "ko"
+        case .fr: return "fr"
+        case .de: return "de"
+        case .es: return "es"
+        }
+    }
+
     var isChinese: Bool { self == .zhHans || self == .zhHant }
 }
 
@@ -382,6 +396,7 @@ enum TitleDisplayMode: String, CaseIterable, Codable {
 }
 
 enum TranslationEngine: String, CaseIterable, Codable {
+    case system = "系统翻译"
     case google = "Google 翻译"
     case mymemory = "MyMemory（免 Key）"
     case lingva = "Lingva（免 Key）"
@@ -392,7 +407,7 @@ enum TranslationEngine: String, CaseIterable, Codable {
     /// 无需 API Key 的引擎
     var isFreeNoKey: Bool {
         switch self {
-        case .google, .mymemory, .lingva: return true
+        case .system, .google, .mymemory, .lingva: return true
         default: return false
         }
     }

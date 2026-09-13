@@ -31,9 +31,11 @@ class AppStore: AIService.Runtime {
     var groupTitleFontSize: Double = 13
 
     var titleDisplayMode: TitleDisplayMode = .original
-    var defaultTranslationEngine: TranslationEngine = .google
-    /// 翻译时按此顺序尝试引擎；遇限流/不可用自动切下一个
-    var translationEngineChain: [TranslationEngine] = TranslationEngine.allCases
+    var defaultTranslationEngine: TranslationEngine = .system
+    /// 翻译时按此顺序尝试引擎；默认系统翻译优先，遇限流/不可用自动切下一个
+    var translationEngineChain: [TranslationEngine] = {
+        [.system] + TranslationEngine.allCases.filter { $0 != .system }
+    }()
     /// 引擎级限流冷却（引擎 rawValue → 冷却截止时间）
     var aiProviders: [AIProvider] = [
         AIProvider(id: UUID(), name: "OpenAI", baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini", kind: "openai"),
@@ -646,6 +648,15 @@ class AppStore: AIService.Runtime {
         case .ai:
             let id = defaultTranslationProviderID ?? defaultSummaryProviderID
             return try await testAIProvider(id)
+        case .system:
+            do {
+                let out = try await SystemTranslate.translate(text: sample, target: targetLanguage)
+                let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !preview.isEmpty else { throw TranslationError.apiError("系统翻译返回空译文") }
+                return "系统翻译（本地）：可用\n试译：\(preview.prefix(60))"
+            } catch {
+                throw TranslationError.apiError("系统翻译：不可用 — \(error.localizedDescription)")
+            }
         }
     }
 
@@ -1611,6 +1622,7 @@ class AppStore: AIService.Runtime {
     /// 引擎是否已配置到可调用（缺 Key 的引擎跳过）
     func isTranslationEngineReady(_ engine: TranslationEngine) -> Bool {
         switch engine {
+        case .system: return SystemTranslate.isAvailable
         case .google, .mymemory, .lingva: return true
         case .microsoft: return !loadMicrosoftKeys().isEmpty
         case .deepl: return !loadDeepLKeys().isEmpty
@@ -1622,6 +1634,8 @@ class AppStore: AIService.Runtime {
     private func translateWithEngine(_ engine: TranslationEngine, text: String) async throws -> String {
         let lang = targetLanguage
         switch engine {
+        case .system:
+            return try await SystemTranslate.translate(text: text, target: lang)
         case .google:
             return try await translateWithGoogle(text, targetLang: lang.googleCode)
         case .mymemory:
@@ -1654,8 +1668,9 @@ class AppStore: AIService.Runtime {
         }
     }
 
-    func translateText(_ text: String) async throws -> String {
-        let chain = effectiveTranslationChain()
+    /// - Parameter excluding: 跳过的引擎（例如高质量重译时跳过系统翻译）
+    func translateText(_ text: String, excluding: Set<TranslationEngine> = []) async throws -> String {
+        let chain = effectiveTranslationChain().filter { !excluding.contains($0) }
         var lastError: Error = TranslationError.apiError("没有可用的翻译引擎")
         for engine in chain {
             guard isTranslationEngineReady(engine) else { continue }
@@ -1861,11 +1876,16 @@ class AppStore: AIService.Runtime {
         return results
     }
 
-    func translateLongText(_ text: String, maxChunkChars: Int = 1800) async throws -> String {
+    func translateLongText(
+        _ text: String,
+        maxChunkChars: Int = 1800,
+        excluding: Set<TranslationEngine> = []
+    ) async throws -> String {
         let chunks = Self.splitTextIntoChunks(text, maxChars: maxChunkChars)
         guard !chunks.isEmpty else { return "" }
-        if chunks.count == 1 { return try await translateText(chunks[0]) }
-        let chunkLimit = min(2, max(1, resolvedTranslationConcurrency(for: defaultTranslationEngine)))
+        if chunks.count == 1 { return try await translateText(chunks[0], excluding: excluding) }
+        let primary = effectiveTranslationChain().first(where: { !excluding.contains($0) }) ?? defaultTranslationEngine
+        let chunkLimit = min(2, max(1, resolvedTranslationConcurrency(for: primary)))
         return try await withThrowingTaskGroup(of: (Int, String).self) { group in
             var next = 0
             let spawn = min(chunkLimit, chunks.count)
@@ -1873,7 +1893,7 @@ class AppStore: AIService.Runtime {
                 let index = next
                 let chunk = chunks[index]
                 next += 1
-                group.addTask { (index, try await self.translateText(chunk)) }
+                group.addTask { (index, try await self.translateText(chunk, excluding: excluding)) }
             }
             var ordered = Array(repeating: "", count: chunks.count)
             for try await (index, result) in group {
@@ -1882,7 +1902,7 @@ class AppStore: AIService.Runtime {
                     let i = next
                     let chunk = chunks[i]
                     next += 1
-                    group.addTask { (i, try await self.translateText(chunk)) }
+                    group.addTask { (i, try await self.translateText(chunk, excluding: excluding)) }
                 }
             }
             return ordered.joined(separator: "\n\n")

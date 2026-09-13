@@ -10,8 +10,10 @@ struct PersistedAppSettings {
     var feedTitleFontSize: Double = 17
     var groupTitleFontSize: Double = 13
     var titleDisplayMode: TitleDisplayMode = .original
-    var defaultTranslationEngine: TranslationEngine = .google
-    var translationEngineChain: [TranslationEngine] = TranslationEngine.allCases
+    var defaultTranslationEngine: TranslationEngine = .system
+    var translationEngineChain: [TranslationEngine] = {
+        [.system] + TranslationEngine.allCases.filter { $0 != .system }
+    }()
     var showReadArticles: Bool = false
     var translationPrompt: String = AppStore.defaultTranslationPrompt
     var summaryPrompt: String = AppStore.defaultSummaryPrompt
@@ -145,11 +147,24 @@ enum SettingsRepository {
                 s.translationEngineChain = parsed.filter { seen.insert($0).inserted }
             }
         } else {
-            var chain = [s.defaultTranslationEngine]
-            for e in TranslationEngine.allCases where e != s.defaultTranslationEngine {
+            var chain = [TranslationEngine.system]
+            for e in TranslationEngine.allCases where e != .system {
                 chain.append(e)
             }
             s.translationEngineChain = chain
+        }
+        // 一次性迁移：默认优先系统翻译（本地）
+        if d.object(forKey: "didPreferSystemTranslate") == nil {
+            if let idx = s.translationEngineChain.firstIndex(of: .system) {
+                if idx > 0 {
+                    s.translationEngineChain.remove(at: idx)
+                    s.translationEngineChain.insert(.system, at: 0)
+                }
+            } else {
+                s.translationEngineChain.insert(.system, at: 0)
+            }
+            s.defaultTranslationEngine = .system
+            d.set(true, forKey: "didPreferSystemTranslate")
         }
         if let first = s.translationEngineChain.first {
             s.defaultTranslationEngine = first

@@ -127,6 +127,25 @@ struct RSSFeed: Identifiable, Codable, Hashable {
         sortOrder = try c.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0
     }
 
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encode(url, forKey: .url)
+        try c.encodeIfPresent(faviconURL, forKey: .faviconURL)
+        try c.encode(unreadCount, forKey: .unreadCount)
+        try c.encode(articles, forKey: .articles)
+        try c.encodeIfPresent(lastFetched, forKey: .lastFetched)
+        try c.encodeIfPresent(groupID, forKey: .groupID)
+        try c.encode(fetchFullContentEnabled, forKey: .fetchFullContentEnabled)
+        try c.encode(fetchCommentsEnabled, forKey: .fetchCommentsEnabled)
+        try c.encode(faviconFetchDone, forKey: .faviconFetchDone)
+        try c.encode(autoTranslateEnabled, forKey: .autoTranslateEnabled)
+        try c.encode(useFullContentURLPrefix, forKey: .useFullContentURLPrefix)
+        try c.encode(summaryPromptPresetID, forKey: .summaryPromptPresetID)
+        try c.encode(sortOrder, forKey: .sortOrder)
+    }
+
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
     static func == (lhs: RSSFeed, rhs: RSSFeed) -> Bool { lhs.id == rhs.id }
 }

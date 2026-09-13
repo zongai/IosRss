@@ -174,8 +174,6 @@ struct Article: Identifiable, Codable, Hashable {
     var aiSummary: String?
     /// 生成该摘要时使用的 AI Provider 名称
     var aiSummaryProvider: String?
-    /// 背景补全：人物/公司/事件「是谁 / 为何重要」
-    var backgroundNotes: String?
     /// 兴趣评分 0～1；nil 表示尚未计算
     var interestScore: Double?
     /// 是否已从原文页抓取过全文
@@ -196,7 +194,7 @@ struct Article: Identifiable, Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, feedID, feedTitle, title, link, summary, content
         case publishedDate, isRead, isFavorite, translatedTitle, translatedSummary, translatedContent
-        case aiSummary, aiSummaryProvider, backgroundNotes, interestScore, hasFullContent, commentsURL, readingProgress, highlights
+        case aiSummary, aiSummaryProvider, interestScore, hasFullContent, commentsURL, readingProgress, highlights
     }
 
     init(id: UUID = UUID(), feedID: UUID, feedTitle: String, title: String, link: String,
@@ -205,7 +203,6 @@ struct Article: Identifiable, Codable, Hashable {
          translatedTitle: String? = nil, translatedSummary: String? = nil,
          translatedContent: String? = nil, aiSummary: String? = nil,
          aiSummaryProvider: String? = nil,
-         backgroundNotes: String? = nil,
          interestScore: Double? = nil,
          hasFullContent: Bool = false,
          commentsURL: String? = nil,
@@ -226,7 +223,6 @@ struct Article: Identifiable, Codable, Hashable {
         self.translatedContent = translatedContent
         self.aiSummary = aiSummary
         self.aiSummaryProvider = aiSummaryProvider
-        self.backgroundNotes = backgroundNotes
         self.interestScore = interestScore
         self.hasFullContent = hasFullContent
         self.commentsURL = commentsURL
@@ -251,7 +247,6 @@ struct Article: Identifiable, Codable, Hashable {
         translatedContent = try c.decodeIfPresent(String.self, forKey: .translatedContent)
         aiSummary = try c.decodeIfPresent(String.self, forKey: .aiSummary)
         aiSummaryProvider = try c.decodeIfPresent(String.self, forKey: .aiSummaryProvider)
-        backgroundNotes = try c.decodeIfPresent(String.self, forKey: .backgroundNotes)
         interestScore = try c.decodeIfPresent(Double.self, forKey: .interestScore)
         hasFullContent = try c.decodeIfPresent(Bool.self, forKey: .hasFullContent) ?? false
         commentsURL = try c.decodeIfPresent(String.self, forKey: .commentsURL)

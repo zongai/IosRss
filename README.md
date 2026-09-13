@@ -43,7 +43,7 @@
 - **AI Provider 多模型**：每 Provider 可配置模型列表与默认模型；可选**经济模型**做费用路由
 - **模型费用路由**：短文本用经济模型，长文摘要与解释用强模型
 - **Prompt 预设**：内置标准/科技/学术/投资/新闻/评测等，可**添加自定义类型**并编辑模板；全局 + **按源**覆盖
-- **摘要与背景**：5W1H 摘要 → 缺口扫描 → 高优先级背景轻量嵌入（括号/同位语）；「需核实」单独提示，不编造
+- **AI 摘要**：按 Prompt 预设生成；失败自动切换 Provider
 - **兴趣过滤**：收藏 / 「不感兴趣」学习词权重；文章打分；低分可沉底或自动已读；列表可按兴趣排序
 - AI 摘要 / 解释 / **独立对话页**（历史管理）；失败自动切换 Provider；每 Provider 多 Key
 - AI 黑名单；文章黑名单；Key 存钥匙串
@@ -74,7 +74,7 @@ IosRss/
 │   ├── ArticleSearchService.swift    # 全库搜索
 │   ├── SettingsRepository.swift       # 用户偏好持久化
 │   ├── TranslationCoordinator.swift # 引擎链与限流
-│   ├── AIService.swift               # 摘要/解释/背景补全
+│   ├── AIService.swift               # 摘要/解释
 │   ├── FeedParser.swift
 │   ├── ArticleContentFetcher.swift
 │   ├── CommentFetcher.swift

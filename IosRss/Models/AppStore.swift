@@ -2045,29 +2045,6 @@ class AppStore: AIService.Runtime {
         try await AIService.generateSummary(article: article, runtime: self)
     }
 
-    /// 背景缺口扫描（专有名词 / 模糊时间 / 前情依赖）
-    func scanBackgroundGaps(summary: String, article: Article, content: String) async throws -> String {
-        try await AIService.scanBackgroundGaps(summary: summary, article: article, content: content, runtime: self)
-    }
-
-    /// 将高优先级背景以括号/同位语/从句嵌入摘要，而非另起背景段
-    func enrichSummaryWithBackground(
-        summary: String,
-        article: Article,
-        content: String,
-        preferredID: UUID?
-    ) async throws -> String {
-        try await AIService.enrichSummaryWithBackground(
-            summary: summary, article: article, content: content,
-            preferredID: preferredID, runtime: self
-        )
-    }
-
-    /// 仅返回「需核实」与未嵌入的缺口提示（供阅读页次要展示）
-    func generateBackgroundNotes(for article: Article) async throws -> String {
-        try await AIService.generateBackgroundNotes(article: article, runtime: self)
-    }
-
     static func migrateLegacyDefaultPrompts(translation: inout String, summary: inout String, explain: inout String) {
         func normalize(_ s: String) -> String {
             s.replacingOccurrences(of: "\r\n", with: "\n")

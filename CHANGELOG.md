@@ -13,10 +13,23 @@
 （自上次成功构建以来的改动，将在下次成功构建时归入正式条目。）
 
 ### Added
+- 阅读页显示译文实际使用的翻译引擎
+
+### Fixed
+- 系统翻译卡住：translationTask 宿主、超时与失败回退
+
+---
+
+## [v1.3-71] — 2026-09-13
+
+成功构建：`v1.3-71-build-20260913072048`  
+相对：`v1.3-66-build-20260913053406`
+
+### Added
 - 系统翻译（Apple Translation）：默认优先本地；支持重新翻译 / 更高质量重译（跳过系统引擎）
 
 ### Fixed
-- 系统翻译编译：`TranslationSession` 源语言非 Optional；目标文本去空白类型推断
+- 系统翻译编译与 Menu primaryAction 参数顺序等问题
 
 ### Removed
 - 背景补全：阅读页展示、摘要后自动生成、摘要嵌入与相关 AIService/AppStore API

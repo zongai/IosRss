@@ -6,20 +6,24 @@ import Translation
 #if canImport(Translation)
 @available(iOS 18.0, *)
 struct SystemTranslationAnchor: View {
-    private let host = SystemTranslationHost.shared
+    @ObservedObject private var host = SystemTranslationHost.shared
 
     var body: some View {
-        let config = host.configuration
         Color.clear
-            .frame(width: 0, height: 0)
+            .frame(width: 1, height: 1)
             .accessibilityHidden(true)
-            .translationTask(config) { session in
+            .translationTask(host.configuration) { session in
                 await SystemTranslationHost.shared.handle(session: session)
+            }
+            .onAppear {
+                SystemTranslationHost.shared.markAnchored(true)
+            }
+            .onDisappear {
+                SystemTranslationHost.shared.markAnchored(false)
             }
     }
 }
 #endif
-
 
 @main
 struct IosRssApp: App {
@@ -31,13 +35,13 @@ struct IosRssApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .background {
 #if canImport(Translation)
+                .background {
                     if #available(iOS 18.0, *) {
                         SystemTranslationAnchor()
                     }
-#endif
                 }
+#endif
         }
     }
 }

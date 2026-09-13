@@ -1668,6 +1668,9 @@ class AppStore: AIService.Runtime {
         }
     }
 
+    /// 最近一次成功翻译使用的引擎（供阅读页展示）
+    private(set) var lastUsedTranslationEngine: TranslationEngine?
+
     /// - Parameter excluding: 跳过的引擎（例如高质量重译时跳过系统翻译）
     func translateText(_ text: String, excluding: Set<TranslationEngine> = []) async throws -> String {
         let chain = effectiveTranslationChain().filter { !excluding.contains($0) }
@@ -1675,7 +1678,9 @@ class AppStore: AIService.Runtime {
         for engine in chain {
             guard isTranslationEngineReady(engine) else { continue }
             do {
-                return try await translateWithEngine(engine, text: text)
+                let result = try await translateWithEngine(engine, text: text)
+                lastUsedTranslationEngine = engine
+                return result
             } catch {
                 lastError = error
                 if Self.keyFailureKind(error) == .limited {

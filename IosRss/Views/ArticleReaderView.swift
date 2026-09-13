@@ -164,6 +164,17 @@ struct ArticleReaderView: View {
                     Text(progress).font(.system(size: 13)).foregroundStyle(Color.secondary)
                         .padding(.horizontal, 20).padding(.top, 8)
                 }
+                if showTranslated,
+                   let engineName = currentArticle.translationEngineName?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !engineName.isEmpty {
+                    Label("译文来源：\(engineName)", systemImage: "translate")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.secondary)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 6)
+                        .accessibilityLabel("译文来源 \(engineName)")
+                }
                 if let hint = fullContentHint {
                     Text(hint).font(.system(size: 13)).foregroundStyle(Color.secondary)
                         .padding(.horizontal, 20).padding(.top, 8)
@@ -574,7 +585,8 @@ struct ArticleReaderView: View {
         }
         translationError = nil
         isTranslating = true
-        translationProgress = "正在翻译…"
+        let hint = store.effectiveTranslationChain().first(where: { store.isTranslationEngineReady($0) })
+        translationProgress = hint.map { "正在翻译…（\($0.rawValue)）" } ?? "正在翻译…"
         do {
             let titleTask = Task { () -> String? in
                 if let existing = currentArticle.translatedTitle, !existing.isEmpty { return existing }
@@ -591,6 +603,7 @@ struct ArticleReaderView: View {
             let translatedTitle = await titleTask.value
             var updated = currentArticle
             updated.translatedContent = translatedContent
+            updated.translationEngineName = store.lastUsedTranslationEngine?.rawValue
             if let translatedTitle, !translatedTitle.isEmpty {
                 updated.translatedTitle = translatedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             }
@@ -650,6 +663,7 @@ struct ArticleReaderView: View {
         var cleared = currentArticle
         cleared.translatedContent = nil
         cleared.translatedTitle = nil
+        cleared.translationEngineName = nil
         store.updateArticle(cleared)
         showTranslated = false
         let excluding: Set<TranslationEngine> = preferHigherQuality ? [.system] : []
@@ -663,7 +677,10 @@ struct ArticleReaderView: View {
     ) async {
         translationError = nil
         isTranslating = true
-        translationProgress = progressLabel
+        let hintEngine = store.effectiveTranslationChain()
+            .filter { !excluding.contains($0) && store.isTranslationEngineReady($0) }
+            .first
+        translationProgress = hintEngine.map { "\(progressLabel)（\($0.rawValue)）" } ?? progressLabel
         do {
             let titleTask = Task { () -> String? in
                 let t = currentArticle.title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -681,8 +698,10 @@ struct ArticleReaderView: View {
             )
             translatedContent = Self.wrapTranslatedHTML(restored)
             let translatedTitle = await titleTask.value
+            let usedEngine = store.lastUsedTranslationEngine?.rawValue
             var updated = currentArticle
             updated.translatedContent = translatedContent
+            updated.translationEngineName = usedEngine
             if let translatedTitle, !translatedTitle.isEmpty {
                 updated.translatedTitle = translatedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             }

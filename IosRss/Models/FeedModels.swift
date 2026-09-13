@@ -171,6 +171,8 @@ struct Article: Identifiable, Codable, Hashable {
     var translatedTitle: String?
     var translatedSummary: String?
     var translatedContent: String?
+    /// 正文译文实际使用的翻译引擎展示名（如「系统翻译」）
+    var translationEngineName: String?
     var aiSummary: String?
     /// 生成该摘要时使用的 AI Provider 名称
     var aiSummaryProvider: String?
@@ -194,6 +196,7 @@ struct Article: Identifiable, Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, feedID, feedTitle, title, link, summary, content
         case publishedDate, isRead, isFavorite, translatedTitle, translatedSummary, translatedContent
+        case translationEngineName
         case aiSummary, aiSummaryProvider, interestScore, hasFullContent, commentsURL, readingProgress, highlights
     }
 
@@ -201,7 +204,9 @@ struct Article: Identifiable, Codable, Hashable {
          summary: String, content: String, publishedDate: Date? = nil, isRead: Bool = false,
          isFavorite: Bool = false,
          translatedTitle: String? = nil, translatedSummary: String? = nil,
-         translatedContent: String? = nil, aiSummary: String? = nil,
+         translatedContent: String? = nil,
+         translationEngineName: String? = nil,
+         aiSummary: String? = nil,
          aiSummaryProvider: String? = nil,
          interestScore: Double? = nil,
          hasFullContent: Bool = false,
@@ -221,6 +226,7 @@ struct Article: Identifiable, Codable, Hashable {
         self.translatedTitle = translatedTitle
         self.translatedSummary = translatedSummary
         self.translatedContent = translatedContent
+        self.translationEngineName = translationEngineName
         self.aiSummary = aiSummary
         self.aiSummaryProvider = aiSummaryProvider
         self.interestScore = interestScore
@@ -245,6 +251,7 @@ struct Article: Identifiable, Codable, Hashable {
         translatedTitle = try c.decodeIfPresent(String.self, forKey: .translatedTitle)
         translatedSummary = try c.decodeIfPresent(String.self, forKey: .translatedSummary)
         translatedContent = try c.decodeIfPresent(String.self, forKey: .translatedContent)
+        translationEngineName = try c.decodeIfPresent(String.self, forKey: .translationEngineName)
         aiSummary = try c.decodeIfPresent(String.self, forKey: .aiSummary)
         aiSummaryProvider = try c.decodeIfPresent(String.self, forKey: .aiSummaryProvider)
         interestScore = try c.decodeIfPresent(Double.self, forKey: .interestScore)

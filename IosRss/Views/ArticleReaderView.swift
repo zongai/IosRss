@@ -308,14 +308,14 @@ struct ArticleReaderView: View {
                             } label: {
                                 Label("更高质量重新翻译", systemImage: "sparkles")
                             }
-                        } primaryAction: {
-                            Task { await toggleTranslation() }
                         } label: {
                             if showTranslated {
                                 Label("原文", systemImage: "doc.plaintext")
                             } else {
                                 Label("译文", systemImage: "translate")
                             }
+                        } primaryAction: {
+                            Task { await toggleTranslation() }
                         }
                         .accessibilityHint("轻点切换原文/译文；长按可重新翻译")
                     } else {

@@ -440,11 +440,15 @@ enum AIExplain {
 }
 
 /// 统一入口：根据 provider.kind 走 Gemini 或 OpenAI 兼容接口
-func callAI(prompt: String, provider: AIProvider, apiKey: String, maxTokens: Int = 500) async throws -> String {
-    if provider.kind == "gemini" || provider.name.lowercased().contains("gemini") {
-        return try await callGemini(prompt: prompt, provider: provider, apiKey: apiKey)
+func callAI(prompt: String, provider: AIProvider, apiKey: String, maxTokens: Int = 500, modelOverride: String? = nil) async throws -> String {
+    var p = provider
+    if let m = modelOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !m.isEmpty {
+        p.model = m
     }
-    return try await callOpenAICompatible(prompt: prompt, provider: provider, apiKey: apiKey, maxTokens: maxTokens)
+    if p.kind == "gemini" || p.name.lowercased().contains("gemini") {
+        return try await callGemini(prompt: prompt, provider: p, apiKey: apiKey)
+    }
+    return try await callOpenAICompatible(prompt: prompt, provider: p, apiKey: apiKey, maxTokens: maxTokens)
 }
 
 /// 多轮对话：messages 为 user/assistant/system 序列（按时间顺序）

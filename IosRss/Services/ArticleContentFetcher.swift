@@ -370,21 +370,21 @@ enum ArticleContentFetcher {
 
         // 站点特化：在通用语义标签之前尝试（避免 <article> 只匹配到订阅墙短文）
         if let site = extractByKnownSite(work, host: baseURL.host?.lowercased() ?? "") {
-            let cleaned = cleanContentHTML(site, baseURL: baseURL)
+            let cleaned = cleanContentHTML(truncateArticleTail(site), baseURL: baseURL)
             if HTMLUtils.stripTags(cleaned).count >= 200 {
                 return Extracted(title: title, content: cleaned)
             }
         }
 
         if let semantic = extractBySemanticTags(work) {
-            let cleaned = cleanContentHTML(semantic, baseURL: baseURL)
+            let cleaned = cleanContentHTML(truncateArticleTail(semantic), baseURL: baseURL)
             // 语义块若明显短于全文启发式，继续往下试
             let semLen = HTMLUtils.stripTags(cleaned).count
             if semLen >= 800 {
                 return Extracted(title: title, content: cleaned)
             }
             if let candidate = extractByHeuristics(work) {
-                let cand = cleanContentHTML(candidate, baseURL: baseURL)
+                let cand = cleanContentHTML(truncateArticleTail(candidate), baseURL: baseURL)
                 if HTMLUtils.stripTags(cand).count > semLen + 200 {
                     return Extracted(title: title, content: cand)
                 }
@@ -395,7 +395,7 @@ enum ArticleContentFetcher {
         }
 
         if let candidate = extractByHeuristics(work) {
-            let cleaned = cleanContentHTML(candidate, baseURL: baseURL)
+            let cleaned = cleanContentHTML(truncateArticleTail(candidate), baseURL: baseURL)
             if HTMLUtils.stripTags(cleaned).count >= 80 {
                 return Extracted(title: title, content: cleaned)
             }
@@ -474,7 +474,9 @@ enum ArticleContentFetcher {
                       let tagRange = Range(match.range(at: 1), in: html),
                       let fullOpen = Range(match.range, in: html) else { continue }
                 let tag = String(html[tagRange])
-                guard let block = extractBalancedFromOpen(html, openEnd: fullOpen.upperBound, tag: tag) else { continue }
+                guard var block = extractBalancedFromOpen(html, openEnd: fullOpen.upperBound, tag: tag) else { continue }
+                // 截掉推荐/评论/订阅页脚，避免正文后大片空白与噪音
+                block = truncateArticleTail(block)
                 let len = HTMLUtils.stripTags(block).count
                 if len > bestLen {
                     bestLen = len
@@ -483,6 +485,48 @@ enum ArticleContentFetcher {
             }
         }
         return bestLen >= 200 ? best : nil
+    }
+
+    /// 去掉正文末尾的推荐阅读、评论、邮件订阅等尾巴（仅截后半段命中，避免误伤正文）
+    private static func truncateArticleTail(_ html: String) -> String {
+        guard html.count > 400 else { return html }
+        let markers = [
+            "Recommended for you",
+            "Most important news in your inbox",
+            "Show all 27 topics",
+            "0 of 27 topics selected",
+            "Bundle into one email per day",
+            "Join our Telegram",
+            "Follow us on Google News",
+            "class=\"comments\"",
+            "id=\"comments\"",
+            "class=\"related",
+            "class=\"post-related",
+            "class=\"recommend"
+        ]
+        // 只在正文约 35% 之后查找尾巴标记
+        let minOffset = html.index(html.startIndex, offsetBy: html.count * 35 / 100)
+        var cut: String.Index?
+        let lower = html.lowercased()
+        for m in markers {
+            if let r = lower.range(of: m.lowercased(), range: minOffset..<lower.endIndex) {
+                let idx = r.lowerBound
+                if cut == nil || idx < cut! { cut = idx }
+            }
+        }
+        // Source: 保留该行，在其后截断
+        if let r = html.range(
+            of: #"<p[^>]*>\s*Source\s*:"#,
+            options: [.regularExpression, .caseInsensitive],
+            range: minOffset..<html.endIndex
+        ) {
+            if let close = html.range(of: "</p>", options: .caseInsensitive, range: r.lowerBound..<html.endIndex) {
+                let after = close.upperBound
+                if cut == nil || after < cut! { cut = after }
+            }
+        }
+        if let cut { return String(html[..<cut]) }
+        return html
     }
 
     private static func extractBySemanticTags(_ html: String) -> String? {
@@ -672,8 +716,36 @@ enum ArticleContentFetcher {
         // 去掉文内广告 / 会员推广块（CarNewsChina 等）
         work = removeBlocksWithClassTokens(work, tokens: [
             "ad__horizontal", "ad__in_article", "adsbygoogle", "ad-slot",
-            "membership", "become-member", "newsletter-signup"
+            "membership", "become-member", "newsletter-signup",
+            "content__membership", "paywall", "subscribe-box"
         ])
+        // 去掉仅含空白的标签与连续空段落，减少阅读页大片留白
+        work = work.replacingOccurrences(
+            of: #"<p[^>]*>\s*(?:&nbsp;|\u{00A0}|\s)*\s*</p>"#,
+            with: "",
+            options: .regularExpression
+        )
+        work = work.replacingOccurrences(
+            of: #"<div[^>]*>\s*(?:&nbsp;|\u{00A0}|\s)*\s*</div>"#,
+            with: "",
+            options: .regularExpression
+        )
+        work = work.replacingOccurrences(
+            of: #"<span[^>]*>\s*(?:&nbsp;|\u{00A0}|\s)*\s*</span>"#,
+            with: "",
+            options: .regularExpression
+        )
+        work = work.replacingOccurrences(
+            of: #"(?:<br\s*/?\s*>\s*){3,}"#,
+            with: "<br><br>",
+            options: .regularExpression
+        )
+        // 追踪像素 / 极小占位图
+        work = work.replacingOccurrences(
+            of: #"<img[^>]*(?:width=[\"']1[\"']|height=[\"']1[\"']|fly-images)[^>]*/?>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
         work = absolutizeAttributes(work, attr: "src", baseURL: baseURL)
         work = absolutizeAttributes(work, attr: "href", baseURL: baseURL)
         work = work.replacingOccurrences(

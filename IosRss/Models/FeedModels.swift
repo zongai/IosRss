@@ -65,13 +65,15 @@ struct RSSFeed: Identifiable, Codable, Hashable {
     var autoTranslateEnabled: Bool = true
     /// 全文抓取时是否对该源使用全局 URL 前缀（需在设置中开启并配置前缀）
     var useFullContentURLPrefix: Bool = false
+    /// 该源摘要 Prompt 预设；nil / .global 表示跟随全局
+    var summaryPromptPreset: PromptPreset = .global
     /// 同组内排序（越小越靠前）
     var sortOrder: Int = 0
 
     enum CodingKeys: String, CodingKey {
         case id, title, url, faviconURL, unreadCount, articles, lastFetched, groupID
         case fetchFullContentEnabled, fetchCommentsEnabled, faviconFetchDone, autoTranslateEnabled
-        case useFullContentURLPrefix, sortOrder
+        case useFullContentURLPrefix, summaryPromptPreset, sortOrder
     }
 
     init(id: UUID = UUID(), title: String, url: String, faviconURL: String? = nil,
@@ -81,6 +83,7 @@ struct RSSFeed: Identifiable, Codable, Hashable {
          faviconFetchDone: Bool = false,
          autoTranslateEnabled: Bool = true,
          useFullContentURLPrefix: Bool = false,
+         summaryPromptPreset: PromptPreset = .global,
          sortOrder: Int = 0) {
         self.id = id
         self.title = title
@@ -95,6 +98,7 @@ struct RSSFeed: Identifiable, Codable, Hashable {
         self.faviconFetchDone = faviconFetchDone
         self.autoTranslateEnabled = autoTranslateEnabled
         self.useFullContentURLPrefix = useFullContentURLPrefix
+        self.summaryPromptPreset = summaryPromptPreset
         self.sortOrder = sortOrder
     }
 
@@ -113,6 +117,12 @@ struct RSSFeed: Identifiable, Codable, Hashable {
         faviconFetchDone = try c.decodeIfPresent(Bool.self, forKey: .faviconFetchDone) ?? false
         autoTranslateEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoTranslateEnabled) ?? true
         useFullContentURLPrefix = try c.decodeIfPresent(Bool.self, forKey: .useFullContentURLPrefix) ?? false
+        if let raw = try c.decodeIfPresent(String.self, forKey: .summaryPromptPreset),
+           let p = PromptPreset(rawValue: raw) {
+            summaryPromptPreset = p
+        } else {
+            summaryPromptPreset = .global
+        }
         sortOrder = try c.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0
     }
 
@@ -137,6 +147,10 @@ struct Article: Identifiable, Codable, Hashable {
     var aiSummary: String?
     /// 生成该摘要时使用的 AI Provider 名称
     var aiSummaryProvider: String?
+    /// 背景补全：人物/公司/事件「是谁 / 为何重要」
+    var backgroundNotes: String?
+    /// 兴趣评分 0～1；nil 表示尚未计算
+    var interestScore: Double?
     /// 是否已从原文页抓取过全文
     var hasFullContent: Bool = false
     /// RSS/Atom `<comments>` 讨论页（如 HN item），优先于 link 抓评论
@@ -151,7 +165,7 @@ struct Article: Identifiable, Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, feedID, feedTitle, title, link, summary, content
         case publishedDate, isRead, isFavorite, translatedTitle, translatedSummary, translatedContent
-        case aiSummary, aiSummaryProvider, hasFullContent, commentsURL
+        case aiSummary, aiSummaryProvider, backgroundNotes, interestScore, hasFullContent, commentsURL
     }
 
     init(id: UUID = UUID(), feedID: UUID, feedTitle: String, title: String, link: String,
@@ -160,6 +174,8 @@ struct Article: Identifiable, Codable, Hashable {
          translatedTitle: String? = nil, translatedSummary: String? = nil,
          translatedContent: String? = nil, aiSummary: String? = nil,
          aiSummaryProvider: String? = nil,
+         backgroundNotes: String? = nil,
+         interestScore: Double? = nil,
          hasFullContent: Bool = false,
          commentsURL: String? = nil) {
         self.id = id
@@ -177,6 +193,8 @@ struct Article: Identifiable, Codable, Hashable {
         self.translatedContent = translatedContent
         self.aiSummary = aiSummary
         self.aiSummaryProvider = aiSummaryProvider
+        self.backgroundNotes = backgroundNotes
+        self.interestScore = interestScore
         self.hasFullContent = hasFullContent
         self.commentsURL = commentsURL
     }
@@ -198,6 +216,8 @@ struct Article: Identifiable, Codable, Hashable {
         translatedContent = try c.decodeIfPresent(String.self, forKey: .translatedContent)
         aiSummary = try c.decodeIfPresent(String.self, forKey: .aiSummary)
         aiSummaryProvider = try c.decodeIfPresent(String.self, forKey: .aiSummaryProvider)
+        backgroundNotes = try c.decodeIfPresent(String.self, forKey: .backgroundNotes)
+        interestScore = try c.decodeIfPresent(Double.self, forKey: .interestScore)
         hasFullContent = try c.decodeIfPresent(Bool.self, forKey: .hasFullContent) ?? false
         commentsURL = try c.decodeIfPresent(String.self, forKey: .commentsURL)
     }
@@ -346,6 +366,78 @@ enum TranslationEngine: String, CaseIterable, Codable {
     }
 }
 
+// MARK: - Prompt 预设
+
+enum PromptPreset: String, Codable, CaseIterable, Identifiable {
+    case global
+    case standard
+    case techBrief
+    case academic
+    case investment
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .global: return "跟随全局"
+        case .standard: return "标准摘要"
+        case .techBrief: return "科技速览"
+        case .academic: return "学术精读"
+        case .investment: return "投资要点"
+        }
+    }
+
+    /// 可分配给源的预设（不含「跟随全局」）
+    static var assignable: [PromptPreset] { [.standard, .techBrief, .academic, .investment] }
+
+    var template: String {
+        switch self {
+        case .global, .standard:
+            return """
+请用3-5句话概括以下文章的核心内容，用{{lang}}回答。每句话单独一行，不要使用1. 2. 3.等序号，不要加标题：
+
+标题：{{title}}
+
+内容：{{content}}
+"""
+        case .techBrief:
+            return """
+用{{lang}}写科技速览（3～5 条要点）：
+- 只输出要点，每条一行，不加序号标题
+- 突出产品/技术变化、谁做的、影响谁
+- 专有名词可保留英文
+
+标题：{{title}}
+
+内容：{{content}}
+"""
+        case .academic:
+            return """
+用{{lang}}做学术精读摘要：
+- 研究问题 / 方法 / 主要发现 / 局限各用一两句
+- 只输出正文，不要「摘要如下」之类套话
+- 术语准确，可保留必要英文
+
+标题：{{title}}
+
+内容：{{content}}
+"""
+        case .investment:
+            return """
+用{{lang}}提炼投资要点：
+- 公司/标的、事件性质（业绩/融资/产品/监管）
+- 对收入、竞争或估值的可能影响
+- 风险与不确定点
+- 3～5 句，每句一行，无序号
+
+标题：{{title}}
+
+内容：{{content}}
+"""
+        }
+    }
+}
+
 // MARK: - AI Provider
 
 struct AIProvider: Identifiable, Codable, Hashable {
@@ -356,13 +448,15 @@ struct AIProvider: Identifiable, Codable, Hashable {
     var model: String
     /// 该 Provider 下可用的模型列表（可多个）；为空时回退为 [model]
     var models: [String] = []
+    /// 短文本/便宜路由时使用的模型；空则与 model 相同
+    var economyModel: String = ""
     /// 特殊标识：gemini 走 Google Generative Language API，其余走 OpenAI 兼容接口
     var kind: String = "openai" // "openai" | "gemini"
     var isDefaultSummary: Bool = false
     var isDefaultTranslation: Bool = false
 
     enum CodingKeys: String, CodingKey {
-        case id, name, baseURL, model, models, kind, isDefaultSummary, isDefaultTranslation
+        case id, name, baseURL, model, models, economyModel, kind, isDefaultSummary, isDefaultTranslation
     }
 
     init(
@@ -371,6 +465,7 @@ struct AIProvider: Identifiable, Codable, Hashable {
         baseURL: String,
         model: String,
         models: [String] = [],
+        economyModel: String = "",
         kind: String = "openai",
         isDefaultSummary: Bool = false,
         isDefaultTranslation: Bool = false
@@ -380,6 +475,7 @@ struct AIProvider: Identifiable, Codable, Hashable {
         self.baseURL = baseURL
         self.model = model
         self.models = models
+        self.economyModel = economyModel
         self.kind = kind
         self.isDefaultSummary = isDefaultSummary
         self.isDefaultTranslation = isDefaultTranslation
@@ -393,6 +489,7 @@ struct AIProvider: Identifiable, Codable, Hashable {
         baseURL = try c.decode(String.self, forKey: .baseURL)
         model = try c.decode(String.self, forKey: .model)
         models = try c.decodeIfPresent([String].self, forKey: .models) ?? []
+        economyModel = try c.decodeIfPresent(String.self, forKey: .economyModel) ?? ""
         kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "openai"
         isDefaultSummary = try c.decodeIfPresent(Bool.self, forKey: .isDefaultSummary) ?? false
         isDefaultTranslation = try c.decodeIfPresent(Bool.self, forKey: .isDefaultTranslation) ?? false

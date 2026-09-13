@@ -16,6 +16,7 @@ struct ArticleReaderView: View {
     @State private var showTranslated = false
     @State private var aiSummary: String?
     @State private var aiSummaryProvider: String?
+    @State private var backgroundNotes: String?
     @State private var summaryExpanded = true
     @State private var translationError: String?
     @State private var summaryError: String?
@@ -114,6 +115,21 @@ struct ArticleReaderView: View {
                 if let summary = aiSummary ?? currentArticle.aiSummary {
                     AISummaryCard(summary: summary, expanded: $summaryExpanded, fontSize: store.aiSummaryFontSize, providerName: aiSummaryProvider ?? currentArticle.aiSummaryProvider)
                         .padding(.horizontal, 20).padding(.top, 16)
+                }
+                if let notes = backgroundNotes ?? currentArticle.backgroundNotes,
+                   !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("背景补全", systemImage: "person.and.background.dotted")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(notes)
+                            .font(.system(size: max(14, store.aiSummaryFontSize - 4)))
+                            .foregroundStyle(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(12)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal, 20).padding(.top, 12)
                 }
                 if let err = summaryError {
                     Text(err).font(.system(size: 13)).foregroundStyle(.red)
@@ -300,6 +316,7 @@ struct ArticleReaderView: View {
         .onAppear {
             aiSummary = currentArticle.aiSummary
             aiSummaryProvider = currentArticle.aiSummaryProvider
+            backgroundNotes = currentArticle.backgroundNotes
             if let cached = currentArticle.translatedContent, !cached.isEmpty {
                 translatedContent = cached
                 showTranslated = true
@@ -537,6 +554,7 @@ struct ArticleReaderView: View {
         translatedContent = nil
         aiSummary = next.aiSummary
         aiSummaryProvider = next.aiSummaryProvider
+        backgroundNotes = next.backgroundNotes
         translationError = nil
         summaryError = nil
         fullContentError = nil
@@ -555,6 +573,11 @@ struct ArticleReaderView: View {
             aiSummary = existing
             aiSummaryProvider = currentArticle.aiSummaryProvider
             summaryExpanded = true
+            if currentArticle.backgroundNotes == nil {
+                await generateBackgroundNotesIfNeeded()
+            } else {
+                backgroundNotes = currentArticle.backgroundNotes
+            }
             return
         }
         summaryError = nil
@@ -568,9 +591,28 @@ struct ArticleReaderView: View {
             updated.aiSummary = result.text
             updated.aiSummaryProvider = result.providerName
             store.updateArticle(updated)
+            await generateBackgroundNotesIfNeeded()
         } catch {
             summaryError = error.localizedDescription
         }
         isGeneratingSummary = false
+    }
+
+    /// 摘要后自动补背景（人物/公司/事件一句）
+    private func generateBackgroundNotesIfNeeded() async {
+        if let existing = currentArticle.backgroundNotes,
+           !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            backgroundNotes = existing
+            return
+        }
+        do {
+            let notes = try await store.generateBackgroundNotes(for: currentArticle)
+            backgroundNotes = notes
+            var updated = currentArticle
+            updated.backgroundNotes = notes
+            store.updateArticle(updated)
+        } catch {
+            // 背景失败不阻断摘要
+        }
     }
 }

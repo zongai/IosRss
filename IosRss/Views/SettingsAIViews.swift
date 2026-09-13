@@ -120,6 +120,11 @@ struct AISettingsView: View {
             }
 
             Section {
+                Picker("全局摘要模板", selection: $store.globalSummaryPreset) {
+                    ForEach(PromptPreset.assignable) { p in
+                        Text(p.displayName).tag(p)
+                    }
+                }
                 TextEditor(text: $store.summaryPrompt)
                     .font(.system(size: 14, design: .monospaced))
                     .frame(minHeight: 130)
@@ -130,7 +135,7 @@ struct AISettingsView: View {
             } header: {
                 Text("摘要 Prompt")
             } footer: {
-                Text("{{title}}/{{content}} 为标题与正文；{{lang}} 为 AI 输出语言。")
+                Text("全局模板：科技速览 / 学术精读 / 投资要点。选「标准摘要」时使用下方自定义 Prompt。各订阅源可在长按菜单单独指定模板。{{title}}/{{content}}/{{lang}} 可用。")
             }
 
             Section {
@@ -146,6 +151,41 @@ struct AISettingsView: View {
             } footer: {
                 Text("{{text}} 为选中内容；{{lang}} 为 AI 输出语言。")
             }
+
+            Section {
+                Toggle("智能兴趣过滤", isOn: $store.smartInterestFilterEnabled)
+                if store.smartInterestFilterEnabled {
+                    Toggle("低分自动标已读", isOn: $store.autoMarkLowInterestRead)
+                    Toggle("列表按兴趣排序", isOn: $store.sortByInterestScore)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("低分阈值 \(String(format: "%.2f", store.lowInterestThreshold))")
+                            .font(.subheadline)
+                        Slider(value: $store.lowInterestThreshold, in: 0.1...0.7, step: 0.05)
+                    }
+                    Button("清空兴趣画像") {
+                        store.interestWeights = [:]
+                        store.persistSettings()
+                    }
+                    .foregroundStyle(.red)
+                }
+            } header: {
+                Text("兴趣与过滤")
+            } footer: {
+                Text("根据收藏与「不感兴趣」学习词权重，给文章打分。低分可沉底或自动已读。无需额外 API 费用。")
+            }
+
+            Section {
+                Toggle("模型费用路由", isOn: $store.modelRoutingEnabled)
+                if store.modelRoutingEnabled {
+                    Stepper(value: $store.modelRoutingShortLimit, in: 200...3000, step: 100) {
+                        Text("短文本阈值 \(store.modelRoutingShortLimit) 字")
+                    }
+                }
+            } header: {
+                Text("费用与模型路由")
+            } footer: {
+                Text("开启后：短文本用 Provider 的「经济模型」，长文摘要与解释用默认强模型。请在编辑 Provider 中填写经济模型 ID。")
+            }
         }
         .navigationTitle("AI 设置")
         .navigationBarTitleDisplayMode(.inline)
@@ -153,6 +193,13 @@ struct AISettingsView: View {
         .onChange(of: store.translationPrompt) { _, _ in store.persistSettings() }
         .onChange(of: store.summaryPrompt) { _, _ in store.persistSettings() }
         .onChange(of: store.explainPrompt) { _, _ in store.persistSettings() }
+        .onChange(of: store.globalSummaryPreset) { _, _ in store.persistSettings() }
+        .onChange(of: store.smartInterestFilterEnabled) { _, _ in store.persistSettings() }
+        .onChange(of: store.autoMarkLowInterestRead) { _, _ in store.persistSettings() }
+        .onChange(of: store.sortByInterestScore) { _, _ in store.persistSettings() }
+        .onChange(of: store.lowInterestThreshold) { _, _ in store.persistSettings() }
+        .onChange(of: store.modelRoutingEnabled) { _, _ in store.persistSettings() }
+        .onChange(of: store.modelRoutingShortLimit) { _, _ in store.persistSettings() }
         .sheet(isPresented: $showAddProvider) { EditProviderView(provider: nil) }
         .sheet(item: $editingProvider) { provider in EditProviderView(provider: provider) }
     }
@@ -306,6 +353,7 @@ struct EditProviderView: View {
     @State private var model = ""
     /// 每行一个模型名
     @State private var modelsText = ""
+    @State private var economyModel = ""
     @State private var apiKeys: [String] = []
     @State private var newAPIKey = ""
     @State private var kind = "openai"
@@ -371,6 +419,28 @@ struct EditProviderView: View {
                     Text("模型（可多个）")
                 } footer: {
                     Text("每行一个模型 ID。默认模型用于摘要/翻译/解释；对话页可在列表中切换同一 Provider 下的其它模型。")
+                }
+                Section {
+                    TextField("经济模型（可选）", text: $economyModel)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    if !parsedModels.isEmpty {
+                        Button("使用列表中的轻量模型") {
+                            // 优先选含 mini / flash / haiku 的
+                            if let lite = parsedModels.first(where: {
+                                let l = $0.lowercased()
+                                return l.contains("mini") || l.contains("flash") || l.contains("haiku") || l.contains("lite")
+                            }) {
+                                economyModel = lite
+                            } else if parsedModels.count > 1 {
+                                economyModel = parsedModels.last ?? ""
+                            }
+                        }
+                    }
+                } header: {
+                    Text("费用路由")
+                } footer: {
+                    Text("开启「模型费用路由」后，短文本将使用此模型；留空则始终用默认模型。")
                 }
                 Section {
                     if apiKeys.isEmpty {
@@ -463,6 +533,7 @@ struct EditProviderView: View {
         baseURL = p.baseURL
         model = p.model
         modelsText = p.availableModels.joined(separator: "\n")
+        economyModel = p.economyModel
         kind = p.kind.isEmpty ? (p.name.lowercased().contains("gemini") ? "gemini" : "openai") : p.kind
         apiKeys = store.loadAIKeys(for: p.id)
         isDefaultSummary = store.defaultSummaryProviderID == p.id
@@ -475,6 +546,7 @@ struct EditProviderView: View {
         baseURL = template.baseURL
         model = template.model
         modelsText = template.availableModels.joined(separator: "\n")
+        economyModel = template.economyModel
         kind = template.kind
     }
 
@@ -487,7 +559,9 @@ struct EditProviderView: View {
             : model.trimmingCharacters(in: .whitespacesAndNewlines)
         let temp = AIProvider(
             id: id, name: name.isEmpty ? "Test" : name,
-            baseURL: baseURL, model: active, models: models, kind: kind
+            baseURL: baseURL, model: active, models: models,
+            economyModel: economyModel.trimmingCharacters(in: .whitespacesAndNewlines),
+            kind: kind
         )
         isTesting = true
         testResult = nil
@@ -539,7 +613,9 @@ struct EditProviderView: View {
         var active = model.trimmingCharacters(in: .whitespacesAndNewlines)
         if active.isEmpty { active = models.first ?? "" }
         let updated = AIProvider(
-            id: id, name: name, baseURL: baseURL, model: active, models: models, kind: kind,
+            id: id, name: name, baseURL: baseURL, model: active, models: models,
+            economyModel: economyModel.trimmingCharacters(in: .whitespacesAndNewlines),
+            kind: kind,
             isDefaultSummary: isDefaultSummary, isDefaultTranslation: isDefaultTranslation
         )
         store.saveAIKeys(for: id, keys: apiKeys)

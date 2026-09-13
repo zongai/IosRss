@@ -24,8 +24,17 @@ struct ArticleListView: View {
         // 显式依赖 openedArticleID / readingIDs，保证返回后重新过滤
         let _ = openedArticleID
         let _ = readingIDs
-        let all = store.articlesForFeed(feed.id)
-            .sorted { ($0.publishedDate ?? .distantPast) > ($1.publishedDate ?? .distantPast) }
+        var all = store.articlesForFeed(feed.id)
+        if store.sortByInterestScore && store.smartInterestFilterEnabled {
+            all.sort {
+                let s0 = $0.interestScore ?? 0.5
+                let s1 = $1.interestScore ?? 0.5
+                if abs(s0 - s1) > 0.02 { return s0 > s1 }
+                return ($0.publishedDate ?? .distantPast) > ($1.publishedDate ?? .distantPast)
+            }
+        } else {
+            all.sort { ($0.publishedDate ?? .distantPast) > ($1.publishedDate ?? .distantPast) }
+        }
         if store.showReadArticles {
             return all
         }
@@ -72,6 +81,27 @@ struct ArticleListView: View {
                             Label("已读", systemImage: "envelope.open")
                         }
                         .tint(.green)
+                    }
+                    Button(role: .destructive) {
+                        store.markNotInterested(article)
+                    } label: {
+                        Label("不感兴趣", systemImage: "hand.thumbsdown")
+                    }
+                }
+                .contextMenu {
+                    Button {
+                        store.markNotInterested(article)
+                    } label: {
+                        Label("不感兴趣", systemImage: "hand.thumbsdown")
+                    }
+                    if article.isRead {
+                        Button { store.markAsUnread(article) } label: {
+                            Label("标为未读", systemImage: "envelope.badge")
+                        }
+                    } else {
+                        Button { store.markAsRead(article) } label: {
+                            Label("标为已读", systemImage: "envelope.open")
+                        }
                     }
                 }
             }
@@ -492,6 +522,12 @@ struct ArticleRow: View {
                     if !live.relativeTime.isEmpty {
                         Text("·").font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary.opacity(0.6))
                         Text(live.relativeTime).font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary)
+                    }
+                    if store.smartInterestFilterEnabled, let score = live.interestScore {
+                        Text("·").font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary.opacity(0.6))
+                        Text(String(format: "%.0f%%", score * 100))
+                            .font(.system(size: max(11, store.listSummaryFontSize - 2)))
+                            .foregroundStyle(score < store.lowInterestThreshold ? Color.orange : Color.secondary)
                     }
                 }
                 if !displaySummary.isEmpty {

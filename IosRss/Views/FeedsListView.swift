@@ -115,6 +115,22 @@ struct FeedsListView: View {
                                                       systemImage: prefixOn ? "link.badge.plus" : "link")
                                             }
                                         }
+                                        Menu {
+                                            ForEach(PromptPreset.allCases) { preset in
+                                                Button {
+                                                    store.setFeedSummaryPreset(feed.id, preset: preset)
+                                                } label: {
+                                                    let current = store.feeds.first(where: { $0.id == feed.id })?.summaryPromptPreset ?? .global
+                                                    if current == preset {
+                                                        Label(preset.displayName, systemImage: "checkmark")
+                                                    } else {
+                                                        Text(preset.displayName)
+                                                    }
+                                                }
+                                            }
+                                        } label: {
+                                            Label("摘要模板…", systemImage: "text.badge.star")
+                                        }
                                         Button { moveFeedTarget = feed } label: {
                                             Label("移动到分组…", systemImage: "folder")
                                         }

@@ -150,16 +150,24 @@ enum ContentBlockParser {
         if let regex = try? NSRegularExpression(pattern: imgPattern, options: .caseInsensitive) {
             let ns = working as NSString
             let matches = regex.matches(in: working, range: NSRange(location: 0, length: ns.length))
-            for match in matches {
+            // 先收集有效图，再按原顺序写入占位，跳过追踪图/极小图以免留下大块空白占位
+            var keepIndexByMatch: [Int: Int] = [:]
+            for (mi, match) in matches.enumerated() {
                 if match.numberOfRanges >= 2, let urlRange = Range(match.range(at: 1), in: working) {
                     var u = String(working[urlRange]).trimmingCharacters(in: .whitespacesAndNewlines)
                     if u.hasPrefix("//") { u = "https:" + u }
-                    if u.count > 8 { imageURLs.append(u) }
+                    guard u.count > 8, !isIgnorableImageURL(u) else { continue }
+                    keepIndexByMatch[mi] = imageURLs.count
+                    imageURLs.append(u)
                 }
             }
-            for (i, match) in matches.enumerated().reversed() {
+            for (mi, match) in matches.enumerated().reversed() {
                 if let fullRange = Range(match.range, in: working) {
-                    working.replaceSubrange(fullRange, with: "\n\n__IMG_\(i)__\n\n")
+                    if let kept = keepIndexByMatch[mi] {
+                        working.replaceSubrange(fullRange, with: "\n\n__IMG_\(kept)__\n\n")
+                    } else {
+                        working.replaceSubrange(fullRange, with: "\n")
+                    }
                 }
             }
         }
@@ -215,6 +223,8 @@ enum ContentBlockParser {
                 if let idx = Int(idxStr), idx >= 0, idx < imageURLs.count {
                     blocks.append(.image(imageURLs[idx]))
                 }
+            } else if isJunkParagraph(part) {
+                continue
             } else {
                 let style = ReaderTypography.resolve(text: part, preferChinese: prefersChineseTypography)
                 blocks.append(.paragraph(
@@ -231,6 +241,44 @@ enum ContentBlockParser {
             }
         }
         return blocks
+    }
+
+    /// 追踪图、推荐缩略图等，渲染只会留下空白占位
+    private static func isIgnorableImageURL(_ url: String) -> Bool {
+        let u = url.lowercased()
+        if u.contains("fly-images/") { return true }
+        if u.contains("1x1") || u.contains("pixel") || u.contains("spacer") { return true }
+        if u.contains("doubleclick") || u.contains("googlesyndication") { return true }
+        // 常见极小尺寸后缀
+        if u.range(of: #"-80x42\.(webp|png|jpg|jpeg)"#, options: .regularExpression) != nil { return true }
+        if u.range(of: #"-1x1\.(gif|png|jpg)"#, options: .regularExpression) != nil { return true }
+        return false
+    }
+
+    /// 广告脚本残留、订阅页脚碎片等，不应单独成段
+    private static func isJunkParagraph(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return true }
+        if t.count <= 2, t.allSatisfy({ $0.isNumber || $0 == "." || $0 == "·" }) { return true }
+        let lower = t.lowercased()
+        if lower.contains("adsbygoogle") { return true }
+        if lower.contains("(function(){") || lower.contains("function c(){") { return true }
+        if lower == "comments" || lower == "subscribe" { return true }
+        if lower.hasPrefix("become a member") { return true }
+        if lower.hasPrefix("understand china ev") { return true }
+        if lower.contains("real-time notifications when critical") { return true }
+        if lower.contains("2,000,000+ data points") { return true }
+        if lower.contains("most important news in your inbox") { return true }
+        if lower.contains("0 of 27 topics") { return true }
+        if lower.contains("bundle into one email") { return true }
+        if lower.contains("no spam · unsubscribe") || lower.contains("no spam · unsubscribe") { return true }
+        if lower.contains("join our telegram") || lower.contains("follow us on google news") { return true }
+        if lower.contains("recommended for you") { return true }
+        // 仅空白实体
+        if t.replacingOccurrences(of: "\u{00A0}", with: "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        return false
     }
 
     private static func makeAttributedParagraph(_ raw: String, linkHrefs: [String], linkTexts: [String]) -> AttributedString {

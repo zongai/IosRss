@@ -52,6 +52,22 @@ class AppStore {
     var fullContentURLPrefixEnabled: Bool = false
     /// 全文抓取 URL 前缀，例如 https://archive.is/ 或 https://12ft.io/
     var fullContentURLPrefix: String = ""
+    /// 全局摘要 Prompt 预设（源级可覆盖）
+    var globalSummaryPreset: PromptPreset = .standard
+    /// 智能兴趣过滤
+    var smartInterestFilterEnabled: Bool = false
+    /// 低分文章自动标已读（否则仅沉底）
+    var autoMarkLowInterestRead: Bool = false
+    /// 低于此分数视为低兴趣（0～1）
+    var lowInterestThreshold: Double = 0.35
+    /// 列表按兴趣分排序（高分优先）
+    var sortByInterestScore: Bool = false
+    /// 费用路由：短文本用 economyModel
+    var modelRoutingEnabled: Bool = false
+    /// 短文本阈值（字符数，strip 后）
+    var modelRoutingShortLimit: Int = 800
+    /// 兴趣词权重（本地画像）
+    var interestWeights: [String: Double] = [:]
     /// Edge TTS 音色；空则按正文语言自动选择
     var ttsVoice: String = ""
     /// TTS 语速倍数，1.0 为正常（0.5～2.0）
@@ -253,7 +269,11 @@ class AppStore {
     func toggleFavorite(_ article: Article) {
         for i in feeds.indices {
             if let j = feeds[i].articles.firstIndex(where: { $0.id == article.id }) {
+                let willFavorite = !feeds[i].articles[j].isFavorite
                 feeds[i].articles[j].isFavorite.toggle()
+                if willFavorite {
+                    boostInterest(from: feeds[i].articles[j])
+                }
             }
         }
         saveToStorage()
@@ -978,6 +998,9 @@ class AppStore {
                 }
             }
         }
+        if smartInterestFilterEnabled {
+            applyInterestScoring(toFeed: feedID)
+        }
         if persist {
             purgeOldReadArticles()
             pruneFullContentCache()
@@ -1433,7 +1456,8 @@ class AppStore {
     func callAIWithProviderKeys(
         provider: AIProvider,
         prompt: String,
-        maxTokens: Int
+        maxTokens: Int,
+        modelOverride: String? = nil
     ) async throws -> String {
         let allKeys = loadAIKeys(for: provider.id)
         guard !allKeys.isEmpty else { throw TranslationError.apiError("未配置 API Key") }
@@ -1445,7 +1469,13 @@ class AppStore {
             let idx = (start + offset) % keys.count
             let key = keys[idx]
             do {
-                let raw = try await callAI(prompt: prompt, provider: provider, apiKey: key, maxTokens: maxTokens)
+                let raw = try await callAI(
+                    prompt: prompt,
+                    provider: provider,
+                    apiKey: key,
+                    maxTokens: maxTokens,
+                    modelOverride: modelOverride
+                )
                 let text = AIResponseSanitizer.stripThinking(raw)
                 if text.isEmpty || Self.looksLikeAIErrorResponse(text) {
                     // 内容像错误：标记短暂冷却并换 Key
@@ -1469,12 +1499,22 @@ class AppStore {
         throw lastError
     }
 
+    /// 模型路由：短文本 + 已配置 economyModel 时用便宜模型；解释等强制强模型
+    func resolvedModel(for provider: AIProvider, probeText: String, preferStrong: Bool) -> String? {
+        guard modelRoutingEnabled, !preferStrong else { return nil }
+        let eco = provider.economyModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !eco.isEmpty, eco != provider.model else { return nil }
+        let len = HTMLUtils.stripTags(probeText).count
+        if len <= max(100, modelRoutingShortLimit) { return eco }
+        return nil
+    }
 
     /// 依次尝试可用 AI Provider，全部失败再抛错
     func callAIWithFailover(
         preferredID: UUID?,
         probeText: String,
         maxTokens: Int = 500,
+        preferStrongModel: Bool = false,
         buildPrompt: () -> String
     ) async throws -> (text: String, provider: AIProvider) {
         let providers = orderedAIProviders(preferredID: preferredID, forText: probeText)
@@ -1487,7 +1527,13 @@ class AppStore {
             guard !keys.isEmpty else { continue }
             triedAnyKey = true
             do {
-                let text = try await callAIWithProviderKeys(provider: provider, prompt: prompt, maxTokens: maxTokens)
+                let model = resolvedModel(for: provider, probeText: probeText, preferStrong: preferStrongModel)
+                let text = try await callAIWithProviderKeys(
+                    provider: provider,
+                    prompt: prompt,
+                    maxTokens: maxTokens,
+                    modelOverride: model
+                )
                 return (text, provider)
             } catch {
                 lastError = error
@@ -1908,14 +1954,24 @@ class AppStore {
         return final
     }
 
+    /// 解析源级 / 全局摘要 Prompt
+    func resolvedSummaryPrompt(for article: Article) -> String {
+        let feedPreset = feeds.first(where: { $0.id == article.feedID })?.summaryPromptPreset ?? .global
+        let preset: PromptPreset = (feedPreset == .global) ? globalSummaryPreset : feedPreset
+        if preset == .standard || preset == .global {
+            let custom = summaryPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !custom.isEmpty { return custom }
+        }
+        return preset.template
+    }
+
     func generateSummary(for article: Article) async throws -> (text: String, providerName: String) {
         let probe = [article.title, article.summary, article.content]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
         let content = String(HTMLUtils.stripTags(article.content).prefix(2500))
-        let template = summaryPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? AppStore.defaultSummaryPrompt : summaryPrompt
+        let template = resolvedSummaryPrompt(for: article)
         var prompt = template
             .replacingOccurrences(of: "{{lang}}", with: aiOutputLanguage.promptLabel)
             .replacingOccurrences(of: "{{title}}", with: article.title)
@@ -1923,13 +1979,40 @@ class AppStore {
         if !template.contains("{{title}}") && !template.contains("{{content}}") {
             prompt += "\n\n标题：\(article.title)\n\n内容：\(content)"
         }
+        let strong = content.count > modelRoutingShortLimit
         let (raw, provider) = try await callAIWithFailover(
             preferredID: defaultSummaryProviderID,
             probeText: probe,
             maxTokens: 600,
+            preferStrongModel: strong,
             buildPrompt: { prompt }
         )
         return (Self.cleanSummaryText(raw), provider.name)
+    }
+
+    /// 背景补全：人物 / 公司 / 事件各一句「是谁、为何重要」
+    func generateBackgroundNotes(for article: Article) async throws -> String {
+        let content = String(HTMLUtils.stripTags(article.content.isEmpty ? article.summary : article.content).prefix(1800))
+        let prompt = """
+从下面文章中识别重要的人物、公司、组织或事件。对每一项用{{lang}}写一句「这是谁/是什么 + 为何在此文中重要」。
+要求：
+- 最多 4 条，每条一行
+- 不要序号、不要标题、不要重复原文整句
+- 若无明显实体，输出「（无明显背景实体）」
+
+标题：\(article.title)
+
+正文：\(content)
+"""
+            .replacingOccurrences(of: "{{lang}}", with: aiOutputLanguage.promptLabel)
+        let (raw, _) = try await callAIWithFailover(
+            preferredID: defaultExplainProviderID ?? defaultSummaryProviderID,
+            probeText: content,
+            maxTokens: 400,
+            preferStrongModel: true,
+            buildPrompt: { prompt }
+        )
+        return Self.cleanSummaryText(raw)
     }
 
     static func migrateLegacyDefaultPrompts(translation: inout String, summary: inout String, explain: inout String) {
@@ -1988,9 +2071,125 @@ class AppStore {
             preferredID: preferred,
             probeText: clipped,
             maxTokens: 500,
+            preferStrongModel: true,
             buildPrompt: { prompt }
         )
         return result
+    }
+
+    // MARK: - 兴趣画像 / 评分 / 不感兴趣
+
+    /// 从标题+摘要提取简易词元（中文双字 + 英文词）
+    static func interestTokens(from text: String) -> [String] {
+        let plain = HTMLUtils.stripTags(text).lowercased()
+        var tokens: [String] = []
+        var seen = Set<String>()
+        let letters = plain.unicodeScalars.map { Character($0) }
+        // 英文词
+        let eng = plain.replacingOccurrences(of: #"[^a-z0-9\s]"#, with: " ", options: .regularExpression)
+        for w in eng.split(whereSeparator: { $0.isWhitespace }) {
+            let s = String(w)
+            guard s.count >= 3, seen.insert(s).inserted else { continue }
+            tokens.append(s)
+        }
+        // 中文双字
+        let chars = Array(plain).filter { ch in
+            ch.unicodeScalars.allSatisfy { s in
+                (s.value >= 0x4E00 && s.value <= 0x9FFF)
+            }
+        }
+        if chars.count >= 2 {
+            for i in 0..<(chars.count - 1) {
+                let bi = String(chars[i]) + String(chars[i + 1])
+                if seen.insert(bi).inserted { tokens.append(bi) }
+            }
+        }
+        _ = letters
+        return Array(tokens.prefix(40))
+    }
+
+    func scoreInterest(for article: Article) -> Double {
+        guard !interestWeights.isEmpty else { return 0.5 }
+        let tokens = Self.interestTokens(from: article.title + " " + article.summary)
+        guard !tokens.isEmpty else { return 0.5 }
+        var sum = 0.0
+        var hit = 0
+        for t in tokens {
+            if let w = interestWeights[t] {
+                sum += w
+                hit += 1
+            }
+        }
+        if hit == 0 { return 0.45 }
+        let avg = sum / Double(hit)
+        // 映射到 0～1
+        return min(1, max(0, 0.5 + avg * 0.5))
+    }
+
+    func applyInterestScoring(toFeed feedID: UUID? = nil) {
+        guard smartInterestFilterEnabled else { return }
+        let targets: [Int]
+        if let feedID, let i = feeds.firstIndex(where: { $0.id == feedID }) {
+            targets = [i]
+        } else {
+            targets = Array(feeds.indices)
+        }
+        var changed = false
+        for i in targets {
+            for j in feeds[i].articles.indices {
+                let article = feeds[i].articles[j]
+                let score = scoreInterest(for: article)
+                if feeds[i].articles[j].interestScore != score {
+                    feeds[i].articles[j].interestScore = score
+                    changed = true
+                }
+                if autoMarkLowInterestRead,
+                   !article.isFavorite,
+                   !article.isRead,
+                   score < lowInterestThreshold {
+                    feeds[i].articles[j].isRead = true
+                    rememberReadLink(feeds[i].articles[j].link)
+                    changed = true
+                }
+            }
+            feeds[i].unreadCount = feeds[i].articles.filter { !$0.isRead }.count
+        }
+        if changed { saveToStorage() }
+    }
+
+    /// 用户点「不感兴趣」：降权相关词、标已读
+    func markNotInterested(_ article: Article) {
+        let tokens = Self.interestTokens(from: article.title + " " + article.summary)
+        for t in tokens {
+            let cur = interestWeights[t] ?? 0
+            interestWeights[t] = max(-2.0, cur - 0.35)
+        }
+        // 收藏正向信号：打开/收藏可在别处加分；这里只处理负反馈
+        markAsRead(article)
+        if let i = feeds.firstIndex(where: { $0.id == article.feedID }),
+           let j = feeds[i].articles.firstIndex(where: { $0.id == article.id }) {
+            feeds[i].articles[j].interestScore = scoreInterest(for: feeds[i].articles[j])
+        }
+        persistSettings()
+        saveToStorage()
+    }
+
+    /// 正向反馈（收藏时调用）
+    func boostInterest(from article: Article) {
+        let tokens = Self.interestTokens(from: article.title + " " + article.summary)
+        for t in tokens.prefix(12) {
+            let cur = interestWeights[t] ?? 0
+            interestWeights[t] = min(2.0, cur + 0.25)
+        }
+        persistSettings()
+    }
+
+    func setFeedSummaryPreset(_ feedID: UUID, preset: PromptPreset) {
+        guard let idx = feeds.firstIndex(where: { $0.id == feedID }) else { return }
+        var feed = feeds[idx]
+        feed.summaryPromptPreset = preset
+        feeds[idx] = feed
+        saveToStorage()
     }
 
     func renameFeed(_ feedID: UUID, to name: String) {
@@ -2196,6 +2395,16 @@ class AppStore {
         UserDefaults.standard.set(fullContentCacheDays, forKey: "fullContentCacheDays")
         UserDefaults.standard.set(fullContentURLPrefixEnabled, forKey: "fullContentURLPrefixEnabled")
         UserDefaults.standard.set(fullContentURLPrefix, forKey: "fullContentURLPrefix")
+        UserDefaults.standard.set(globalSummaryPreset.rawValue, forKey: "globalSummaryPreset")
+        UserDefaults.standard.set(smartInterestFilterEnabled, forKey: "smartInterestFilterEnabled")
+        UserDefaults.standard.set(autoMarkLowInterestRead, forKey: "autoMarkLowInterestRead")
+        UserDefaults.standard.set(lowInterestThreshold, forKey: "lowInterestThreshold")
+        UserDefaults.standard.set(sortByInterestScore, forKey: "sortByInterestScore")
+        UserDefaults.standard.set(modelRoutingEnabled, forKey: "modelRoutingEnabled")
+        UserDefaults.standard.set(modelRoutingShortLimit, forKey: "modelRoutingShortLimit")
+        if let data = try? JSONEncoder().encode(interestWeights) {
+            UserDefaults.standard.set(data, forKey: "interestWeights")
+        }
         UserDefaults.standard.set(ttsVoice, forKey: "ttsVoice")
         UserDefaults.standard.set(ttsRate, forKey: "ttsRate")
         UserDefaults.standard.set(colorTheme.rawValue, forKey: "colorTheme")
@@ -2285,6 +2494,24 @@ class AppStore {
         fullContentCacheDays = UserDefaults.standard.object(forKey: "fullContentCacheDays") as? Int ?? 30
         fullContentURLPrefixEnabled = UserDefaults.standard.object(forKey: "fullContentURLPrefixEnabled") as? Bool ?? false
         fullContentURLPrefix = UserDefaults.standard.string(forKey: "fullContentURLPrefix") ?? ""
+        if let raw = UserDefaults.standard.string(forKey: "globalSummaryPreset"),
+           let p = PromptPreset(rawValue: raw) {
+            globalSummaryPreset = p == .global ? .standard : p
+        }
+        smartInterestFilterEnabled = UserDefaults.standard.object(forKey: "smartInterestFilterEnabled") as? Bool ?? false
+        autoMarkLowInterestRead = UserDefaults.standard.object(forKey: "autoMarkLowInterestRead") as? Bool ?? false
+        if UserDefaults.standard.object(forKey: "lowInterestThreshold") != nil {
+            lowInterestThreshold = min(1, max(0, UserDefaults.standard.double(forKey: "lowInterestThreshold")))
+        }
+        sortByInterestScore = UserDefaults.standard.object(forKey: "sortByInterestScore") as? Bool ?? false
+        modelRoutingEnabled = UserDefaults.standard.object(forKey: "modelRoutingEnabled") as? Bool ?? false
+        if UserDefaults.standard.object(forKey: "modelRoutingShortLimit") != nil {
+            modelRoutingShortLimit = max(100, UserDefaults.standard.integer(forKey: "modelRoutingShortLimit"))
+        }
+        if let data = UserDefaults.standard.data(forKey: "interestWeights"),
+           let map = try? JSONDecoder().decode([String: Double].self, from: data) {
+            interestWeights = map
+        }
         ttsVoice = UserDefaults.standard.string(forKey: "ttsVoice") ?? ""
         if UserDefaults.standard.object(forKey: "ttsRate") != nil {
             ttsRate = min(2.0, max(0.5, UserDefaults.standard.double(forKey: "ttsRate")))

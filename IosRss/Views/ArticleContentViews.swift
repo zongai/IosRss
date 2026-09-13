@@ -2,12 +2,12 @@ import SwiftUI
 import SafariServices
 
 struct ArticleContentView: View {
-    var onHighlight: ((String) -> Void)? = nil
     @Environment(AppStore.self) private var store
     let html: String
     let fontSize: Double
     /// 译文默认按中文排版；原文按内容语言自动判断
     var prefersChineseTypography: Bool = false
+    var onHighlight: ((String) -> Void)? = nil
     @State private var browserURL: URL?
     @State private var explainQuery: String?
     @State private var explainResult: String?

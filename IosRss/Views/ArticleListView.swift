@@ -341,6 +341,7 @@ struct ArticleListView: View {
     }
 
     private func runTranslationJobs(_ jobs: [ListTranslationJob]) async {
+        let session = store.beginListTranslationSession()
         isTranslatingAll = true
         translationDone = 0
         translationTotal = jobs.count
@@ -348,6 +349,12 @@ struct ArticleListView: View {
         // 整表一次交给底层并发池，避免「小批串行等待」把并发抵消掉
         // 仍按 batch 切片只为分段刷新进度与列表
         for batch in jobs.chunked(into: translationBatchSize) {
+            guard store.isListTranslationSessionActive(session) else {
+                isTranslatingAll = false
+                translationTotal = 0
+                translationDone = 0
+                return
+            }
             let results = await store.translateTexts(batch.map(\.text))
             var updates: [(id: UUID, title: String?, summary: String?)] = []
             updates.reserveCapacity(batch.count)
@@ -529,6 +536,15 @@ struct ArticleRow: View {
                             .font(.system(size: max(11, store.listSummaryFontSize - 2)))
                             .foregroundStyle(score < store.lowInterestThreshold ? Color.orange : Color.secondary)
                     }
+                }
+                if store.smartInterestFilterEnabled,
+                   let reason = store.interestExplanation(for: live),
+                   live.interestScore != nil,
+                   (live.interestScore! < store.lowInterestThreshold || reason.contains("降权")) {
+                    Text(reason)
+                        .font(.system(size: max(10, store.listSummaryFontSize - 3)))
+                        .foregroundStyle(.orange.opacity(0.9))
+                        .lineLimit(2)
                 }
                 if !displaySummary.isEmpty {
                     Text(displaySummary)

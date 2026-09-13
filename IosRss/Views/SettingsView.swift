@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @State private var showAdvancedSettings = false
     @Environment(AppStore.self) private var store
 
     private var ttsRateLabel: String {
@@ -140,20 +141,24 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    NavigationLink(destination: ArticleBlacklistSettingsView()) {
-                        HStack {
-                            Text("文章黑名单")
-                            Spacer()
-                            if !store.articleBlacklistTerms.isEmpty {
-                                Text("\(store.articleBlacklistTerms.count)")
-                                    .foregroundStyle(.secondary)
+                    if showAdvancedSettings {
+                        NavigationLink(destination: ArticleBlacklistSettingsView()) {
+                            HStack {
+                                Text("文章黑名单")
+                                Spacer()
+                                if !store.articleBlacklistTerms.isEmpty {
+                                    Text("\(store.articleBlacklistTerms.count)")
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
                 } header: {
                     Text("翻译与 AI")
                 } footer: {
-                    Text("翻译目标语言、引擎与 Key 在「翻译」；模型、Prompt、AI 黑名单在「AI」。文章黑名单命中后自动标已读。")
+                    Text(showAdvancedSettings
+                          ? "翻译目标语言、引擎与 Key 在「翻译」；模型、Prompt、AI 黑名单在「AI」。文章黑名单命中后自动标已读。"
+                          : "常用：设置翻译语言与一键翻译引擎。更多 AI / 黑名单请点右上角「高级」。")
                 }
 
                 // MARK: 朗读
@@ -188,6 +193,7 @@ struct SettingsView: View {
                     Text("使用 Microsoft Edge 在线语音，无需 API Key。语速在合成时生效，切换后需重新点朗读。")
                 }
 
+                if showAdvancedSettings {
                 // MARK: 数据与清理
                 Section {
                     Stepper(value: $store.readRetentionDays, in: 0...365) {
@@ -272,6 +278,7 @@ struct SettingsView: View {
                 } footer: {
                     Text("默认不含 API Key。订阅源请用 OPML 单独导出。")
                 }
+                } // showAdvancedSettings: 数据与备份
 
                 // MARK: 关于
                 Section {

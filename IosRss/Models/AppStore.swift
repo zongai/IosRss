@@ -11,9 +11,15 @@ class AppStore {
     var selectedFeedID: UUID?
     var isLoading = false
     var isRefreshingAll = false
+    /// 翻译引擎链与限流（与 UI 状态分离）
+    let translationCoordinator = TranslationCoordinator()
     var refreshProgressCurrent = 0
     var refreshProgressTotal = 0
     var refreshProgressTitle = ""
+    /// 刷新会话号：递增即取消进行中的 refreshAll
+    private var refreshSessionID = 0
+    var listTranslationProgressText = ""
+    private(set) var listTranslationSessionID = 0
     var errorMessage: String?
 
     var fontSize: Double = 17
@@ -29,7 +35,6 @@ class AppStore {
     /// 翻译时按此顺序尝试引擎；遇限流/不可用自动切下一个
     var translationEngineChain: [TranslationEngine] = TranslationEngine.allCases
     /// 引擎级限流冷却（引擎 rawValue → 冷却截止时间）
-    private var translationEngineCooldownUntil: [String: Date] = [:]
     var aiProviders: [AIProvider] = [
         AIProvider(id: UUID(), name: "OpenAI", baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini", kind: "openai"),
         AIProvider(id: UUID(), name: "Anthropic", baseURL: "https://api.anthropic.com/v1", model: "claude-3-haiku-20240307", kind: "openai"),
@@ -191,13 +196,11 @@ class AppStore {
     }
 
     private func persistReadLinks() {
-        UserDefaults.standard.set(Array(readArticleLinks), forKey: "readArticleLinks")
+        FeedRepository.saveReadLinks(readArticleLinks)
     }
 
     private func loadReadLinks() {
-        if let arr = UserDefaults.standard.array(forKey: "readArticleLinks") as? [String] {
-            readArticleLinks = Set(arr)
-        }
+        readArticleLinks = FeedRepository.loadReadLinks()
     }
 
     private func rememberReadLink(_ link: String) {
@@ -755,15 +758,12 @@ class AppStore {
     }
 
     private func persistCollapsedGroups() {
-        UserDefaults.standard.set(collapsedGroupIDs.map(\.uuidString), forKey: "collapsedGroupIDs")
-        UserDefaults.standard.set(isUngroupedCollapsed, forKey: "isUngroupedCollapsed")
+        FeedRepository.saveCollapsedState(groupIDs: collapsedGroupIDs, isUngroupedCollapsed: isUngroupedCollapsed)
     }
 
     private func loadCollapsedGroups() {
-        if let arr = UserDefaults.standard.array(forKey: "collapsedGroupIDs") as? [String] {
-            collapsedGroupIDs = Set(arr.compactMap { UUID(uuidString: $0) })
-        }
-        isUngroupedCollapsed = UserDefaults.standard.bool(forKey: "isUngroupedCollapsed")
+        collapsedGroupIDs = FeedRepository.loadCollapsedGroupIDs()
+        isUngroupedCollapsed = FeedRepository.loadIsUngroupedCollapsed()
     }
 
     func purgeOldReadArticles() {
@@ -835,7 +835,7 @@ class AppStore {
             }
         }
         do {
-            let data = try await Self.fetchFeedData(from: url)
+            let data = try await FeedRefreshService.fetchFeedData(from: url)
             OfflineCache.saveFeedXML(url: urlStr, data: data)
             applyParsedFeed(data: data, feedID: feedID, idx: idx, urlStr: urlStr, persist: persist)
             return nil
@@ -846,7 +846,7 @@ class AppStore {
                 comps.scheme = "https"
                 if let httpsURL = comps.url, NetworkURLPolicy.isAllowed(httpsURL) {
                     do {
-                        let data = try await Self.fetchFeedData(from: httpsURL)
+                        let data = try await FeedRefreshService.fetchFeedData(from: httpsURL)
                         OfflineCache.saveFeedXML(url: urlStr, data: data)
                         applyParsedFeed(data: data, feedID: feedID, idx: idx, urlStr: urlStr, persist: persist)
                         if let i = feeds.firstIndex(where: { $0.id == feedID }) {
@@ -869,45 +869,6 @@ class AppStore {
                 return msg
             }
         }
-    }
-
-    /// 订阅源拉取专用 Session：提高并发连接数，缩短超时
-    private enum FeedHTTP {
-        static let session: URLSession = {
-            let cfg = URLSessionConfiguration.ephemeral
-            cfg.timeoutIntervalForRequest = 12
-            cfg.timeoutIntervalForResource = 18
-            cfg.httpMaximumConnectionsPerHost = 6
-            cfg.waitsForConnectivity = false
-            cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
-            return URLSession(configuration: cfg)
-        }()
-        /// 全量刷新时的并行源数量
-        static let refreshConcurrency = 8
-    }
-
-    private static func fetchFeedData(from url: URL) async throws -> Data {
-        // RSSHub：官方站常被 Cloudflare 拦，自动换同源路径镜像
-        if RSSHubSupport.isRSSHubURL(url) {
-            let (data, _) = try await FeedDiscovery.fetchRSSHubFeed(from: url)
-            return data
-        }
-        var request = URLRequest(url: url, timeoutInterval: 12)
-        request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
-            forHTTPHeaderField: "User-Agent"
-        )
-        request.setValue("application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8", forHTTPHeaderField: "Accept")
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        let (data, response) = try await FeedHTTP.session.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw URLError(.badServerResponse)
-        }
-        // 误返回 HTML 门禁页时给出明确错误，避免当成空 Feed
-        if RSSHubSupport.looksLikeCloudflareOrHTMLGate(data) {
-            throw URLError(.noPermissionsToReadFile)
-        }
-        return data
     }
 
     private static func friendlyNetworkError(_ error: Error) -> String {
@@ -1010,9 +971,39 @@ class AppStore {
         }
     }
 
+    func cancelRefreshAll() {
+        refreshSessionID += 1
+        withAnimation(.easeInOut(duration: 0.3)) {
+            isRefreshingAll = false
+            isLoading = false
+            refreshProgressCurrent = 0
+            refreshProgressTotal = 0
+            refreshProgressTitle = ""
+        }
+        // 取消时仍落盘当前已拉到的数据
+        saveToStorage()
+    }
+
+    func cancelListTranslation() {
+        listTranslationSessionID += 1
+        listTranslationProgressText = ""
+    }
+
+    @discardableResult
+    func beginListTranslationSession() -> Int {
+        listTranslationSessionID += 1
+        return listTranslationSessionID
+    }
+
+    func isListTranslationSessionActive(_ session: Int) -> Bool {
+        session == listTranslationSessionID
+    }
+
     func refreshAll() async {
         let snapshot = feeds
         guard !snapshot.isEmpty else { return }
+        refreshSessionID += 1
+        let session = refreshSessionID
         withAnimation(.easeInOut(duration: 0.28)) {
             isRefreshingAll = true
             isLoading = true
@@ -1021,11 +1012,16 @@ class AppStore {
             refreshProgressTitle = "准备中…"
         }
         var failures: [String] = []
-        let limit = FeedHTTP.refreshConcurrency
+        let limit = max(1, FeedRefreshService.HTTP.refreshConcurrency)
         var completed = 0
         // 按批次并行，避免同时打满所有源
         var offset = 0
+        var cancelled = false
         while offset < snapshot.count {
+            if session != refreshSessionID {
+                cancelled = true
+                break
+            }
             let end = min(offset + limit, snapshot.count)
             let batch = Array(snapshot[offset..<end])
             await withTaskGroup(of: (String, String?).self) { group in
@@ -1033,11 +1029,20 @@ class AppStore {
                     let title = feed.title.isEmpty ? "未命名源" : feed.title
                     let id = feed.id
                     group.addTask { @MainActor in
+                        // 已取消则跳过网络
+                        if session != self.refreshSessionID {
+                            return (title, nil)
+                        }
                         let err = await self.refreshFeedResult(id, manageLoading: false, persist: false)
                         return (title, err)
                     }
                 }
                 for await (title, err) in group {
+                    if session != refreshSessionID {
+                        cancelled = true
+                        group.cancelAll()
+                        break
+                    }
                     completed += 1
                     withAnimation(.easeInOut(duration: 0.22)) {
                         refreshProgressCurrent = completed
@@ -1046,18 +1051,25 @@ class AppStore {
                     if let err { failures.append(err) }
                 }
             }
+            if cancelled { break }
             offset = end
+            // 批次间让出主线程，降低列表卡顿
+            await Task.yield()
         }
         // 全部源刷新完后统一落盘，避免每源写一次磁盘
         purgeOldReadArticles()
         pruneFullContentCache()
         saveToStorage()
+        if session != refreshSessionID {
+            return
+        }
         // 收尾：先走到 100%，再淡出，避免进度条突然消失
         withAnimation(.easeInOut(duration: 0.28)) {
-            refreshProgressCurrent = snapshot.count
-            refreshProgressTitle = "完成"
+            refreshProgressCurrent = cancelled ? completed : snapshot.count
+            refreshProgressTitle = cancelled ? "已取消" : "完成"
         }
         try? await Task.sleep(nanoseconds: 320_000_000)
+        if session != refreshSessionID { return }
         withAnimation(.easeInOut(duration: 0.35)) {
             isRefreshingAll = false
             isLoading = false
@@ -1548,32 +1560,12 @@ class AppStore {
 
     /// 实际用于翻译的引擎顺序（去重、过滤冷却中的引擎；空则回退全部）
     func effectiveTranslationChain() -> [TranslationEngine] {
-        var seen = Set<TranslationEngine>()
-        var list: [TranslationEngine] = []
-        let source = translationEngineChain.isEmpty ? TranslationEngine.allCases : translationEngineChain
-        for e in source {
-            guard seen.insert(e).inserted else { continue }
-            if isTranslationEngineCooling(e) { continue }
-            list.append(e)
-        }
-        // 全部在冷却时忽略冷却，按链顺序硬试
-        if list.isEmpty {
-            seen.removeAll()
-            for e in source {
-                guard seen.insert(e).inserted else { continue }
-                list.append(e)
-            }
-        }
-        return list
+        translationCoordinator.effectiveChain(configured: translationEngineChain)
     }
 
     /// 将某引擎移到链中指定位置 / 增删后同步 defaultTranslationEngine
     func setTranslationEngineChain(_ chain: [TranslationEngine]) {
-        var seen = Set<TranslationEngine>()
-        translationEngineChain = chain.filter { seen.insert($0).inserted }
-        if translationEngineChain.isEmpty {
-            translationEngineChain = [.google]
-        }
+        translationEngineChain = TranslationCoordinator.normalizedChain(chain)
         defaultTranslationEngine = translationEngineChain[0]
         persistSettings()
     }
@@ -1596,14 +1588,11 @@ class AppStore {
     }
 
     private func isTranslationEngineCooling(_ engine: TranslationEngine) -> Bool {
-        guard let until = translationEngineCooldownUntil[engine.rawValue] else { return false }
-        if until > Date() { return true }
-        translationEngineCooldownUntil[engine.rawValue] = nil
-        return false
+        translationCoordinator.isCooling(engine)
     }
 
     private func markTranslationEngineLimited(_ engine: TranslationEngine, minutes: Double = 5) {
-        translationEngineCooldownUntil[engine.rawValue] = Date().addingTimeInterval(minutes * 60)
+        translationCoordinator.markLimited(engine, minutes: minutes)
     }
 
     /// 引擎是否已配置到可调用（缺 Key 的引擎跳过）
@@ -1674,15 +1663,11 @@ class AppStore {
 
     /// 解析实际并发度：显式参数 > 用户设置 > 引擎默认（偏稳，避免限流导致大片失败）
     func resolvedTranslationConcurrency(for engine: TranslationEngine, override: Int? = nil) -> Int {
-        if let o = override, o > 0 { return min(8, o) }
-        if translationConcurrency > 0 { return min(8, translationConcurrency) }
-        switch engine {
-        case .ai: return 4
-        case .google: return 1
-        case .mymemory, .lingva: return 3
-        case .microsoft: return 3
-        case .deepl: return 3
-        }
+        translationCoordinator.resolvedConcurrency(
+            for: engine,
+            userSetting: translationConcurrency,
+            override: override
+        )
     }
 
     func translateTexts(_ texts: [String], concurrency: Int? = nil) async -> [String?] {
@@ -2275,6 +2260,48 @@ class AppStore {
         return Array(tokens.prefix(40))
     }
 
+    /// 全库搜索：标题、摘要、译文、已抓全文
+    func searchArticles(query: String, limit: Int = 50) -> [Article] {
+        ArticleSearchService.search(feeds: feeds, query: query, limit: limit)
+    }
+
+    /// 兴趣分可解释：命中的正/负向词
+    func interestExplanation(for article: Article) -> String? {
+        guard smartInterestFilterEnabled, !interestWeights.isEmpty else { return nil }
+        let tokens = Self.interestTokens(from: article.title + " " + article.summary)
+        var pos: [(String, Double)] = []
+        var neg: [(String, Double)] = []
+        for t in tokens {
+            guard let w = interestWeights[t] else { continue }
+            if w > 0.05 { pos.append((t, w)) }
+            else if w < -0.05 { neg.append((t, w)) }
+        }
+        pos.sort { $0.1 > $1.1 }
+        neg.sort { $0.1 < $1.1 }
+        var parts: [String] = []
+        if let s = article.interestScore {
+            parts.append(String(format: "兴趣分 %.0f%%", s * 100))
+        }
+        if !neg.isEmpty {
+            let words = neg.prefix(4).map(\.0).joined(separator: "、")
+            parts.append("降权：\(words)")
+        }
+        if !pos.isEmpty {
+            let words = pos.prefix(4).map(\.0).joined(separator: "、")
+            parts.append("加权：\(words)")
+        }
+        if article.interestScore != nil, article.interestScore! < lowInterestThreshold {
+            parts.append("低于阈值，可能沉底或自动已读")
+        }
+        guard parts.count > 1 || (article.interestScore != nil && (!pos.isEmpty || !neg.isEmpty)) else {
+            if let s = article.interestScore {
+                return String(format: "兴趣分 %.0f%%（无关键词命中，中性）", s * 100)
+            }
+            return nil
+        }
+        return parts.joined(separator: " · ")
+    }
+
     func scoreInterest(for article: Article) -> Double {
         guard !interestWeights.isEmpty else { return 0.5 }
         let tokens = Self.interestTokens(from: article.title + " " + article.summary)
@@ -2539,218 +2566,147 @@ class AppStore {
         return SubscriptionImportResult(added: 0, skipped: 0, kind: "empty")
     }
 
-    func saveToStorage() {
-        OfflineCache.saveFeeds(feeds)
-        if let data = try? JSONEncoder().encode(groups) { UserDefaults.standard.set(data, forKey: "feedGroups") }
-        persistCollapsedGroups()
-        persistReadLinks()
-        UserDefaults.standard.set(fontSize, forKey: "fontSize")
-        UserDefaults.standard.set(listTitleFontSize, forKey: "listTitleFontSize")
-        UserDefaults.standard.set(listSummaryFontSize, forKey: "listSummaryFontSize")
-        UserDefaults.standard.set(readerTitleFontSize, forKey: "readerTitleFontSize")
-        UserDefaults.standard.set(aiSummaryFontSize, forKey: "aiSummaryFontSize")
-        UserDefaults.standard.set(feedTitleFontSize, forKey: "feedTitleFontSize")
-        UserDefaults.standard.set(groupTitleFontSize, forKey: "groupTitleFontSize")
-        UserDefaults.standard.set(titleDisplayMode.rawValue, forKey: "titleDisplayMode")
-        UserDefaults.standard.set(defaultTranslationEngine.rawValue, forKey: "defaultTranslationEngine")
-        UserDefaults.standard.set(translationEngineChain.map(\.rawValue), forKey: "translationEngineChain")
-        UserDefaults.standard.set(showReadArticles, forKey: "showReadArticles")
-        UserDefaults.standard.set(translationPrompt, forKey: "translationPrompt")
-        UserDefaults.standard.set(summaryPrompt, forKey: "summaryPrompt")
-        UserDefaults.standard.set(explainPrompt, forKey: "explainPrompt")
-        UserDefaults.standard.set(readRetentionDays, forKey: "readRetentionDays")
-        UserDefaults.standard.set(fullContentCacheDays, forKey: "fullContentCacheDays")
-        UserDefaults.standard.set(fullContentURLPrefixEnabled, forKey: "fullContentURLPrefixEnabled")
-        UserDefaults.standard.set(fullContentURLPrefix, forKey: "fullContentURLPrefix")
-        UserDefaults.standard.set(globalSummaryPresetID, forKey: "globalSummaryPresetID")
-        if let data = try? JSONEncoder().encode(summaryPromptPresets) {
-            UserDefaults.standard.set(data, forKey: "summaryPromptPresets")
-        }
-        UserDefaults.standard.set(smartInterestFilterEnabled, forKey: "smartInterestFilterEnabled")
-        UserDefaults.standard.set(autoMarkLowInterestRead, forKey: "autoMarkLowInterestRead")
-        UserDefaults.standard.set(lowInterestThreshold, forKey: "lowInterestThreshold")
-        UserDefaults.standard.set(sortByInterestScore, forKey: "sortByInterestScore")
-        UserDefaults.standard.set(modelRoutingEnabled, forKey: "modelRoutingEnabled")
-        UserDefaults.standard.set(modelRoutingShortLimit, forKey: "modelRoutingShortLimit")
-        if let data = try? JSONEncoder().encode(interestWeights) {
-            UserDefaults.standard.set(data, forKey: "interestWeights")
-        }
-        UserDefaults.standard.set(ttsVoice, forKey: "ttsVoice")
-        UserDefaults.standard.set(ttsRate, forKey: "ttsRate")
-        UserDefaults.standard.set(colorTheme.rawValue, forKey: "colorTheme")
-        UserDefaults.standard.set(appearanceMode.rawValue, forKey: "appearanceMode")
-        UserDefaults.standard.set(appFontFamily.rawValue, forKey: "appFontFamily")
-        UserDefaults.standard.set(feedSortMode.rawValue, forKey: "feedSortMode")
-        UserDefaults.standard.set(targetLanguage.rawValue, forKey: "targetLanguage")
-        UserDefaults.standard.set(translationConcurrency, forKey: "translationConcurrency")
-        UserDefaults.standard.set(microsoftTranslateRegion, forKey: "microsoftTranslateRegion")
-        UserDefaults.standard.set(lingvaCustomBase, forKey: "lingvaCustomBase")
-        UserDefaults.standard.set(aiOutputLanguage.rawValue, forKey: "aiOutputLanguage")
-        if let data = try? JSONEncoder().encode(aiProviders) { UserDefaults.standard.set(data, forKey: "aiProviders") }
-        if let id = defaultSummaryProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultSummaryProviderID") }
-        if let id = defaultTranslationProviderID { UserDefaults.standard.set(id.uuidString, forKey: "defaultTranslationProviderID") }
-        if let id = defaultExplainProviderID {
-            UserDefaults.standard.set(id.uuidString, forKey: "defaultExplainProviderID")
-        } else {
-            UserDefaults.standard.removeObject(forKey: "defaultExplainProviderID")
-        }
-        if let data = try? JSONEncoder().encode(aiBlacklistTerms) { UserDefaults.standard.set(data, forKey: "aiBlacklistTerms") }
-        if let data = try? JSONEncoder().encode(articleBlacklistTerms) { UserDefaults.standard.set(data, forKey: "articleBlacklistTerms") }
-        if let id = aiBlacklistFallbackProviderID {
-            UserDefaults.standard.set(id.uuidString, forKey: "aiBlacklistFallbackProviderID")
-        } else {
-            UserDefaults.standard.removeObject(forKey: "aiBlacklistFallbackProviderID")
-        }
-        if let id = defaultChatProviderID {
-            UserDefaults.standard.set(id.uuidString, forKey: "defaultChatProviderID")
-        } else {
-            UserDefaults.standard.removeObject(forKey: "defaultChatProviderID")
-        }
-        OfflineCache.saveChatConversations(chatConversations)
+    func makePersistedSettings() -> PersistedAppSettings {
+        PersistedAppSettings(
+            fontSize: fontSize,
+            listTitleFontSize: listTitleFontSize,
+            listSummaryFontSize: listSummaryFontSize,
+            readerTitleFontSize: readerTitleFontSize,
+            aiSummaryFontSize: aiSummaryFontSize,
+            feedTitleFontSize: feedTitleFontSize,
+            groupTitleFontSize: groupTitleFontSize,
+            titleDisplayMode: titleDisplayMode,
+            defaultTranslationEngine: defaultTranslationEngine,
+            translationEngineChain: translationEngineChain,
+            showReadArticles: showReadArticles,
+            translationPrompt: translationPrompt,
+            summaryPrompt: summaryPrompt,
+            explainPrompt: explainPrompt,
+            readRetentionDays: readRetentionDays,
+            fullContentCacheDays: fullContentCacheDays,
+            fullContentURLPrefixEnabled: fullContentURLPrefixEnabled,
+            fullContentURLPrefix: fullContentURLPrefix,
+            globalSummaryPresetID: globalSummaryPresetID,
+            summaryPromptPresets: summaryPromptPresets,
+            smartInterestFilterEnabled: smartInterestFilterEnabled,
+            autoMarkLowInterestRead: autoMarkLowInterestRead,
+            lowInterestThreshold: lowInterestThreshold,
+            sortByInterestScore: sortByInterestScore,
+            modelRoutingEnabled: modelRoutingEnabled,
+            modelRoutingShortLimit: modelRoutingShortLimit,
+            interestWeights: interestWeights,
+            ttsVoice: ttsVoice,
+            ttsRate: ttsRate,
+            colorThemeRaw: colorTheme.rawValue,
+            appearanceModeRaw: appearanceMode.rawValue,
+            appFontFamilyRaw: appFontFamily.rawValue,
+            feedSortModeRaw: feedSortMode.rawValue,
+            targetLanguage: targetLanguage,
+            translationConcurrency: translationConcurrency,
+            microsoftTranslateRegion: microsoftTranslateRegion,
+            lingvaCustomBase: lingvaCustomBase,
+            aiOutputLanguage: aiOutputLanguage,
+            aiProviders: aiProviders,
+            defaultSummaryProviderID: defaultSummaryProviderID,
+            defaultTranslationProviderID: defaultTranslationProviderID,
+            defaultExplainProviderID: defaultExplainProviderID,
+            aiBlacklistTerms: aiBlacklistTerms,
+            articleBlacklistTerms: articleBlacklistTerms,
+            aiBlacklistFallbackProviderID: aiBlacklistFallbackProviderID,
+            defaultChatProviderID: defaultChatProviderID
+        )
     }
 
-    func loadFromStorage() {
-        if let loaded = OfflineCache.loadFeeds() { feeds = loaded }
-        if let data = UserDefaults.standard.data(forKey: "feedGroups"),
-           let decoded = try? JSONDecoder().decode([FeedGroup].self, from: data) { groups = decoded }
-        loadCollapsedGroups()
-        loadReadLinks()
-        fontSize = UserDefaults.standard.object(forKey: "fontSize") as? Double ?? 17
-        listTitleFontSize = UserDefaults.standard.object(forKey: "listTitleFontSize") as? Double ?? 18
-        listSummaryFontSize = UserDefaults.standard.object(forKey: "listSummaryFontSize") as? Double ?? 15
-        readerTitleFontSize = UserDefaults.standard.object(forKey: "readerTitleFontSize") as? Double ?? 24
-        aiSummaryFontSize = UserDefaults.standard.object(forKey: "aiSummaryFontSize") as? Double ?? 22
-        feedTitleFontSize = UserDefaults.standard.object(forKey: "feedTitleFontSize") as? Double ?? 17
-        groupTitleFontSize = UserDefaults.standard.object(forKey: "groupTitleFontSize") as? Double ?? 13
-        if let raw = UserDefaults.standard.string(forKey: "titleDisplayMode"),
-           let mode = TitleDisplayMode(rawValue: raw) { titleDisplayMode = mode }
-        if let s = UserDefaults.standard.string(forKey: "microsoftTranslateRegion"), !s.isEmpty { microsoftTranslateRegion = s }
-        if let s = UserDefaults.standard.string(forKey: "lingvaCustomBase") { lingvaCustomBase = s }
-        if let raw = UserDefaults.standard.string(forKey: "defaultTranslationEngine") {
-            if raw.contains("Lingva") || raw.contains("Libre") {
-                defaultTranslationEngine = .google
-            } else if let engine = TranslationEngine(rawValue: raw) {
-                defaultTranslationEngine = engine
-            }
-        }
-        if let arr = UserDefaults.standard.array(forKey: "translationEngineChain") as? [String] {
-            let parsed = arr.compactMap { TranslationEngine(rawValue: $0) }
-            if !parsed.isEmpty {
-                var seen = Set<TranslationEngine>()
-                translationEngineChain = parsed.filter { seen.insert($0).inserted }
-            }
-        } else {
-            // 兼容旧版：默认引擎放首位，其余按 allCases 补齐
-            var chain = [defaultTranslationEngine]
-            for e in TranslationEngine.allCases where e != defaultTranslationEngine {
-                chain.append(e)
-            }
-            translationEngineChain = chain
-        }
-        if let first = translationEngineChain.first {
-            defaultTranslationEngine = first
-        }
-        showReadArticles = UserDefaults.standard.object(forKey: "showReadArticles") as? Bool ?? false
-        if let p = UserDefaults.standard.string(forKey: "translationPrompt") { translationPrompt = p }
-        if let p = UserDefaults.standard.string(forKey: "summaryPrompt") { summaryPrompt = p }
-        if let p = UserDefaults.standard.string(forKey: "explainPrompt") { explainPrompt = p }
-        // 旧版默认 Prompt 自动升级到优化版（用户自定义的不改）
+    func applyPersistedSettings(_ s: PersistedAppSettings) {
+        fontSize = s.fontSize
+        listTitleFontSize = s.listTitleFontSize
+        listSummaryFontSize = s.listSummaryFontSize
+        readerTitleFontSize = s.readerTitleFontSize
+        aiSummaryFontSize = s.aiSummaryFontSize
+        feedTitleFontSize = s.feedTitleFontSize
+        groupTitleFontSize = s.groupTitleFontSize
+        titleDisplayMode = s.titleDisplayMode
+        defaultTranslationEngine = s.defaultTranslationEngine
+        translationEngineChain = s.translationEngineChain
+        showReadArticles = s.showReadArticles
+        translationPrompt = s.translationPrompt
+        summaryPrompt = s.summaryPrompt
+        explainPrompt = s.explainPrompt
         Self.migrateLegacyDefaultPrompts(
             translation: &translationPrompt,
             summary: &summaryPrompt,
             explain: &explainPrompt
         )
-        readRetentionDays = UserDefaults.standard.object(forKey: "readRetentionDays") as? Int ?? 7
-        fullContentCacheDays = UserDefaults.standard.object(forKey: "fullContentCacheDays") as? Int ?? 30
-        fullContentURLPrefixEnabled = UserDefaults.standard.object(forKey: "fullContentURLPrefixEnabled") as? Bool ?? false
-        fullContentURLPrefix = UserDefaults.standard.string(forKey: "fullContentURLPrefix") ?? ""
-        if let data = UserDefaults.standard.data(forKey: "summaryPromptPresets"),
-           let list = try? JSONDecoder().decode([SummaryPromptPreset].self, from: data), !list.isEmpty {
-            summaryPromptPresets = list
-        }
+        readRetentionDays = s.readRetentionDays
+        fullContentCacheDays = s.fullContentCacheDays
+        fullContentURLPrefixEnabled = s.fullContentURLPrefixEnabled
+        fullContentURLPrefix = s.fullContentURLPrefix
+        globalSummaryPresetID = s.globalSummaryPresetID
+        summaryPromptPresets = s.summaryPromptPresets
         ensureSummaryPromptPresets()
-        if let raw = UserDefaults.standard.string(forKey: "globalSummaryPresetID"), !raw.isEmpty {
-            globalSummaryPresetID = raw == SummaryPromptPreset.globalID ? SummaryPromptPreset.standardID : raw
-        } else if let legacy = UserDefaults.standard.string(forKey: "globalSummaryPreset"), !legacy.isEmpty {
-            globalSummaryPresetID = legacy == "global" ? SummaryPromptPreset.standardID : legacy
-        }
         if !summaryPromptPresets.contains(where: { $0.id == globalSummaryPresetID }) {
             globalSummaryPresetID = SummaryPromptPreset.standardID
         }
-        smartInterestFilterEnabled = UserDefaults.standard.object(forKey: "smartInterestFilterEnabled") as? Bool ?? false
-        autoMarkLowInterestRead = UserDefaults.standard.object(forKey: "autoMarkLowInterestRead") as? Bool ?? false
-        if UserDefaults.standard.object(forKey: "lowInterestThreshold") != nil {
-            lowInterestThreshold = min(1, max(0, UserDefaults.standard.double(forKey: "lowInterestThreshold")))
-        }
-        sortByInterestScore = UserDefaults.standard.object(forKey: "sortByInterestScore") as? Bool ?? false
-        modelRoutingEnabled = UserDefaults.standard.object(forKey: "modelRoutingEnabled") as? Bool ?? false
-        if UserDefaults.standard.object(forKey: "modelRoutingShortLimit") != nil {
-            modelRoutingShortLimit = max(100, UserDefaults.standard.integer(forKey: "modelRoutingShortLimit"))
-        }
-        if let data = UserDefaults.standard.data(forKey: "interestWeights"),
-           let map = try? JSONDecoder().decode([String: Double].self, from: data) {
-            interestWeights = map
-        }
-        ttsVoice = UserDefaults.standard.string(forKey: "ttsVoice") ?? ""
-        if UserDefaults.standard.object(forKey: "ttsRate") != nil {
-            ttsRate = min(2.0, max(0.5, UserDefaults.standard.double(forKey: "ttsRate")))
-        }
-        if let raw = UserDefaults.standard.string(forKey: "colorTheme") {
-            if let theme = ReadingTheme(rawValue: raw) {
-                colorTheme = theme
-            } else {
-                // 迁移旧 AppColorTheme 原始值
-                switch raw {
-                case "azure": colorTheme = .classicLight
-                case "sepia": colorTheme = .sepiaPaper
-                case "midnight": colorTheme = .midnightBlue
-                case "forest": colorTheme = .forestSage
-                case "graphite": colorTheme = .nightDark
-                default: break
-                }
+        smartInterestFilterEnabled = s.smartInterestFilterEnabled
+        autoMarkLowInterestRead = s.autoMarkLowInterestRead
+        lowInterestThreshold = s.lowInterestThreshold
+        sortByInterestScore = s.sortByInterestScore
+        modelRoutingEnabled = s.modelRoutingEnabled
+        modelRoutingShortLimit = s.modelRoutingShortLimit
+        interestWeights = s.interestWeights
+        ttsVoice = s.ttsVoice
+        ttsRate = s.ttsRate
+        if let theme = ReadingTheme(rawValue: s.colorThemeRaw) {
+            colorTheme = theme
+        } else {
+            switch s.colorThemeRaw {
+            case "azure": colorTheme = .classicLight
+            case "sepia": colorTheme = .sepiaPaper
+            case "midnight": colorTheme = .midnightBlue
+            case "forest": colorTheme = .forestSage
+            case "graphite": colorTheme = .nightDark
+            default: break
             }
         }
-        if let raw = UserDefaults.standard.string(forKey: "appearanceMode"),
-           let mode = AppearanceMode(rawValue: raw) { appearanceMode = mode }
-        if let raw = UserDefaults.standard.string(forKey: "appFontFamily"),
-           let font = AppFontFamily(rawValue: raw) {
+        if let mode = AppearanceMode(rawValue: s.appearanceModeRaw) {
+            appearanceMode = mode
+        }
+        if let font = AppFontFamily(rawValue: s.appFontFamilyRaw) {
             appFontFamily = font
-        } else if UserDefaults.standard.string(forKey: "appFontFamily") == "sourceHanSans" {
-            appFontFamily = .system
         }
-        if let raw = UserDefaults.standard.string(forKey: "feedSortMode"),
-           let mode = FeedSortMode(rawValue: raw) {
-            feedSortMode = mode
+        if let sort = FeedSortMode(rawValue: s.feedSortModeRaw) {
+            feedSortMode = sort
         }
-        if let raw = UserDefaults.standard.string(forKey: "targetLanguage"),
-           let lang = AppLanguage(rawValue: raw) {
-            targetLanguage = lang
-        }
-        if UserDefaults.standard.object(forKey: "translationConcurrency") != nil {
-            translationConcurrency = min(8, max(0, UserDefaults.standard.integer(forKey: "translationConcurrency")))
-        }
-        if let raw = UserDefaults.standard.string(forKey: "aiOutputLanguage"),
-           let lang = AppLanguage(rawValue: raw) {
-            aiOutputLanguage = lang
-        }
-        if let data = UserDefaults.standard.data(forKey: "aiProviders"),
-           let decoded = try? JSONDecoder().decode([AIProvider].self, from: data) { aiProviders = decoded }
-        if let s = UserDefaults.standard.string(forKey: "defaultSummaryProviderID"),
-           let id = UUID(uuidString: s) { defaultSummaryProviderID = id }
-        if let s = UserDefaults.standard.string(forKey: "defaultTranslationProviderID"),
-           let id = UUID(uuidString: s) { defaultTranslationProviderID = id }
-        if let s = UserDefaults.standard.string(forKey: "defaultExplainProviderID"),
-           let id = UUID(uuidString: s) { defaultExplainProviderID = id }
-        if let data = UserDefaults.standard.data(forKey: "aiBlacklistTerms"),
-           let decoded = try? JSONDecoder().decode([String].self, from: data) { aiBlacklistTerms = decoded }
-        if let data = UserDefaults.standard.data(forKey: "articleBlacklistTerms"),
-           let decoded = try? JSONDecoder().decode([String].self, from: data) { articleBlacklistTerms = decoded }
-        if let s = UserDefaults.standard.string(forKey: "aiBlacklistFallbackProviderID"),
-           let id = UUID(uuidString: s) { aiBlacklistFallbackProviderID = id }
-        if let s = UserDefaults.standard.string(forKey: "defaultChatProviderID"),
-           let id = UUID(uuidString: s) {
-            defaultChatProviderID = id
-        }
+        targetLanguage = s.targetLanguage
+        translationConcurrency = s.translationConcurrency
+        microsoftTranslateRegion = s.microsoftTranslateRegion
+        lingvaCustomBase = s.lingvaCustomBase
+        aiOutputLanguage = s.aiOutputLanguage
+        aiProviders = s.aiProviders
+        defaultSummaryProviderID = s.defaultSummaryProviderID
+        defaultTranslationProviderID = s.defaultTranslationProviderID
+        defaultExplainProviderID = s.defaultExplainProviderID
+        aiBlacklistTerms = s.aiBlacklistTerms
+        articleBlacklistTerms = s.articleBlacklistTerms
+        aiBlacklistFallbackProviderID = s.aiBlacklistFallbackProviderID
+        defaultChatProviderID = s.defaultChatProviderID
+    }
+
+    func saveToStorage() {
+        FeedRepository.saveFeeds(feeds)
+        FeedRepository.saveGroups(groups)
+        persistCollapsedGroups()
+        persistReadLinks()
+        SettingsRepository.save(makePersistedSettings())
+        OfflineCache.saveChatConversations(chatConversations)
+    }
+
+    func loadFromStorage() {
+        feeds = FeedRepository.loadFeeds()
+        groups = FeedRepository.loadGroups()
+        loadCollapsedGroups()
+        loadReadLinks()
+        applyPersistedSettings(SettingsRepository.load())
         if let loaded = OfflineCache.loadChatConversations() {
             chatConversations = loaded.sorted { $0.updatedAt > $1.updatedAt }
         }

@@ -224,13 +224,24 @@ struct FeedsListView: View {
                         .animation(.easeInOut(duration: 0.32), value: store.refreshProgressCurrent)
                         .animation(.easeInOut(duration: 0.32), value: store.refreshProgressTotal)
 
-                        Text(refreshProgressLabel)
-                            .font(AppTypography.caption())
-                            .foregroundStyle(theme.muted)
-                            .lineLimit(1)
-                            .contentTransition(.numericText())
-                            .animation(.easeInOut(duration: 0.25), value: store.refreshProgressCurrent)
-                            .animation(.easeInOut(duration: 0.25), value: store.refreshProgressTitle)
+                        HStack(spacing: 10) {
+                            Text(refreshProgressLabel)
+                                .font(AppTypography.caption())
+                                .foregroundStyle(theme.muted)
+                                .lineLimit(1)
+                                .contentTransition(.numericText())
+                                .animation(.easeInOut(duration: 0.25), value: store.refreshProgressCurrent)
+                                .animation(.easeInOut(duration: 0.25), value: store.refreshProgressTitle)
+                            Spacer(minLength: 8)
+                            if store.isRefreshingAll {
+                                Button("取消") {
+                                    store.cancelRefreshAll()
+                                }
+                                .font(AppTypography.caption().weight(.semibold))
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)

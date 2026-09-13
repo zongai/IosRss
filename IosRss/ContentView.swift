@@ -15,6 +15,9 @@ struct ContentView: View {
             Tab("订阅", systemImage: "newspaper") {
                 FeedsListView()
             }
+            Tab("搜索", systemImage: "magnifyingglass") {
+                SearchView()
+            }
             Tab("收藏", systemImage: "star") {
                 FavoritesListView()
             }

@@ -105,6 +105,11 @@ struct ArticleReaderView: View {
                             Text("全文")
                                 .font(.system(size: max(11, store.readerTitleFontSize - 12), weight: .medium))
                                 .foregroundStyle(Color.secondary)
+                        } else if fullContentError != nil {
+                            Text("·").foregroundStyle(Color.secondary.opacity(0.6))
+                            Text("仅摘要")
+                                .font(.system(size: max(11, store.readerTitleFontSize - 12), weight: .medium))
+                                .foregroundStyle(.orange)
                         }
                     }
                 }
@@ -146,8 +151,42 @@ struct ArticleReaderView: View {
                         .padding(.horizontal, 20).padding(.top, 8)
                 }
                 if let err = fullContentError {
-                    Text(err).font(.system(size: 13)).foregroundStyle(.red)
-                        .padding(.horizontal, 20).padding(.top, 8)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("全文抓取失败 · 当前仅摘要", systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.orange)
+                        Text(err)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            Button {
+                                Task { await fetchFullContent() }
+                            } label: {
+                                Label("重试", systemImage: "arrow.clockwise")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isFetchingFull || !fullContentAllowed)
+                            if store.fullContentURLPrefixEnabled {
+                                Button {
+                                    Task {
+                                        // 临时用前缀再试：若源未开前缀则先打开再抓
+                                        if let fid = store.feeds.first(where: { $0.id == currentArticle.feedID })?.id {
+                                            store.setFeedUseFullContentURLPrefix(fid, enabled: true)
+                                        }
+                                        await fetchFullContent()
+                                    }
+                                } label: {
+                                    Label("用前缀重试", systemImage: "link")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(isFetchingFull)
+                            }
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal, 20).padding(.top, 8)
                 }
                 if let progress = translationProgress {
                     Text(progress).font(.system(size: 13)).foregroundStyle(Color.secondary)

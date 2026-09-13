@@ -2,13 +2,14 @@
 
 原生 SwiftUI 实现的 iOS / iPadOS RSS 阅读器。支持 RSS 与 Atom，内置全文抓取、多引擎翻译、AI 摘要 / 解释 / 对话、Edge TTS 朗读、源分组、评论（Substack / HN / Engadget 等）与离线缓存。
 
-**版本**：本地调试 `v1.3-56`；CI 构建 `v1.3-56-build{N}`（`N` = GitHub Actions `run_number`）。
+**版本**：本地调试 `v1.3-57`；CI 构建 `v1.3-57-build{N}`（`N` = GitHub Actions `run_number`）。
 
 > **文档维护**：有意义的功能变更后，构建时默认同步更新 `README.md`（及按约定整理 `CHANGELOG.md`）。CI **不**自动回写文档。
 
 ## 功能
 
 ### 订阅与分组
+- **全库搜索**：标题 / 摘要 / 已抓全文
 - **订阅管理**：添加 RSS / Atom；自动发现常见 feed 路径；源名称可重命名；失败时提示并中止添加
 - **源分组**：添加时可指定分组（默认未分组）；移动到分组；分组管理；**分组可折叠**（刷新保留折叠状态）
 - **无未读隐藏**：默认只显示有未读的源；设置中开启「显示已读文章」可查看全部
@@ -67,6 +68,11 @@ IosRss/
 │   ├── AppStore.swift
 │   └── FeedModels.swift
 ├── Services/
+│   ├── FeedRepository.swift          # 源/分组/已读持久化
+│   ├── FeedRefreshService.swift      # Feed 网络拉取
+│   ├── ArticleSearchService.swift    # 全库搜索
+│   ├── SettingsRepository.swift       # 用户偏好持久化
+│   ├── TranslationCoordinator.swift # 引擎链与限流
 │   ├── FeedParser.swift
 │   ├── ArticleContentFetcher.swift
 │   ├── CommentFetcher.swift
@@ -105,8 +111,8 @@ IosRss/
 
 | 场景 | 显示 |
 |------|------|
-| 本地 Xcode | `v1.3-56` |
-| GitHub Actions | `v1.3-56-build{N}` |
+| 本地 Xcode | `v1.3-57` |
+| GitHub Actions | `v1.3-57-build{N}` |
 
 ## Changelog
 

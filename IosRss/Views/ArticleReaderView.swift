@@ -70,6 +70,19 @@ struct ArticleReaderView: View {
         return !ListLanguageDetect.isMostlyTarget(sample, language: store.targetLanguage)
     }
 
+    /// 工具栏翻译按钮：需译、已在看译文、或已有缓存译文时都显示（便于原文/译文切换）
+    private var showTranslationButton: Bool {
+        if showTranslated { return true }
+        if currentArticle.hasTranslatedBody { return true }
+        if let local = translatedContent, !local.isEmpty { return true }
+        return needsTranslation
+    }
+
+    private var hasUsableTranslation: Bool {
+        if let local = translatedContent, !local.isEmpty { return true }
+        return currentArticle.hasTranslatedBody
+    }
+
 
     private var displayTitle: String {
         if showTranslated, let t = currentArticle.translatedTitle, !t.isEmpty { return t }
@@ -297,12 +310,20 @@ struct ArticleReaderView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                if needsTranslation || showTranslated {
+                if showTranslationButton {
                     Button { Task { await toggleTranslation() } } label: {
-                        if isTranslating { ProgressView().scaleEffect(0.75) }
-                        else { Label(showTranslated ? "原文" : "翻译", systemImage: "translate") }
+                        if isTranslating {
+                            ProgressView().scaleEffect(0.75)
+                        } else if showTranslated {
+                            Label("原文", systemImage: "doc.plaintext")
+                        } else if hasUsableTranslation {
+                            Label("译文", systemImage: "translate")
+                        } else {
+                            Label("翻译", systemImage: "translate")
+                        }
                     }
                     .disabled(isTranslating)
+                    .accessibilityHint(showTranslated ? "切换到原文" : (hasUsableTranslation ? "切换到译文" : "翻译正文"))
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -600,20 +621,27 @@ struct ArticleReaderView: View {
         return htmlResult.isEmpty ? "<p>\(restored)</p>" : htmlResult
     }
 
+    /// 首次：执行翻译；之后：在原文 / 译文之间切换
     private func toggleTranslation() async {
-
+        // 已在看译文 → 回原文
         if showTranslated {
             showTranslated = false
             translationError = nil
             translationProgress = nil
             return
         }
-        if let cached = currentArticle.translatedContent {
+        // 已有译文（内存或持久化）→ 直接显示译文
+        if let local = translatedContent, !local.isEmpty {
+            showTranslated = true
+            return
+        }
+        if let cached = currentArticle.translatedContent, !cached.isEmpty {
             translatedContent = cached
             showTranslated = true
             if currentArticle.translatedTitle == nil { Task { await translateTitleIfNeeded() } }
             return
         }
+        // 尚无译文 → 发起翻译
         translationError = nil
         isTranslating = true
         translationProgress = "正在翻译…"

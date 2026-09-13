@@ -231,10 +231,24 @@ enum OfflineCache {
 
     /// 清空文章 HTML / Feed XML / 图片，保留订阅列表
     static func clearContentCache() {
-        removeContents(of: articlesDir)
-        removeContents(of: feedXMLDir)
-        removeContents(of: imagesDir)
-        URLCache.shared.removeAllCachedResponses()
+        clearContentCache(progress: nil)
+    }
+
+    /// 分步清理并回报进度 0～1（主线程回调由调用方保证）
+    static func clearContentCache(progress: ((Double, String) -> Void)?) {
+        let steps: [(String, () -> Void)] = [
+            ("清理文章缓存…", { removeContents(of: articlesDir) }),
+            ("清理 Feed 快照…", { removeContents(of: feedXMLDir) }),
+            ("清理图片缓存…", { removeContents(of: imagesDir) }),
+            ("清理 URLCache…", { URLCache.shared.removeAllCachedResponses() })
+        ]
+        let total = Double(steps.count)
+        for (i, step) in steps.enumerated() {
+            progress?(Double(i) / total, step.0)
+            step.1()
+            progress?(Double(i + 1) / total, step.0)
+        }
+        progress?(1, "完成")
     }
 
     /// 删除超过 maxAge 的文章 HTML（默认 30 天）

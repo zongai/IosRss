@@ -546,6 +546,12 @@ struct ArticleRow: View {
                         .foregroundStyle(.orange.opacity(0.9))
                         .lineLimit(2)
                 }
+                if let bl = store.articleBlacklistReason(for: live) {
+                    Text(bl)
+                        .font(.system(size: max(10, store.listSummaryFontSize - 3)))
+                        .foregroundStyle(.red.opacity(0.85))
+                        .lineLimit(1)
+                }
                 if !displaySummary.isEmpty {
                     Text(displaySummary)
                         .font(.system(size: store.listSummaryFontSize))

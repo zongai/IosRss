@@ -3,7 +3,7 @@ import SwiftUI
 
 @Observable
 @MainActor
-class AppStore {
+class AppStore: AIService.Runtime {
     var feeds: [RSSFeed] = []
     var groups: [FeedGroup] = []
     var collapsedGroupIDs: Set<UUID> = []
@@ -1104,16 +1104,29 @@ class AppStore {
     }
 
     func matchesArticleBlacklist(_ article: Article) -> Bool {
-        guard !articleBlacklistTerms.isEmpty else { return false }
+        !(articleBlacklistMatchedTerms(article).isEmpty)
+    }
+
+    func articleBlacklistMatchedTerms(_ article: Article) -> [String] {
+        guard !articleBlacklistTerms.isEmpty else { return [] }
         let haystack = (article.title + "\n" + article.summary).lowercased()
+        var hits: [String] = []
         for raw in articleBlacklistTerms {
             let term = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !term.isEmpty else { continue }
-            if haystack.contains(term.lowercased()) { return true }
+            if haystack.contains(term.lowercased()) { hits.append(term) }
         }
-        return false
+        return hits
     }
 
+    func articleBlacklistReason(for article: Article) -> String? {
+        let hits = articleBlacklistMatchedTerms(article)
+        guard !hits.isEmpty else { return nil }
+        let words = hits.prefix(4).joined(separator: "、")
+        return "黑名单：" + words + (article.isRead ? " · 已自动标已读" : "")
+    }
+
+    /// 将命中文章黑名单的条目标为已读
     /// 将命中文章黑名单的条目标为已读（不写 readArticleLinks 以外的额外逻辑）
     @discardableResult
     func applyArticleBlacklist(in feedID: UUID? = nil) -> Int {
@@ -2029,75 +2042,12 @@ class AppStore {
     }
 
     func generateSummary(for article: Article) async throws -> (text: String, providerName: String) {
-        let probe = [article.title, article.summary, article.content]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
-        let content = String(HTMLUtils.stripTags(article.content.isEmpty ? article.summary : article.content).prefix(2500))
-        let template = resolvedSummaryPrompt(for: article)
-        var prompt = template
-            .replacingOccurrences(of: "{{lang}}", with: aiOutputLanguage.promptLabel)
-            .replacingOccurrences(of: "{{title}}", with: article.title)
-            .replacingOccurrences(of: "{{content}}", with: content)
-        if !template.contains("{{title}}") && !template.contains("{{content}}") {
-            prompt += "\n\n标题：\(article.title)\n\n内容：\(content)"
-        }
-        let strong = content.count > modelRoutingShortLimit
-        let (raw, provider) = try await callAIWithFailover(
-            preferredID: defaultSummaryProviderID,
-            probeText: probe,
-            maxTokens: 600,
-            preferStrongModel: strong,
-            buildPrompt: { prompt }
-        )
-        let base = Self.cleanSummaryText(raw)
-        // 第二～四步：缺口扫描 + 高优先级背景轻量嵌入摘要
-        if let enriched = try? await enrichSummaryWithBackground(
-            summary: base,
-            article: article,
-            content: content,
-            preferredID: provider.id
-        ), !enriched.isEmpty {
-            return (enriched, provider.name)
-        }
-        return (base, provider.name)
+        try await AIService.generateSummary(article: article, runtime: self)
     }
 
     /// 背景缺口扫描（专有名词 / 模糊时间 / 前情依赖）
     func scanBackgroundGaps(summary: String, article: Article, content: String) async throws -> String {
-        let lang = aiOutputLanguage.promptLabel
-        let prompt = """
-请对以下新闻/博客摘要做背景补全检查（用\(lang)回答）：
-
-1. 找出首次出现但未说明身份的人名、机构名、专有名词
-2. 找出时间表述模糊、可能引起误解的地方（如「最近」「据悉」；若原文有具体日期应指出）
-3. 判断是否需要补充「前情提要」（是否为连续报道的后续）
-4. 对以上问题，给出简短（不超过一句话）的背景补充建议，并标注建议插入的原句位置
-5. 如果某项背景信息你不确定是否为最新/准确，标注「需核实」而不要直接编写
-
-约束：
-- 高优先级：直接影响理解主干事实的「这是谁 / 何时发生」
-- 低优先级可省略：读者可自行检索且不影响结论的细节
-- 博客主观观点须归因，勿写成客观事实
-- 涉及现任职位、公司现状等「当前状态」若无原文依据，一律「需核实」
-- 不要输出与摘要无关的长篇百科
-
-标题：\(article.title)
-
-摘要：
-\(summary)
-
-原文摘录：
-\(String(content.prefix(1600)))
-"""
-        let (raw, _) = try await callAIWithFailover(
-            preferredID: defaultExplainProviderID ?? defaultSummaryProviderID,
-            probeText: summary + content,
-            maxTokens: 500,
-            preferStrongModel: true,
-            buildPrompt: { prompt }
-        )
-        return Self.cleanSummaryText(raw)
+        try await AIService.scanBackgroundGaps(summary: summary, article: article, content: content, runtime: self)
     }
 
     /// 将高优先级背景以括号/同位语/从句嵌入摘要，而非另起背景段
@@ -2107,64 +2057,15 @@ class AppStore {
         content: String,
         preferredID: UUID?
     ) async throws -> String {
-        let gaps = try await scanBackgroundGaps(summary: summary, article: article, content: content)
-        let lower = gaps.lowercased()
-        if gaps.contains("无明显") || gaps.contains("无需补充") || gaps.count < 12 {
-            return summary
-        }
-        let lang = aiOutputLanguage.promptLabel
-        let prompt = """
-你是新闻编辑。在保持原意与篇幅的前提下，把「背景补充建议」中的高优先级信息，用\(lang)以轻量方式嵌入摘要原句。
-
-嵌入方式（优先）：
-- 括号、同位语、定语从句（例：这家总部位于上海、2015年成立的电商平台宣布了…）
-- 不要写成单独的「背景：……」大段
-- 低优先级细节可省略
-- 标注了「需核实」的条目：不要编造写入摘要，可在文末单独用一行「待核实：…」列出（最多 2 条）
-- 博客观点保持归因；不要把作者立场写成客观事实
-- 连续报道若需要，用一句极简「前情：…」放在摘要最前
-- 输出完整修订后的摘要正文；不要解释你的修改过程
-
-原摘要：
-\(summary)
-
-背景补充建议：
-\(gaps)
-
-原文摘录（仅供核对，勿扩写原文没有的事实）：
-\(String(content.prefix(1200)))
-"""
-        let (raw, _) = try await callAIWithFailover(
-            preferredID: preferredID ?? defaultSummaryProviderID,
-            probeText: summary,
-            maxTokens: 700,
-            preferStrongModel: true,
-            buildPrompt: { prompt }
+        try await AIService.enrichSummaryWithBackground(
+            summary: summary, article: article, content: content,
+            preferredID: preferredID, runtime: self
         )
-        let cleaned = Self.cleanSummaryText(raw)
-        return cleaned.isEmpty ? summary : cleaned
     }
 
     /// 仅返回「需核实」与未嵌入的缺口提示（供阅读页次要展示）
     func generateBackgroundNotes(for article: Article) async throws -> String {
-        let content = String(HTMLUtils.stripTags(article.content.isEmpty ? article.summary : article.content).prefix(1800))
-        let summary = article.aiSummary
-            ?? String(HTMLUtils.stripTags(article.summary).prefix(400))
-        let gaps = try await scanBackgroundGaps(
-            summary: summary.isEmpty ? article.title : summary,
-            article: article,
-            content: content
-        )
-        // 提取需核实与高优先级短提示
-        let lines = gaps.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let important = lines.filter {
-            $0.contains("需核实") || $0.contains("前情") || $0.contains("人名") || $0.contains("机构")
-        }
-        let picked = (important.isEmpty ? lines : important).prefix(5)
-        let text = picked.joined(separator: "\n")
-        return text.isEmpty ? gaps : text
+        try await AIService.generateBackgroundNotes(article: article, runtime: self)
     }
 
     static func migrateLegacyDefaultPrompts(translation: inout String, summary: inout String, explain: inout String) {
@@ -2187,46 +2088,11 @@ class AppStore {
     }
 
     static func cleanSummaryText(_ text: String) -> String {
-        let patterns = [
-            #"^(\d+[\.\)、:：]|[(（]\d+[)）])\s*"#,
-            #"^[-•●▪◦]\s+"#
-        ]
-        let regexes = patterns.compactMap { try? NSRegularExpression(pattern: $0) }
-        return text.components(separatedBy: "\n").map { line -> String in
-            var s = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !s.isEmpty else { return "" }
-            for regex in regexes {
-                let range = NSRange(s.startIndex..<s.endIndex, in: s)
-                s = regex.stringByReplacingMatches(in: s, options: [], range: range, withTemplate: "")
-                s = s.trimmingCharacters(in: .whitespaces)
-            }
-            for prefix in ["总结如下", "摘要如下", "要点如下", "译文如下", "如下：", "如下:"] {
-                if s.hasPrefix(prefix) { return "" }
-            }
-            return s
-        }.filter { !$0.isEmpty }.joined(separator: "\n")
+        AIService.cleanSummaryText(text)
     }
 
     func explainText(_ text: String) async throws -> String {
-        let preferred = defaultExplainProviderID
-            ?? defaultSummaryProviderID
-            ?? defaultTranslationProviderID
-        let clipped = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(800))
-        guard !clipped.isEmpty else { throw TranslationError.apiError("未选中有效文字") }
-        let template = explainPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? AppStore.defaultExplainPrompt : explainPrompt
-        var prompt = template
-            .replacingOccurrences(of: "{{lang}}", with: aiOutputLanguage.promptLabel)
-            .replacingOccurrences(of: "{{text}}", with: clipped)
-        if !template.contains("{{text}}") { prompt += "\n\n\(clipped)" }
-        let (result, _) = try await callAIWithFailover(
-            preferredID: preferred,
-            probeText: clipped,
-            maxTokens: 500,
-            preferStrongModel: true,
-            buildPrompt: { prompt }
-        )
-        return result
+        try await AIService.explainText(text, promptTemplate: explainPrompt, runtime: self)
     }
 
     // MARK: - 兴趣画像 / 评分 / 不感兴趣
@@ -2491,6 +2357,76 @@ class AppStore {
 
     func clearOfflineContentCache() { OfflineCache.clearContentCache() }
     func cacheSizeDescription() -> String { OfflineCache.formattedSize(OfflineCache.contentCacheSize()) }
+
+    var isClearingCache = false
+    var cacheClearProgress: Double = 0
+    var cacheClearStatus: String = ""
+
+    func clearOfflineContentCacheAsync() async {
+        guard !isClearingCache else { return }
+        isClearingCache = true
+        cacheClearProgress = 0
+        cacheClearStatus = "准备清理…"
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            var finished = false
+            DispatchQueue.global(qos: .userInitiated).async {
+                OfflineCache.clearContentCache { value, status in
+                    DispatchQueue.main.async {
+                        self.cacheClearProgress = value
+                        self.cacheClearStatus = status
+                        if value >= 1, !finished {
+                            finished = true
+                            self.isClearingCache = false
+                            self.cacheClearStatus = "已清除"
+                            cont.resume()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func updateReadingProgress(articleID: UUID, progress: Double) {
+        let p = min(1, max(0, progress))
+        for i in feeds.indices {
+            if let j = feeds[i].articles.firstIndex(where: { $0.id == articleID }) {
+                let old = feeds[i].articles[j].readingProgress
+                if abs(old - p) < 0.03, p < 0.95 { return }
+                feeds[i].articles[j].readingProgress = p
+                if p >= 0.95 || Int(old * 5) != Int(p * 5) {
+                    saveToStorage()
+                }
+                return
+            }
+        }
+    }
+
+    func addHighlight(articleID: UUID, text: String, note: String = "") {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        for i in feeds.indices {
+            if let j = feeds[i].articles.firstIndex(where: { $0.id == articleID }) {
+                var list = feeds[i].articles[j].highlights
+                if list.contains(where: { $0.text == t }) { return }
+                list.insert(TextHighlight(text: t, note: note), at: 0)
+                if list.count > 50 { list = Array(list.prefix(50)) }
+                feeds[i].articles[j].highlights = list
+                saveToStorage()
+                return
+            }
+        }
+    }
+
+    func removeHighlight(articleID: UUID, highlightID: UUID) {
+        for i in feeds.indices {
+            if let j = feeds[i].articles.firstIndex(where: { $0.id == articleID }) {
+                feeds[i].articles[j].highlights.removeAll { $0.id == highlightID }
+                saveToStorage()
+                return
+            }
+        }
+    }
+
 
     func exportOPML() -> String {
         var lines: [String] = ["<?xml version=\"1.0\" encoding=\"UTF-8\"?>", "<opml version=\"2.0\">", "  <head><title>IosRss Subscriptions</title></head>", "  <body>"]

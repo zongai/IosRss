@@ -2,6 +2,7 @@ import SwiftUI
 import SafariServices
 
 struct ArticleContentView: View {
+    var onHighlight: ((String) -> Void)? = nil
     @Environment(AppStore.self) private var store
     let html: String
     let fontSize: Double
@@ -28,7 +29,8 @@ struct ArticleContentView: View {
                         fontSize: fontSize,
                         typography: style,
                         onOpenURL: { browserURL = $0 },
-                        onExplain: { startExplain($0) }
+                        onExplain: { startExplain($0) },
+                        onHighlight: onHighlight
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
                 case .audio(let urlString):

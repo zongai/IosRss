@@ -150,6 +150,13 @@ struct RSSFeed: Identifiable, Codable, Hashable {
     static func == (lhs: RSSFeed, rhs: RSSFeed) -> Bool { lhs.id == rhs.id }
 }
 
+struct TextHighlight: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var text: String
+    var note: String = ""
+    var createdAt: Date = Date()
+}
+
 struct Article: Identifiable, Codable, Hashable {
     var id = UUID()
     var feedID: UUID
@@ -175,6 +182,10 @@ struct Article: Identifiable, Codable, Hashable {
     var hasFullContent: Bool = false
     /// RSS/Atom `<comments>` 讨论页（如 HN item），优先于 link 抓评论
     var commentsURL: String? = nil
+    /// 阅读进度 0～1
+    var readingProgress: Double = 0
+    /// 用户高亮摘录
+    var highlights: [TextHighlight] = []
 
     /// 是否已翻译：以正文译文为准（非仅标题/摘要）
     var hasTranslatedBody: Bool {
@@ -185,7 +196,7 @@ struct Article: Identifiable, Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, feedID, feedTitle, title, link, summary, content
         case publishedDate, isRead, isFavorite, translatedTitle, translatedSummary, translatedContent
-        case aiSummary, aiSummaryProvider, backgroundNotes, interestScore, hasFullContent, commentsURL
+        case aiSummary, aiSummaryProvider, backgroundNotes, interestScore, hasFullContent, commentsURL, readingProgress, highlights
     }
 
     init(id: UUID = UUID(), feedID: UUID, feedTitle: String, title: String, link: String,
@@ -197,7 +208,9 @@ struct Article: Identifiable, Codable, Hashable {
          backgroundNotes: String? = nil,
          interestScore: Double? = nil,
          hasFullContent: Bool = false,
-         commentsURL: String? = nil) {
+         commentsURL: String? = nil,
+         readingProgress: Double = 0,
+         highlights: [TextHighlight] = []) {
         self.id = id
         self.feedID = feedID
         self.feedTitle = feedTitle
@@ -217,6 +230,8 @@ struct Article: Identifiable, Codable, Hashable {
         self.interestScore = interestScore
         self.hasFullContent = hasFullContent
         self.commentsURL = commentsURL
+        self.readingProgress = readingProgress
+        self.highlights = highlights
     }
 
     init(from decoder: Decoder) throws {
@@ -240,6 +255,8 @@ struct Article: Identifiable, Codable, Hashable {
         interestScore = try c.decodeIfPresent(Double.self, forKey: .interestScore)
         hasFullContent = try c.decodeIfPresent(Bool.self, forKey: .hasFullContent) ?? false
         commentsURL = try c.decodeIfPresent(String.self, forKey: .commentsURL)
+        readingProgress = try c.decodeIfPresent(Double.self, forKey: .readingProgress) ?? 0
+        highlights = try c.decodeIfPresent([TextHighlight].self, forKey: .highlights) ?? []
     }
 
     func hash(into hasher: inout Hasher) { hasher.combine(id) }

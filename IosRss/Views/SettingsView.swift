@@ -238,12 +238,23 @@ struct SettingsView: View {
                         Spacer()
                         Text(cacheSizeText).foregroundStyle(.secondary)
                     }
+                    if store.isClearingCache {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ProgressView(value: store.cacheClearProgress)
+                            Text(store.cacheClearStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     Button(role: .destructive) {
-                        store.clearOfflineContentCache()
-                        cacheSizeText = store.cacheSizeDescription()
+                        Task {
+                            await store.clearOfflineContentCacheAsync()
+                            cacheSizeText = store.cacheSizeDescription()
+                        }
                     } label: {
                         Label("清除离线缓存", systemImage: "trash")
                     }
+                    .disabled(store.isClearingCache)
                 } header: {
                     Text("数据与清理")
                 } footer: {

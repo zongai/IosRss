@@ -9,6 +9,7 @@ struct SelectableParagraphView: UIViewRepresentable {
     var typography: ReaderTypography = .latin
     var onOpenURL: (URL) -> Void
     var onExplain: (String) -> Void
+    var onHighlight: ((String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onOpenURL: onOpenURL, onExplain: onExplain)
@@ -29,6 +30,7 @@ struct SelectableParagraphView: UIViewRepresentable {
             .underlineStyle: NSUnderlineStyle.single.rawValue
         ]
         context.coordinator.onExplain = onExplain
+        context.coordinator.onHighlight = onHighlight
         context.coordinator.onOpenURL = onOpenURL
         apply(to: tv)
         return tv
@@ -36,6 +38,7 @@ struct SelectableParagraphView: UIViewRepresentable {
 
     func updateUIView(_ uiView: UITextView, context: Context) {
         context.coordinator.onExplain = onExplain
+        context.coordinator.onHighlight = onHighlight
         context.coordinator.onOpenURL = onOpenURL
         apply(to: uiView)
         uiView.invalidateIntrinsicContentSize()
@@ -85,12 +88,21 @@ struct SelectableParagraphView: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var onOpenURL: (URL) -> Void
         var onExplain: (String) -> Void
+        var onHighlight: ((String) -> Void)?
 
         init(onOpenURL: @escaping (URL) -> Void, onExplain: @escaping (String) -> Void) {
             self.onOpenURL = onOpenURL
             self.onExplain = onExplain
         }
-    
+
+        private func selectedText(_ textView: UITextView, range: NSRange) -> String? {
+            let ns = textView.text as NSString? ?? ""
+            guard range.location + range.length <= ns.length else { return nil }
+            let selected = ns.substring(with: range)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return selected.isEmpty ? nil : selected
+        }
+
         func textView(
             _ textView: UITextView,
             primaryActionFor textItem: UITextItem,
@@ -101,7 +113,7 @@ struct SelectableParagraphView: UIViewRepresentable {
             }
             return defaultAction
         }
-    
+
         func textView(
             _ textView: UITextView,
             editMenuForTextIn range: NSRange,
@@ -114,17 +126,19 @@ struct SelectableParagraphView: UIViewRepresentable {
                 title: "AI解释",
                 image: UIImage(systemName: "sparkles")
             ) { [weak self] _ in
-                guard let self else { return }
-                let ns = textView.text as NSString? ?? ""
-                guard range.location + range.length <= ns.length else { return }
-                let selected = ns.substring(with: range)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !selected.isEmpty else { return }    
+                guard let self, let selected = self.selectedText(textView, range: range) else { return }
                 self.onExplain(selected)
             }
-            return UIMenu(children: [explain] + suggestedActions)
+            let highlight = UIAction(
+                title: "高亮",
+                image: UIImage(systemName: "highlighter")
+            ) { [weak self] _ in
+                guard let self, let selected = self.selectedText(textView, range: range) else { return }
+                self.onHighlight?(selected)
+            }
+            return UIMenu(children: [explain, highlight] + suggestedActions)
         }
-    
+
         func textView(
             _ textView: UITextView,
             shouldInteractWith URL: URL,
@@ -133,7 +147,7 @@ struct SelectableParagraphView: UIViewRepresentable {
         ) -> Bool {
             onOpenURL(URL)
             return false
-        }    
+        }
     }
 }
 

@@ -2,7 +2,7 @@
 
 原生 SwiftUI 实现的 iOS / iPadOS RSS 阅读器。支持 RSS 与 Atom，内置全文抓取、多引擎翻译、AI 摘要 / 解释 / 对话、Edge TTS 朗读、源分组、评论（Substack / HN / Engadget 等）与离线缓存。
 
-**版本**：本地调试 `v1.3-57`；CI 构建 `v1.3-57-build{N}`（`N` = GitHub Actions `run_number`）。
+**版本**：本地调试 `v1.3-58`；CI 构建 `v1.3-58-build{N}`（`N` = GitHub Actions `run_number`）。
 
 > **文档维护**：有意义的功能变更后，构建时默认同步更新 `README.md`（及按约定整理 `CHANGELOG.md`）。CI **不**自动回写文档。
 
@@ -31,8 +31,9 @@
 - **TTS**：Edge 在线语音（默认云扬、语速可调）；无需 API Key
 - **框选 AI 解释**；**评论**（Substack、Hacker News、Engadget/OpenWeb 等）
 - **收藏**（已译显示译文）；**MP3 / 音频卡片**
-- **已读**：打开即标已读；文章黑名单命中自动标已读；清除离线缓存**不**删已读状态
+- **已读**：打开即标已读；文章黑名单（列表显示命中理由）命中自动标已读；清除离线缓存**不**删已读状态
 - **相对时间**：30 天内相对时间，超过显示具体年月日
+- **阅读进度与高亮**：滚动记录进度；选区可高亮保存
 
 ### 翻译与 AI
 - **翻译引擎链**：可排序使用列表；限流（429 等）自动切换下一引擎；Google / MyMemory / Lingva / Microsoft / DeepL / AI
@@ -73,6 +74,7 @@ IosRss/
 │   ├── ArticleSearchService.swift    # 全库搜索
 │   ├── SettingsRepository.swift       # 用户偏好持久化
 │   ├── TranslationCoordinator.swift # 引擎链与限流
+│   ├── AIService.swift               # 摘要/解释/背景补全
 │   ├── FeedParser.swift
 │   ├── ArticleContentFetcher.swift
 │   ├── CommentFetcher.swift
@@ -111,8 +113,8 @@ IosRss/
 
 | 场景 | 显示 |
 |------|------|
-| 本地 Xcode | `v1.3-57` |
-| GitHub Actions | `v1.3-57-build{N}` |
+| 本地 Xcode | `v1.3-58` |
+| GitHub Actions | `v1.3-58-build{N}` |
 
 ## Changelog
 

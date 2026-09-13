@@ -105,6 +105,12 @@ struct ArticleReaderView: View {
                             Text("全文")
                                 .font(.system(size: max(11, store.readerTitleFontSize - 12), weight: .medium))
                                 .foregroundStyle(Color.secondary)
+                        }
+                        if currentArticle.readingProgress > 0.05 {
+                            Text("·").foregroundStyle(Color.secondary.opacity(0.6))
+                            Text(String(format: "已读 %.0f%%", currentArticle.readingProgress * 100))
+                                .font(.system(size: max(11, store.readerTitleFontSize - 12), weight: .medium))
+                                .foregroundStyle(Color.secondary)
                         } else if fullContentError != nil {
                             Text("·").foregroundStyle(Color.secondary.opacity(0.6))
                             Text("仅摘要")
@@ -114,6 +120,32 @@ struct ArticleReaderView: View {
                     }
                 }
                 .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 16)
+
+                if !currentArticle.highlights.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("高亮 \(currentArticle.highlights.count)", systemImage: "highlighter")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(currentArticle.highlights.prefix(8)) { h in
+                            HStack(alignment: .top) {
+                                Text(h.text)
+                                    .font(.system(size: max(13, store.fontSize - 2)))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Button {
+                                    store.removeHighlight(articleID: currentArticle.id, highlightID: h.id)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(8)
+                            .background(Color.yellow.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+                }
 
                 Divider()
 
@@ -216,13 +248,21 @@ struct ArticleReaderView: View {
                 let displayContent = showTranslated
                     ? (translatedContent ?? currentArticle.translatedContent ?? currentArticle.content)
                     : currentArticle.content
-                ArticleContentView(html: displayContent, fontSize: store.fontSize, prefersChineseTypography: showTranslated)
+                ArticleContentView(html: displayContent, fontSize: store.fontSize, prefersChineseTypography: showTranslated, onHighlight: { store.addHighlight(articleID: currentArticle.id, text: $0) })
                     .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 56)
             }
         }
         .background(Color(.systemBackground))
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentOffset.y
+            let contentH = max(geometry.contentSize.height, 1)
+            let visible = geometry.containerSize.height
+            let offset = geometry.contentOffset.y
+            // 同时用于工具栏显隐；返回 offset 保持兼容
+            let progress = contentH > visible + 1
+                ? min(1, max(0, (offset + visible) / contentH))
+                : 1
+            store.updateReadingProgress(articleID: currentArticle.id, progress: progress)
+            return offset
         } action: { oldY, newY in
             let delta = newY - oldY
             // 向下滑（offset 增大）隐藏；向上滑或接近顶部显示

@@ -33,7 +33,10 @@ struct ArticleListView: View {
                 return ($0.publishedDate ?? .distantPast) > ($1.publishedDate ?? .distantPast)
             }
         } else {
-            all.sort { ($0.publishedDate ?? .distantPast) > ($1.publishedDate ?? .distantPast) }
+            // 多数源入库已是新→旧；仅在乱序时排序，减少每次 body 的 O(n log n)
+            if !Self.isSortedByDateDescending(all) {
+                all.sort { ($0.publishedDate ?? .distantPast) > ($1.publishedDate ?? .distantPast) }
+            }
         }
         if store.showReadArticles {
             return all
@@ -41,6 +44,18 @@ struct ArticleListView: View {
         return all.filter { article in
             !article.isRead || readingIDs.contains(article.id) || openedArticleID == article.id
         }
+    }
+
+    /// 抽样检查是否已按发布时间降序（O(n)，远小于乱序时全量 sort）
+    private static func isSortedByDateDescending(_ items: [Article]) -> Bool {
+        guard items.count > 1 else { return true }
+        var prev = items[0].publishedDate ?? .distantPast
+        for i in 1..<items.count {
+            let d = items[i].publishedDate ?? .distantPast
+            if d > prev { return false }
+            prev = d
+        }
+        return true
     }
 
     private var liveFeedTitle: String {
@@ -53,8 +68,9 @@ struct ArticleListView: View {
                 NavigationLink(value: article) {
                     ArticleRow(article: article, showTranslation: showAllTranslations)
                 }
-                // Article == 只比 id；并入 isRead 以便已读样式与过滤同步
-                .id("\(article.id.uuidString)-\(article.isRead)-\(article.translatedTitle ?? "")-\(article.translatedSummary ?? "")-\(showAllTranslations)")
+                // 仅用 id + 已读 + 是否显示译文；译文内容变化由 ArticleRow 读最新 article 字段刷新
+                // （避免把整段译文塞进 id 导致行身份频繁失效、List 复用失败）
+                .id("\(article.id.uuidString)-\(article.isRead)-\(showAllTranslations)-\(article.translatedTitle == nil ? 0 : 1)-\(article.translatedSummary == nil ? 0 : 1)")
                 .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 .listRowSeparator(.hidden)
                 .swipeActions(edge: .leading) {
@@ -107,7 +123,8 @@ struct ArticleListView: View {
             }
         }
         .listStyle(.plain)
-        .animation(.snappy(duration: 0.25), value: articles.map(\.id))
+        // 只跟数量变化动画，避免每次 body 对全表 map(\.id)
+        .animation(.snappy(duration: 0.25), value: articles.count)
         .appScreenBackground()
         .navigationTitle(liveFeedTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -194,6 +211,7 @@ struct ArticleListView: View {
             }
         }
         .refreshable {
+            // 单源刷新：仍 await 完成后再自动译，避免译到旧列表
             await store.refreshFeed(feed.id)
             await autoTranslatePending(force: true)
         }
@@ -244,14 +262,10 @@ struct ArticleListView: View {
             if !force && autoTranslateAttemptedIDs.contains(article.id) { continue }
             autoTranslateAttemptedIDs.insert(article.id)
 
-            // 是否目标语言：优先看正文（≥40 字），否则回退标题+摘要
-            let bodyText = HTMLUtils.plainText(article.content)
+            // 语言判定只抽样，避免对全文 content 做 plainText（长文列表 CPU 高）
             let title = article.title.trimmingCharacters(in: .whitespacesAndNewlines)
             let preview = HTMLUtils.plainText(article.summary)
-            let langSample: String = {
-                if bodyText.count >= 40 { return bodyText }
-                return [title, preview].filter { !$0.isEmpty }.joined(separator: "\n")
-            }()
+            let langSample = Self.languageSample(title: title, preview: preview, content: article.content)
             let bodyIsTarget = !langSample.isEmpty
                 && ListLanguageDetect.isMostlyTarget(langSample, language: store.targetLanguage)
 
@@ -279,7 +293,7 @@ struct ArticleListView: View {
         }
 
         if !skipMark.isEmpty {
-            store.applyListTranslations(skipMark)
+            store.applyListTranslations(skipMark, persist: jobs.isEmpty)
             showAllTranslations = true
         }
         guard !jobs.isEmpty else {
@@ -308,14 +322,11 @@ struct ArticleListView: View {
         let snapshot = articles
         var jobs: [ListTranslationJob] = []
         jobs.reserveCapacity(snapshot.count * 2)
+        var skipMark: [(id: UUID, title: String?, summary: String?)] = []
         for article in snapshot {
-            let bodyText = HTMLUtils.plainText(article.content)
             let title = article.title.trimmingCharacters(in: .whitespacesAndNewlines)
             let preview = HTMLUtils.plainText(article.summary)
-            let langSample: String = {
-                if bodyText.count >= 40 { return bodyText }
-                return [title, preview].filter { !$0.isEmpty }.joined(separator: "\n")
-            }()
+            let langSample = Self.languageSample(title: title, preview: preview, content: article.content)
             let bodyIsTarget = !langSample.isEmpty
                 && ListLanguageDetect.isMostlyTarget(langSample, language: store.targetLanguage)
 
@@ -325,7 +336,7 @@ struct ArticleListView: View {
                 if article.translatedTitle == nil, !title.isEmpty { tMark = title }
                 if article.translatedSummary == nil, !preview.isEmpty { sMark = preview }
                 if tMark != nil || sMark != nil {
-                    store.applyListTranslations([(article.id, tMark, sMark)])
+                    skipMark.append((article.id, tMark, sMark))
                 }
                 continue
             }
@@ -335,6 +346,9 @@ struct ArticleListView: View {
             if article.translatedSummary == nil, !preview.isEmpty {
                 jobs.append(ListTranslationJob(articleID: article.id, field: .summary, text: preview))
             }
+        }
+        if !skipMark.isEmpty {
+            store.applyListTranslations(skipMark, persist: jobs.isEmpty)
         }
         guard !jobs.isEmpty else { return }
         await runTranslationJobs(jobs)
@@ -347,12 +361,13 @@ struct ArticleListView: View {
         translationTotal = jobs.count
 
         // 整表一次交给底层并发池，避免「小批串行等待」把并发抵消掉
-        // 仍按 batch 切片只为分段刷新进度与列表
+        // 仍按 batch 切片只为分段刷新进度与列表；批次间不落盘，结束统一 save
         for batch in jobs.chunked(into: translationBatchSize) {
             guard store.isListTranslationSessionActive(session) else {
                 isTranslatingAll = false
                 translationTotal = 0
                 translationDone = 0
+                store.saveToStorage()
                 return
             }
             let results = await store.translateTexts(batch.map(\.text))
@@ -369,13 +384,27 @@ struct ArticleListView: View {
                 }
             }
             if !updates.isEmpty {
-                store.applyListTranslations(updates)
+                store.applyListTranslations(updates, persist: false)
             }
         }
+        store.saveToStorage()
 
         isTranslatingAll = false
         translationDone = 0
         translationTotal = 0
+    }
+
+    /// 语言抽样：优先标题+摘要；正文只取前约 400 字符做 plainText，避免长文列表卡顿
+    private static func languageSample(title: String, preview: String, content: String) -> String {
+        if !title.isEmpty || !preview.isEmpty {
+            let joined = [title, preview].filter { !$0.isEmpty }.joined(separator: "\n")
+            // 标题摘要已够长则不必扫正文
+            if joined.count >= 40 { return joined }
+        }
+        let head = content.count > 600 ? String(content.prefix(600)) : content
+        let bodyHead = HTMLUtils.plainText(head)
+        if bodyHead.count >= 40 { return String(bodyHead.prefix(240)) }
+        return [title, preview, bodyHead].filter { !$0.isEmpty }.joined(separator: "\n")
     }
 }
 
@@ -486,51 +515,54 @@ struct ArticleRow: View {
     /// 收藏页等场景：始终使用未读样式（强调色）
     var preferUnreadStyle: Bool = false
 
-    /// 始终取 store 中最新文章（已读/收藏/译文），避免 ForEach 快照滞后
+    /// 优先用 ForEach 传入的最新 article；仅在同 feed 内轻量回查（避免全库 flatMap）
     private var live: Article {
-        store.feeds.flatMap(\.articles).first(where: { $0.id == article.id }) ?? article
+        let list = store.articlesForFeed(article.feedID)
+        return list.first(where: { $0.id == article.id }) ?? article
     }
 
-    var displayTitle: String {
+    private var displayTitle: String {
         let raw: String
-        if showTranslation, let t = live.translatedTitle { raw = t }
+        if showTranslation, let t = live.translatedTitle, !t.isEmpty { raw = t }
         else { raw = live.title }
-        return HTMLUtils.plainText(raw)
+        // 列表标题通常已是纯文本；仅在含标签时去标签
+        return raw.contains("<") ? HTMLUtils.plainText(raw) : raw
     }
 
-    var displaySummary: String {
+    private var displaySummary: String {
         let raw: String
-        if showTranslation, let t = live.translatedSummary { raw = t }
+        if showTranslation, let t = live.translatedSummary, !t.isEmpty { raw = t }
         else { raw = live.summary }
-        return HTMLUtils.plainText(raw)
+        return raw.contains("<") ? HTMLUtils.plainText(raw) : raw
     }
 
     var body: some View {
+        let item = live
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .top, spacing: 6) {
                     Text(displayTitle)
-                        .font(AppTypography.font(size: store.listTitleFontSize, weight: (preferUnreadStyle || !live.isRead) ? .semibold : .regular))
-                        .foregroundStyle((preferUnreadStyle || !live.isRead) ? theme.text : theme.muted)
+                        .font(AppTypography.font(size: store.listTitleFontSize, weight: (preferUnreadStyle || !item.isRead) ? .semibold : .regular))
+                        .foregroundStyle((preferUnreadStyle || !item.isRead) ? theme.text : theme.muted)
                         .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                    if live.isFavorite {
+                    if item.isFavorite {
                         Image(systemName: "star.fill")
                             .font(.system(size: max(11, store.listTitleFontSize - 6)))
                             .foregroundStyle(.orange)
                             .padding(.top, 3)
                     }
                 }
-                if showTranslation && store.titleDisplayMode == .bilingual && live.translatedTitle != nil {
-                    Text(live.title).font(.system(size: max(12, store.listTitleFontSize - 4)))
+                if showTranslation && store.titleDisplayMode == .bilingual && item.translatedTitle != nil {
+                    Text(item.title).font(.system(size: max(12, store.listTitleFontSize - 4)))
                         .foregroundStyle(Color.secondary).lineLimit(2)
                 }
                 HStack(spacing: 6) {
-                    Text(live.feedTitle).font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary)
-                    if !live.relativeTime.isEmpty {
+                    Text(item.feedTitle).font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary)
+                    if !item.relativeTime.isEmpty {
                         Text("·").font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary.opacity(0.6))
-                        Text(live.relativeTime).font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary)
+                        Text(item.relativeTime).font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary)
                     }
-                    if store.smartInterestFilterEnabled, let score = live.interestScore {
+                    if store.smartInterestFilterEnabled, let score = item.interestScore {
                         Text("·").font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary.opacity(0.6))
                         Text(String(format: "%.0f%%", score * 100))
                             .font(.system(size: max(11, store.listSummaryFontSize - 2)))
@@ -538,17 +570,17 @@ struct ArticleRow: View {
                     }
                 }
                 if store.smartInterestFilterEnabled,
-                   let score = live.interestScore,
+                   let score = item.interestScore,
                    score < store.lowInterestThreshold,
-                   let reason = store.interestExplanation(for: live) {
+                   let reason = store.interestExplanation(for: item) {
                     Text(reason)
                         .font(.system(size: max(10, store.listSummaryFontSize - 3)))
                         .foregroundStyle(.orange.opacity(0.9))
                         .lineLimit(2)
                 }
                 // 仅对已读且配置了黑名单的条目计算，避免列表滚动时全量扫描
-                if live.isRead, !store.articleBlacklistTerms.isEmpty,
-                   let bl = store.articleBlacklistReason(for: live) {
+                if item.isRead, !store.articleBlacklistTerms.isEmpty,
+                   let bl = store.articleBlacklistReason(for: item) {
                     Text(bl)
                         .font(.system(size: max(10, store.listSummaryFontSize - 3)))
                         .foregroundStyle(.red.opacity(0.85))
@@ -560,8 +592,8 @@ struct ArticleRow: View {
                         .foregroundStyle(Color.secondary)
                         .lineLimit(2)
                     if showTranslation && store.titleDisplayMode == .bilingual
-                        && live.translatedSummary != nil && !live.summary.isEmpty {
-                        Text(live.summary)
+                        && item.translatedSummary != nil && !item.summary.isEmpty {
+                        Text(item.summary)
                             .font(.system(size: max(12, store.listSummaryFontSize - 2)))
                             .foregroundStyle(Color.secondary.opacity(0.8))
                             .lineLimit(2)

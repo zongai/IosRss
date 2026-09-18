@@ -4,6 +4,7 @@ import SafariServices
 struct ArticleReaderView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.theme) private var theme
+    @Environment(\.colorScheme) private var systemColorScheme
     let article: Article
     var feedID: UUID? = nil
     /// 收藏页进入：左右滑在收藏列表内换篇
@@ -34,6 +35,16 @@ struct ArticleReaderView: View {
     @State private var scrollViewportHeight: CGFloat = 1
     /// 横向滑动表格时为 true，避免误触发左右换篇
     @State private var suppressArticleSwipe = false
+
+    /// 与当前阅读主题一致的状态栏/导航栏配色，保证时间与信号图标清晰可见
+    private var readerStatusBarScheme: ColorScheme {
+        let resolved = ReadingTheme.resolved(
+            selected: store.colorTheme,
+            appearance: store.appearanceMode,
+            systemScheme: systemColorScheme
+        )
+        return resolved.isDark ? .dark : .light
+    }
 
     private var activeID: UUID { currentID ?? article.id }
 
@@ -252,6 +263,9 @@ struct ArticleReaderView: View {
         .toolbar(showChrome ? .visible : .hidden, for: .tabBar)
         .toolbarBackground(showChrome ? .automatic : .hidden, for: .navigationBar)
         .toolbarBackground(showChrome ? .automatic : .hidden, for: .tabBar)
+        // 阅读主题与状态栏/导航栏对比：深色主题用浅色时间电量，浅色主题用深色，避免「时间信号栏」看不清
+        .toolbarColorScheme(readerStatusBarScheme, for: .navigationBar)
+        .preferredColorScheme(readerStatusBarScheme)
         .animation(.easeInOut(duration: 0.2), value: showChrome)
         // 换篇：明显水平滑动；表格横向滚动时 suppressArticleSwipe 为 true 则忽略
         .simultaneousGesture(
@@ -307,7 +321,7 @@ struct ArticleReaderView: View {
                     if isTranslating {
                         ProgressView().scaleEffect(0.75)
                     } else if hasUsableTranslation {
-                        // 已有译文：点按切换原文/译文；打开菜单可重新翻译
+                        // 已有译文：点按切换原文/译文；打开菜单可重新翻译或指定引擎
                         Menu {
                             Button {
                                 Task { await retranslate(preferHigherQuality: false) }
@@ -319,6 +333,18 @@ struct ArticleReaderView: View {
                             } label: {
                                 Label("更高质量重新翻译", systemImage: "sparkles")
                             }
+                            let readyEngines = TranslationEngine.allCases.filter { store.isTranslationEngineReady($0) }
+                            if !readyEngines.isEmpty {
+                                Section("选择翻译源") {
+                                    ForEach(readyEngines, id: \.self) { engine in
+                                        Button {
+                                            Task { await retranslate(using: engine) }
+                                        } label: {
+                                            Label(engine.rawValue, systemImage: "globe")
+                                        }
+                                    }
+                                }
+                            }
                         } label: {
                             if showTranslated {
                                 Label("原文", systemImage: "doc.plaintext")
@@ -328,12 +354,30 @@ struct ArticleReaderView: View {
                         } primaryAction: {
                             Task { await toggleTranslation() }
                         }
-                        .accessibilityHint("轻点切换原文/译文；长按可重新翻译")
+                        .accessibilityHint("轻点切换原文/译文；长按可重新翻译或选择翻译源")
                     } else {
-                        Button { Task { await toggleTranslation() } } label: {
+                        Menu {
+                            Button {
+                                Task { await toggleTranslation() }
+                            } label: {
+                                Label("翻译（自动选择）", systemImage: "translate")
+                            }
+                            let readyEngines = TranslationEngine.allCases.filter { store.isTranslationEngineReady($0) }
+                            if !readyEngines.isEmpty {
+                                Section("选择翻译源") {
+                                    ForEach(readyEngines, id: \.self) { engine in
+                                        Button {
+                                            Task { await retranslate(using: engine) }
+                                        } label: {
+                                            Label(engine.rawValue, systemImage: "globe")
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
                             Label("翻译", systemImage: "translate")
                         }
-                        .accessibilityHint("翻译正文")
+                        .accessibilityHint("翻译正文，可选择翻译源")
                     }
                 }
             }
@@ -465,14 +509,28 @@ struct ArticleReaderView: View {
     @ViewBuilder
     private func readerFullContentErrorBanner() -> some View {
         if let err = fullContentError {
+            let isCF = err.localizedCaseInsensitiveContains("Cloudflare")
+                || err.localizedCaseInsensitiveContains("人机验证")
             VStack(alignment: .leading, spacing: 8) {
-                Label("全文抓取失败 · 当前仅摘要", systemImage: "exclamationmark.triangle.fill")
+                Label(
+                    isCF ? "需要浏览器验证 · 当前仅摘要" : "全文抓取失败 · 当前仅摘要",
+                    systemImage: isCF ? "lock.shield.fill" : "exclamationmark.triangle.fill"
+                )
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.orange)
                 Text(err)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 HStack(spacing: 12) {
+                    if isCF, URL(string: currentArticle.link) != nil {
+                        Button {
+                            showInAppBrowser = true
+                        } label: {
+                            Label("浏览器打开", systemImage: "safari")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
                     Button {
                         Task { await fetchFullContent() }
                     } label: {
@@ -669,6 +727,19 @@ struct ArticleReaderView: View {
         let excluding: Set<TranslationEngine> = preferHigherQuality ? [.google, .mymemory, .lingva] : []
         let label = preferHigherQuality ? "正在用更高质量引擎翻译…" : "正在重新翻译…"
         await performBodyTranslation(excluding: excluding, progressLabel: label)
+    }
+
+    /// 指定单一翻译源重新翻译（菜单「选择翻译源」）
+    private func retranslate(using engine: TranslationEngine) async {
+        translatedContent = nil
+        var cleared = currentArticle
+        cleared.translatedContent = nil
+        cleared.translatedTitle = nil
+        cleared.translationEngineName = nil
+        store.updateArticle(cleared)
+        showTranslated = false
+        let excluding = Set(TranslationEngine.allCases.filter { $0 != engine })
+        await performBodyTranslation(excluding: excluding, progressLabel: "正在用 \(engine.rawValue) 翻译…")
     }
 
     private func performBodyTranslation(

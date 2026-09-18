@@ -211,7 +211,11 @@ struct FeedsListView: View {
                     }
                 }
             }
-            .refreshable { await store.refreshAll() }
+            // 立即结束系统下拉刷新（避免顶部转圈与下方进度条叠两层），实际进度只走 safeAreaInset 线性条
+            .refreshable {
+                guard !store.isRefreshingAll else { return }
+                Task { await store.refreshAll() }
+            }
             .safeAreaInset(edge: .top) {
                 if store.isRefreshingAll || (store.isLoading && store.refreshProgressTotal > 0) {
                     VStack(alignment: .leading, spacing: 8) {

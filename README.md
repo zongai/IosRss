@@ -2,7 +2,7 @@
 
 原生 SwiftUI 实现的 iOS / iPadOS RSS 阅读器。支持 RSS 与 Atom，内置全文抓取、多引擎翻译、AI 摘要 / 解释 / 对话、Edge TTS 朗读、源分组、评论（Substack / HN / Engadget 等）与离线缓存。
 
-**版本**：本地调试 `v1.3-61`；CI 构建 `v1.3-61-build{N}`（`N` = GitHub Actions `run_number`）。
+**版本**：本地调试 `v1.3-75`；CI 构建 `v1.3-75-build{N}`（`N` = GitHub Actions `run_number`）。
 
 > **文档维护**：有意义的功能变更后，构建时默认同步更新 `README.md`（及按约定整理 `CHANGELOG.md`）。CI **不**自动回写文档。
 
@@ -20,12 +20,12 @@
 - **Substack 标识**：识别 Substack 类源并显示徽章；可自动开启评论获取
 - **复制源链接**（长按 / 左滑）
 - **RSSHub**：Cloudflare 时镜像回退；`rsshub://path` → `https://rsshub.app/path`
-- 刷新进度条；失败时标明源名；HTTP 源允许 ATS 并尝试升级 HTTPS
+- 刷新**线性进度条**（无系统转圈叠层）；失败时标明源名；HTTP 源允许 ATS 并尝试升级 HTTPS
 
 ### 阅读
-- **全文抓取**：摘要过短时自动或手动抓取；源可关闭；站点优化含 Foreign Affairs / Foreign Policy / 少数派 / **Sixth Tone** / **CarNewsChina** 等
+- **全文抓取**：摘要过短时自动或手动抓取；源可关闭；站点优化含 Foreign Affairs / Foreign Policy / 少数派 / **Sixth Tone** / **CarNewsChina** 等；遇 **Cloudflare 验证**提示浏览器打开
 - **全文 URL 前缀**（设置全局开关 + 前缀，源级启用）：抓取时在文章链接前拼接（如 archive.is / 12ft.io）；缓存仍按原始链接
-- **排版**：系统 / 苹方 / 宋体 / 黑体；中西文分排版；首行缩进；清理空段落与广告块；**原文显示压缩留白**（空标签/重复图/加载占位）
+- **排版**：系统 / 苹方 / 宋体 / 黑体；中西文分排版；首行缩进；清理空段落与广告块；原文压缩留白；链接内图片正确还原（避免 `__IMG_n__` 字面量）
 - **工具栏显隐**：向下滑动隐藏顶部导航与底部 Tab；上滑恢复
 - **左右滑换篇**：源内或收藏列表内上一篇 / 下一篇
 - **TTS**：Edge 在线语音（默认云扬、语速可调）；无需 API Key
@@ -38,7 +38,7 @@
 ### 翻译与 AI
 - **翻译引擎链**：可排序使用列表；限流（429 等）自动切换下一引擎；Google / MyMemory / Lingva / Microsoft / DeepL / AI
 - **翻译目标语言**与 **AI 输出语言**可分别配置
-- 列表 / 阅读页自动翻译（按源开关）；**全文抓取完成前不自动翻译正文**
+- 列表 / 阅读页自动翻译（按源开关）；**全文抓取完成前不自动翻译正文**；阅读页重新翻译**可选引擎**
 - 并发可调；多 Key 轮询；设置内连通性测试
 - **AI Provider 多模型**：每 Provider 可配置模型列表与默认模型；可选**经济模型**做费用路由
 - **模型费用路由**：短文本用经济模型，长文摘要与解释用强模型
@@ -113,8 +113,8 @@ IosRss/
 
 | 场景 | 显示 |
 |------|------|
-| 本地 Xcode | `v1.3-61` |
-| GitHub Actions | `v1.3-61-build{N}` |
+| 本地 Xcode | `v1.3-75` |
+| GitHub Actions | `v1.3-75-build{N}` |
 
 ## Changelog
 

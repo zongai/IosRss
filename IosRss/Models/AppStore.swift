@@ -296,24 +296,33 @@ class AppStore: AIService.Runtime {
         saveToStorage()
     }
 
-    func applyListTranslations(_ updates: [(id: UUID, title: String?, summary: String?)]) {
+    /// - Parameter persist: 批量翻译时可传 false，结束后再统一 saveToStorage，避免每批写盘
+    func applyListTranslations(
+        _ updates: [(id: UUID, title: String?, summary: String?)],
+        persist: Bool = true
+    ) {
         guard !updates.isEmpty else { return }
         var byID: [UUID: (title: String?, summary: String?)] = [:]
+        byID.reserveCapacity(updates.count)
         for u in updates {
             var merged = byID[u.id] ?? (nil, nil)
             if let t = u.title { merged.title = t }
             if let s = u.summary { merged.summary = s }
             byID[u.id] = merged
         }
+        var remaining = byID.count
         var changed = false
         for i in feeds.indices {
+            guard remaining > 0 else { break }
             for j in feeds[i].articles.indices {
                 guard let patch = byID[feeds[i].articles[j].id] else { continue }
                 if let t = patch.title { feeds[i].articles[j].translatedTitle = t; changed = true }
                 if let s = patch.summary { feeds[i].articles[j].translatedSummary = s; changed = true }
+                remaining -= 1
+                if remaining == 0 { break }
             }
         }
-        if changed { saveToStorage() }
+        if changed, persist { saveToStorage() }
     }
 
     func addFeed(_ feed: RSSFeed) {
@@ -1044,10 +1053,9 @@ class AppStore: AIService.Runtime {
                         break
                     }
                     completed += 1
-                    withAnimation(.easeInOut(duration: 0.22)) {
-                        refreshProgressCurrent = completed
-                        refreshProgressTitle = title
-                    }
+                    // 进度条每步更新即可；动画只在批次边界做，避免 80+ 源时主线程动画风暴
+                    refreshProgressCurrent = completed
+                    refreshProgressTitle = title
                     if let err { failures.append(err) }
                 }
             }

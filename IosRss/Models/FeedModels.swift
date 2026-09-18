@@ -267,17 +267,21 @@ struct Article: Identifiable, Codable, Hashable {
     var relativeTime: String {
         guard let date = publishedDate else { return "" }
         let diff = Date().timeIntervalSince(date)
-        // 超过 30 天显示具体年月日
+        // 超过 30 天显示具体年月日（复用静态 formatter，避免列表每行反复创建）
         if diff >= 30 * 86400 {
-            let f = DateFormatter()
-            f.locale = Locale(identifier: "zh_CN")
-            f.dateFormat = "yyyy年M月d日"
-            return f.string(from: date)
+            return Self.dayFormatter.string(from: date)
         }
         if diff < 3600 { return "\(max(0, Int(diff / 60)))分钟前" }
         if diff < 86400 { return "\(Int(diff / 3600))小时前" }
         return "\(Int(diff / 86400))天前"
     }
+
+    private static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy年M月d日"
+        return f
+    }()
 
     /// RSS 摘要是否偏短，适合触发全文抓取（不检查源级开关）
     var needsFullContentFetch: Bool {

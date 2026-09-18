@@ -40,7 +40,10 @@ struct SelectableParagraphView: UIViewRepresentable {
         context.coordinator.onExplain = onExplain
         context.coordinator.onHighlight = onHighlight
         context.coordinator.onOpenURL = onOpenURL
-        apply(to: uiView)
+        // 内容未变则跳过整段属性重建 + sizeThatFits，滚动时主线程开销下降明显
+        let mark = contentMark
+        guard uiView.accessibilityValue != mark else { return }
+        apply(to: uiView, mark: mark)
         uiView.invalidateIntrinsicContentSize()
     }
 
@@ -50,7 +53,20 @@ struct SelectableParagraphView: UIViewRepresentable {
         return CGSize(width: width, height: ceil(size.height))
     }
 
-    private func apply(to tv: UITextView) {
+    /// 轻量内容指纹：避免每次 update 都对全文做 hash + 属性枚举
+    private var contentMark: String {
+        let sample = attributed.characters
+        let len = sample.count
+        // 取头尾少量字符即可区分段落，避免对整段 String 做 hashValue
+        let head = String(sample.prefix(24))
+        let tail = len > 48 ? String(sample.suffix(16)) : ""
+        return "\(typography)-\(Int(fontSize))-\(len)-\(head)-\(tail)"
+    }
+
+    private func apply(to tv: UITextView, mark: String? = nil) {
+        let resolvedMark = mark ?? contentMark
+        if tv.accessibilityValue == resolvedMark { return }
+
         let ns = NSAttributedString(attributed)
         let mutable = NSMutableAttributedString(attributedString: ns)
         let full = NSRange(location: 0, length: mutable.length)
@@ -78,11 +94,8 @@ struct SelectableParagraphView: UIViewRepresentable {
             next[.paragraphStyle] = para
             mutable.setAttributes(next, range: range)
         }
-        let mark = "\(typography)-\(Int(fontSize))-\(mutable.string.hashValue)"
-        if tv.accessibilityValue != mark {
-            tv.attributedText = mutable
-            tv.accessibilityValue = mark
-        }
+        tv.attributedText = mutable
+        tv.accessibilityValue = resolvedMark
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {

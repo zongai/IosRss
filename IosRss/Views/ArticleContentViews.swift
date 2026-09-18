@@ -16,53 +16,27 @@ struct ArticleContentView: View {
     @State private var explainError: String?
     @State private var isExplaining = false
     @State private var showExplainSheet = false
+    /// 缓存解析结果，避免每次 body 重算 + 长文一次性建齐所有 UITextView
+    @State private var cachedBlocks: [ContentBlock] = []
+    @State private var cachedParseKey: String = ""
 
-    private var blocks: [ContentBlock] {
-        ContentBlockParser.parse(html, prefersChineseTypography: prefersChineseTypography)
+    /// 轻量键：避免对整篇 HTML 做 hashValue（长文 O(n)）
+    private var parseKey: String {
+        let n = html.count
+        let head = html.prefix(48)
+        let tail = n > 96 ? html.suffix(24) : ""
+        return "\(n)-\(head)-\(tail)-\(prefersChineseTypography)"
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: prefersChineseTypography ? 12 : 10) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .paragraph(let attributed, let style):
-                    SelectableParagraphView(
-                        attributed: attributed,
-                        fontSize: fontSize,
-                        typography: style,
-                        onOpenURL: { browserURL = $0 },
-                        onExplain: { startExplain($0) },
-                        onHighlight: onHighlight
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                case .audio(let urlString):
-                    AudioLinkPlayerCard(urlString: urlString)
-                case .image(let urlString):
-                    if let url = URL(string: urlString) {
-                        AsyncImage(url: url) { phase in
-                            switch phase {
-                            case .empty:
-                                // 避免原文大量图片加载时出现成片 180pt 灰块留白
-                                Color.clear.frame(height: 1)
-                            case .success(let image):
-                                image.resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 8))
-                            case .failure:
-                                EmptyView()
-                            @unknown default: EmptyView()
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                case .table(let headers, let rows):
-                    ArticleTableView(
-                        headers: headers,
-                        rows: rows,
-                        fontSize: fontSize,
-                        suppressArticleSwipe: suppressArticleSwipe
-                    )
-                }
+        LazyVStack(alignment: .leading, spacing: prefersChineseTypography ? 12 : 10) {
+            // 用下标遍历，避免每次 body 都 Array(enumerated()) 分配
+            ForEach(cachedBlocks.indices, id: \.self) { index in
+                blockView(cachedBlocks[index])
             }
         }
+        .onAppear { reparseIfNeeded() }
+        .onChange(of: parseKey) { _, _ in reparseIfNeeded() }
         .sheet(isPresented: Binding(get: { browserURL != nil }, set: { if !$0 { browserURL = nil } })) {
             if let url = browserURL { SafariView(url: url).ignoresSafeArea() }
         }
@@ -77,6 +51,83 @@ struct ArticleContentView: View {
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+    }
+
+    @ViewBuilder
+    private func blockView(_ block: ContentBlock) -> some View {
+        switch block {
+        case .paragraph(let attributed, let style):
+            SelectableParagraphView(
+                attributed: attributed,
+                fontSize: fontSize,
+                typography: style,
+                onOpenURL: { browserURL = $0 },
+                onExplain: { startExplain($0) },
+                onHighlight: onHighlight
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        case .audio(let urlString):
+            AudioLinkPlayerCard(urlString: urlString)
+        case .image(let urlString):
+            if let url = Self.normalizedImageURL(urlString) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .empty:
+                        // 加载中不占高度，避免原文「大片空白」
+                        EmptyView()
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                    case .failure:
+                        EmptyView()
+                    @unknown default:
+                        EmptyView()
+                    }
+                }
+            }
+        case .table(let headers, let rows):
+            ArticleTableView(
+                headers: headers,
+                rows: rows,
+                fontSize: fontSize,
+                suppressArticleSwipe: suppressArticleSwipe
+            )
+        }
+    }
+
+    /// 兼容协议相对 URL（//cdn...）与首尾空白
+    private static func normalizedImageURL(_ raw: String) -> URL? {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("//") { s = "https:" + s }
+        guard let url = URL(string: s), let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
+        return url
+    }
+
+    private func reparseIfNeeded() {
+        let key = parseKey
+        guard key != cachedParseKey else { return }
+        let source = html
+        let preferCN = prefersChineseTypography
+        // 短文同步解析（首屏无闪白）；长文后台解析避免阻塞滚动/进页
+        if source.count < 12_000 {
+            cachedBlocks = ContentBlockParser.parse(source, prefersChineseTypography: preferCN)
+            cachedParseKey = key
+            return
+        }
+        Task.detached(priority: .userInitiated) {
+            let blocks = ContentBlockParser.parse(source, prefersChineseTypography: preferCN)
+            await MainActor.run {
+                // 若期间 html 已变，丢弃过期结果
+                guard key == parseKey else { return }
+                cachedBlocks = blocks
+                cachedParseKey = key
+            }
         }
     }
 
@@ -100,7 +151,7 @@ struct ArticleContentView: View {
     }
 }
 
-enum ReaderTypography {
+enum ReaderTypography: Sendable {
     case chinese
     case latin
 
@@ -110,7 +161,7 @@ enum ReaderTypography {
     }
 }
 
-enum ContentBlock {
+enum ContentBlock: Sendable {
     case paragraph(AttributedString, ReaderTypography)
     case image(String)
     case audio(String)
@@ -119,19 +170,39 @@ enum ContentBlock {
 }
 
 enum ContentBlockParser {
+    /// 复用已编译正则，避免长文每次 parse 重复 compile（CPU）
+    private static let brRe = try! NSRegularExpression(pattern: #"<br\s*/?>"#, options: .caseInsensitive)
+    private static let blockCloseRe = try! NSRegularExpression(
+        pattern: #"</p>|</li>|</h[1-6]>|</blockquote>|</section>|</article>"#,
+        options: .caseInsensitive
+    )
+    private static let divCloseRe = try! NSRegularExpression(pattern: #"</div>"#, options: .caseInsensitive)
+    private static let audioRe = try! NSRegularExpression(
+        pattern: #"<a[^>]+href=[\"']([^\"']+\.(?:mp3|m4a|wav|aac)(?:\?[^\"']*)?)[\"'][^>]*>.*?</a>|<(?:audio|source)[^>]+src=[\"']([^\"']+)[\"'][^>]*>"#,
+        options: [.caseInsensitive, .dotMatchesLineSeparators]
+    )
+    private static let bareMp3Re = try! NSRegularExpression(
+        pattern: #"https?://[^\s<>\"']+\.mp3(?:\?[^\s<>\"']*)?"#,
+        options: .caseInsensitive
+    )
+    private static let tableRe = try! NSRegularExpression(
+        pattern: #"<table\b[\s\S]*?</table>"#,
+        options: .caseInsensitive
+    )
+    private static let imgRe = try! NSRegularExpression(pattern: #"<img\b[^>]*>"#, options: .caseInsensitive)
+
     static func parse(_ html: String, prefersChineseTypography: Bool = false) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var working = HTMLUtils.decodePercentEncodings(HTMLUtils.decodeEntities(html))
         working = normalizeHTMLWhitespace(working)
-        working = working.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: .regularExpression)
+        working = replaceAll(brRe, in: working, with: "\n")
         // 仅块级闭合换段，避免每个嵌套 </div> 都制造空段
-        working = working.replacingOccurrences(of: #"</p>|</li>|</h[1-6]>|</blockquote>|</section>|</article>"#, with: "\n\n", options: .regularExpression)
-        working = working.replacingOccurrences(of: #"</div>"#, with: "\n", options: .regularExpression)
+        working = replaceAll(blockCloseRe, in: working, with: "\n\n")
+        working = replaceAll(divCloseRe, in: working, with: "\n")
 
-        let audioPattern = #"<a[^>]+href=[\"']([^\"']+\.(?:mp3|m4a|wav|aac)(?:\?[^\"']*)?)[\"'][^>]*>.*?</a>|<(?:audio|source)[^>]+src=[\"']([^\"']+)[\"'][^>]*>"#
-        if let aregex = try? NSRegularExpression(pattern: audioPattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) {
+        do {
             let ns = working as NSString
-            let matches = aregex.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed()
+            let matches = audioRe.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed()
             for match in matches {
                 var url: String?
                 if match.numberOfRanges >= 2, match.range(at: 1).location != NSNotFound, let r = Range(match.range(at: 1), in: working) {
@@ -148,9 +219,9 @@ enum ContentBlockParser {
             }
         }
         // bare mp3 URLs in text
-        if let bare = try? NSRegularExpression(pattern: #"https?://[^\s<>\"']+\.mp3(?:\?[^\s<>\"']*)?"#, options: .caseInsensitive) {
+        do {
             let ns = working as NSString
-            for match in bare.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed() {
+            for match in bareMp3Re.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed() {
                 if let r = Range(match.range, in: working) {
                     let url = String(working[r])
                     blocks.append(.audio(url))
@@ -161,10 +232,7 @@ enum ContentBlockParser {
 
         // 表格先于图片抽出，避免表内 <img> 被换成 __IMG_n__ 文本残留
         var tablePlaceholders: [(token: String, headers: [String], rows: [[String]])] = []
-        if let tableRe = try? NSRegularExpression(
-            pattern: #"<table\b[\s\S]*?</table>"#,
-            options: [.caseInsensitive]
-        ) {
+        do {
             let ns = working as NSString
             let matches = tableRe.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed()
             for (ti, match) in matches.enumerated() {
@@ -182,11 +250,10 @@ enum ContentBlockParser {
         }
 
         // 整标签匹配，再从 src / data-src / srcset 等解析真实 URL（VC 等懒加载站）
-        let imgPattern = #"<img\b[^>]*>"#
         var imageURLs: [String] = []
-        if let regex = try? NSRegularExpression(pattern: imgPattern, options: .caseInsensitive) {
+        do {
             let ns = working as NSString
-            let matches = regex.matches(in: working, range: NSRange(location: 0, length: ns.length))
+            let matches = imgRe.matches(in: working, range: NSRange(location: 0, length: ns.length))
             var keepIndexByMatch: [Int: Int] = [:]
             for (mi, match) in matches.enumerated() {
                 guard let fullRange = Range(match.range, in: working) else { continue }
@@ -214,20 +281,28 @@ enum ContentBlockParser {
         if let regex = try? NSRegularExpression(pattern: linkPattern, options: .caseInsensitive) {
             let ns = working as NSString
             let matches = regex.matches(in: working, range: NSRange(location: 0, length: ns.length))
+            // 先收集，再从后往前替换：纯图片链接保留 __IMG_n__，避免变成带下划线的「__IMG_0__」文字
+            var replacements: [(range: Range<String.Index>, token: String)] = []
             for match in matches {
-                if match.numberOfRanges >= 3,
-                   let hrefRange = Range(match.range(at: 1), in: working),
-                   let textRange = Range(match.range(at: 2), in: working) {
-                    linkHrefs.append(String(working[hrefRange]))
-                    var inner = String(working[textRange])
-                    inner = inner.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                    linkTexts.append(inner)
+                guard match.numberOfRanges >= 3,
+                      let hrefRange = Range(match.range(at: 1), in: working),
+                      let textRange = Range(match.range(at: 2), in: working),
+                      let fullRange = Range(match.range, in: working) else { continue }
+                var inner = String(working[textRange])
+                inner = inner.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                inner = inner.trimmingCharacters(in: .whitespacesAndNewlines)
+                // 链接内只有图片占位：直接还原为图片 token，不走超链接
+                if let imgToken = Self.standaloneImageToken(in: inner) {
+                    replacements.append((fullRange, "\n\n\(imgToken)\n\n"))
+                    continue
                 }
+                let idx = linkHrefs.count
+                linkHrefs.append(String(working[hrefRange]))
+                linkTexts.append(inner)
+                replacements.append((fullRange, "__LINK_\(idx)__"))
             }
-            for (i, match) in matches.enumerated().reversed() {
-                if let fullRange = Range(match.range, in: working) {
-                    working.replaceSubrange(fullRange, with: "__LINK_\(i)__")
-                }
+            for (range, token) in replacements.reversed() {
+                working.replaceSubrange(range, with: token)
             }
         }
 
@@ -248,6 +323,14 @@ enum ContentBlockParser {
             working = re.stringByReplacingMatches(in: working, range: NSRange(working.startIndex..., in: working), withTemplate: "")
         }
         working = HTMLUtils.decodeEntities(working)
+        // 折叠连续空行，减少「大片空白」段落间距
+        if let re = try? NSRegularExpression(pattern: #"\n{3,}"#, options: []) {
+            working = re.stringByReplacingMatches(
+                in: working,
+                range: NSRange(working.startIndex..., in: working),
+                withTemplate: "\n\n"
+            )
+        }
 
         let parts = working.components(separatedBy: CharacterSet.newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -256,15 +339,16 @@ enum ContentBlockParser {
 
         var lastImageURL: String?
         for part in parts {
-            if part.hasPrefix("__IMG_"), part.hasSuffix("__") {
-                let idxStr = String(part.dropFirst(6).dropLast(2))
-                if let idx = Int(idxStr), idx >= 0, idx < imageURLs.count {
-                    let url = imageURLs[idx]
+            if let imgIdx = Self.imageTokenIndex(in: part) {
+                if imgIdx >= 0, imgIdx < imageURLs.count {
+                    let url = imageURLs[imgIdx]
                     // 连续相同图片只保留一张，减少原文大图重复占位
                     if lastImageURL == url { continue }
                     lastImageURL = url
                     blocks.append(.image(url))
                 }
+                // 无效索引的残留占位直接丢弃，避免界面出现 __IMG_0__ 字面量
+                continue
             } else if part.hasPrefix("__TABLE_"), part.hasSuffix("__") {
                 lastImageURL = nil
                 if let found = tablePlaceholders.first(where: { $0.token == part }) {
@@ -275,11 +359,24 @@ enum ContentBlockParser {
                 continue
             } else {
                 lastImageURL = nil
-                let style = ReaderTypography.resolve(text: part, preferChinese: prefersChineseTypography)
-                blocks.append(.paragraph(
-                    makeAttributedParagraph(part, linkHrefs: linkHrefs, linkTexts: linkTexts),
-                    style
-                ))
+                // 段落内夹带的图片占位拆成「文 + 图 + 文」，避免字面量泄露
+                let expanded = Self.expandInlineImageTokens(part, imageURLs: imageURLs)
+                for piece in expanded {
+                    switch piece {
+                    case .image(let url):
+                        if lastImageURL == url { continue }
+                        lastImageURL = url
+                        blocks.append(.image(url))
+                    case .text(let text):
+                        lastImageURL = nil
+                        guard !isJunkParagraph(text) else { continue }
+                        let style = ReaderTypography.resolve(text: text, preferChinese: prefersChineseTypography)
+                        blocks.append(.paragraph(
+                            makeAttributedParagraph(text, linkHrefs: linkHrefs, linkTexts: linkTexts),
+                            style
+                        ))
+                    }
+                }
             }
         }
         if blocks.isEmpty {
@@ -292,7 +389,89 @@ enum ContentBlockParser {
         return blocks
     }
 
+    /// 整段是否仅为图片占位（`__IMG_0__` / `[[IMG_0]]` 等）
+    private static func standaloneImageToken(in text: String) -> String? {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let idx = imageTokenIndex(in: t) else { return nil }
+        // 去掉占位后若无其它可见字符，视为纯图片 token
+        let stripped = t
+            .replacingOccurrences(of: #"__IMG_\d+__"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\[\[IMG_\d+\]\]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"【IMG_\d+】"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard stripped.isEmpty else { return nil }
+        return "__IMG_\(idx)__"
+    }
+
+    /// 从文本中解析图片占位索引；无法识别返回 nil
+    private static func imageTokenIndex(in text: String) -> Int? {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let patterns = [
+            #"^__IMG_(\d+)__$"#,
+            #"^\[\[IMG_(\d+)\]\]$"#,
+            #"^【IMG_(\d+)】$"#,
+            #"^_IMG_(\d+)_$"#,
+            #"^IMG_(\d+)$"#
+        ]
+        for pattern in patterns {
+            guard let re = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+            let ns = t as NSString
+            guard let m = re.firstMatch(in: t, range: NSRange(location: 0, length: ns.length)),
+                  m.numberOfRanges >= 2,
+                  let r = Range(m.range(at: 1), in: t),
+                  let idx = Int(t[r]) else { continue }
+            return idx
+        }
+        return nil
+    }
+
+    private enum InlinePiece {
+        case text(String)
+        case image(String)
+    }
+
+    /// 把段落里夹杂的 `__IMG_n__` 拆成多块，防止字面量进 UITextView
+    private static func expandInlineImageTokens(_ text: String, imageURLs: [String]) -> [InlinePiece] {
+        guard let re = try? NSRegularExpression(pattern: #"__IMG_(\d+)__|\[\[IMG_(\d+)\]\]|【IMG_(\d+)】"#, options: []) else {
+            return [.text(text)]
+        }
+        let ns = text as NSString
+        let matches = re.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return [.text(text)] }
+
+        var result: [InlinePiece] = []
+        var cursor = text.startIndex
+        for match in matches {
+            guard let full = Range(match.range, in: text) else { continue }
+            if cursor < full.lowerBound {
+                let head = String(text[cursor..<full.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !head.isEmpty { result.append(.text(head)) }
+            }
+            var idx: Int?
+            for g in 1..<match.numberOfRanges {
+                if match.range(at: g).location != NSNotFound, let r = Range(match.range(at: g), in: text) {
+                    idx = Int(text[r])
+                    break
+                }
+            }
+            if let idx, idx >= 0, idx < imageURLs.count {
+                result.append(.image(imageURLs[idx]))
+            }
+            cursor = full.upperBound
+        }
+        if cursor < text.endIndex {
+            let tail = String(text[cursor...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !tail.isEmpty { result.append(.text(tail)) }
+        }
+        return result.isEmpty ? [.text(text)] : result
+    }
+
     /// 去掉空标签、注释、多余空白，减轻原文大片留白
+    private static func replaceAll(_ regex: NSRegularExpression, in text: String, with template: String) -> String {
+        let range = NSRange(text.startIndex..., in: text)
+        return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: template)
+    }
+
     private static func normalizeHTMLWhitespace(_ html: String) -> String {
         var work = html
         work = work.replacingOccurrences(of: #"<!--[\s\S]*?-->"#, with: "", options: .regularExpression)
@@ -318,6 +497,27 @@ enum ContentBlockParser {
         work = work.replacingOccurrences(
             of: #"(?:<br\s*/?\s*>\s*){2,}"#,
             with: "<br>",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        // 去掉空 figure / picture / noscript / svg 占位，避免大片留白
+        work = work.replacingOccurrences(
+            of: #"<figure[^>]*>\s*</figure>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        work = work.replacingOccurrences(
+            of: #"<picture[^>]*>\s*</picture>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        work = work.replacingOccurrences(
+            of: #"<noscript[\s\S]*?</noscript>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        work = work.replacingOccurrences(
+            of: #"<svg[\s\S]*?</svg>"#,
+            with: "",
             options: [.regularExpression, .caseInsensitive]
         )
         work = work.replacingOccurrences(
@@ -399,6 +599,11 @@ enum ContentBlockParser {
             .replacingOccurrences(of: "\u{00A0}", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { return true }
+        // 未还原的图片/表格占位字面量
+        if t.range(of: #"^__IMG_\d+__$"#, options: .regularExpression) != nil { return true }
+        if t.range(of: #"^\[\[IMG_\d+\]\]$"#, options: .regularExpression) != nil { return true }
+        if t.range(of: #"^__TABLE_\d+__$"#, options: .regularExpression) != nil { return true }
+        if t.range(of: #"^__LINK_\d+__$"#, options: .regularExpression) != nil { return true }
         // 纯符号/分隔线
         if t.count <= 3, t.allSatisfy({ !$0.isLetter && !$0.isNumber }) { return true }
         if t.count <= 2, t.allSatisfy({ $0.isNumber || $0 == "." || $0 == "·" }) { return true }

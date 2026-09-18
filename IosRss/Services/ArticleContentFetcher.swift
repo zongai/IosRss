@@ -15,6 +15,8 @@ enum ArticleContentFetcher {
         case network(String)
         case emptyContent
         case tooShort
+        /// Cloudflare / 人机验证等，需在浏览器中打开
+        case cloudflareChallenge
 
         var errorDescription: String? {
             switch self {
@@ -22,7 +24,13 @@ enum ArticleContentFetcher {
             case .network(let msg): return "网络错误：\(msg)"
             case .emptyContent: return "未能提取到正文内容"
             case .tooShort: return "提取到的正文过短，可能被网站拦截"
+            case .cloudflareChallenge: return "网站开启了 Cloudflare 人机验证，应用内无法抓取全文，请用浏览器打开"
             }
+        }
+
+        var isCloudflare: Bool {
+            if case .cloudflareChallenge = self { return true }
+            return false
         }
     }
 
@@ -95,6 +103,10 @@ enum ArticleContentFetcher {
         let html = decodeHTML(data: data) ?? ""
         guard !html.isEmpty else { throw FetchError.emptyContent }
 
+        if isCloudflareChallenge(html: html, response: response) {
+            throw FetchError.cloudflareChallenge
+        }
+
         // Sixth Tone：从页面内嵌 __NEXT_DATA__ 提取（避免脚本被通用去噪删掉后丢失正文图）
         if isSixthToneHost(url.host), let st = extractSixthTone(from: html, baseURL: url) {
             OfflineCache.saveArticleHTML(link: urlString, html: st.contentHTML)
@@ -114,10 +126,46 @@ enum ArticleContentFetcher {
         }
 
         if plainLen < 80 {
+            // 过短也可能是挑战页漏检，再扫一次常见 CF 文案
+            if isCloudflareChallenge(html: html, response: response) {
+                throw FetchError.cloudflareChallenge
+            }
             throw FetchError.tooShort
         }
         OfflineCache.saveArticleHTML(link: urlString, html: extracted.content)
         return Result(title: extracted.title, contentHTML: extracted.content, textLength: plainLen)
+    }
+
+    /// 识别 Cloudflare / 常见人机验证页（正文抓取无法完成）
+    private static func isCloudflareChallenge(html: String, response: URLResponse) -> Bool {
+        if let http = response as? HTTPURLResponse {
+            let code = http.statusCode
+            if code == 403 || code == 503 {
+                let server = (http.value(forHTTPHeaderField: "Server") ?? "").lowercased()
+                if server.contains("cloudflare") { return true }
+            }
+            // CF 常通过这些响应头标记
+            if http.value(forHTTPHeaderField: "cf-mitigated") != nil { return true }
+        }
+        // 只扫前 12KB，避免对整篇正文 lowercased 造成多余内存与 CPU
+        let head = html.prefix(12_288)
+        let lower = head.lowercased()
+        let markers = [
+            "cf-browser-verification",
+            "cf-challenge",
+            "challenge-platform",
+            "cdn-cgi/challenge",
+            "just a moment...",
+            "checking your browser",
+            "enable javascript and cookies to continue",
+            "attention required! | cloudflare",
+            "请完成安全验证",
+            "人机验证",
+            "verify you are human",
+            "managed_challenge",
+            "turnstile"
+        ]
+        return markers.contains { lower.contains($0) }
     }
 
     // MARK: - WordPress REST fallback

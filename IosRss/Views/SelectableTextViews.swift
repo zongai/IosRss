@@ -91,17 +91,17 @@ struct SelectableParagraphView: UIViewRepresentable {
         let font = UIFont.systemFont(ofSize: fontSize, weight: .regular)
         let para = NSMutableParagraphStyle()
         para.alignment = .natural
+        // Editorial reading metrics: open line height, restrained paragraph gap
         switch typography {
         case .chinese:
             para.firstLineHeadIndent = fontSize * 2.0
-            // 略减行距，排版更轻、滚动更顺
-            para.lineSpacing = max(2, fontSize * 0.32)
-            para.paragraphSpacing = max(4, fontSize * 0.22)
+            para.lineSpacing = max(3, fontSize * 0.38)
+            para.paragraphSpacing = max(6, fontSize * 0.28)
             para.lineBreakMode = .byWordWrapping
         case .latin:
             para.firstLineHeadIndent = 0
-            para.lineSpacing = max(2, fontSize * 0.22)
-            para.paragraphSpacing = max(6, fontSize * 0.28)
+            para.lineSpacing = max(3, fontSize * 0.30)
+            para.paragraphSpacing = max(8, fontSize * 0.36)
             para.lineBreakMode = .byWordWrapping
         }
         let mono = UIFont.monospacedSystemFont(ofSize: fontSize * 0.92, weight: .regular)

@@ -222,22 +222,27 @@ struct ArticleReaderView: View {
                     Button { Task { await fetchFullContent() } } label: {
                         HStack(spacing: AppSpacing.xs) {
                             Image(systemName: "arrow.down.doc")
-                            Text("RSS 仅为摘要，点击获取全文")
                                 .font(.system(size: 14, weight: .medium))
+                            Text("RSS 仅为摘要，点击获取全文")
+                                .font(AppTypography.label())
                             Spacer()
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 12))
-                                .foregroundStyle(Color.secondary)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(theme.muted)
                         }
-                        .foregroundStyle(Color.primary)
-                        .padding(.horizontal, AppSpacing.sm)
-                        .padding(.vertical, AppSpacing.sm)
-                        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: AppRadius.md))
+                        .foregroundStyle(theme.text)
+                        .padding(.horizontal, AppSpacing.md)
+                        .padding(.vertical, AppSpacing.sm + 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: AppRadius.md, style: .continuous)
+                                .fill(theme.surface.opacity(0.6))
+                        )
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal, AppLayout.readingHorizontalPadding)
-                    .padding(.top, AppSpacing.sm)
+                    .padding(.top, AppSpacing.md)
                     .readingColumn()
+                    .accessibilityHint("获取完整文章内容")
                 }
 
                 let displayContent = showTranslated

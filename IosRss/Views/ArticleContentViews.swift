@@ -29,8 +29,8 @@ struct ArticleContentView: View {
     }
 
     var body: some View {
-        // Editorial paragraph rhythm: slightly more air between blocks
-        LazyVStack(alignment: .leading, spacing: prefersChineseTypography ? AppSpacing.paragraph : AppSpacing.sm) {
+        // Editorial paragraph rhythm — air between blocks without feeling sparse
+        LazyVStack(alignment: .leading, spacing: prefersChineseTypography ? AppSpacing.paragraph + 2 : AppSpacing.md - 2) {
             // 用下标遍历，避免每次 body 都 Array(enumerated()) 分配
             ForEach(cachedBlocks.indices, id: \.self) { index in
                 blockView(cachedBlocks[index])
@@ -84,9 +84,9 @@ struct ArticleContentView: View {
                         image
                             .resizable()
                             .scaledToFit()
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(RoundedRectangle(cornerRadius: AppRadius.md, style: .continuous))
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 4)
+                            .padding(.vertical, AppSpacing.sm)
                     case .failure:
                         EmptyView()
                     @unknown default:
@@ -808,9 +808,10 @@ struct ArticleCodeBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("代码")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(AppTypography.caption())
+                    .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 8)
+                Spacer(minLength: AppSpacing.xs)
                 Button {
                     UIPasteboard.general.string = source
                     copied = true
@@ -820,16 +821,17 @@ struct ArticleCodeBlockView: View {
                     }
                 } label: {
                     Label(copied ? "已复制" : "复制", systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(AppTypography.caption())
+                        .fontWeight(.medium)
                         .labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
                 .accessibilityLabel(copied ? "已复制代码" : "复制代码")
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
+            .padding(.horizontal, AppSpacing.sm)
+            .padding(.top, AppSpacing.sm)
+            .padding(.bottom, AppSpacing.xs)
 
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(source)
@@ -837,16 +839,15 @@ struct ArticleCodeBlockView: View {
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
+                    .padding(.horizontal, AppSpacing.sm)
+                    .padding(.bottom, AppSpacing.sm)
             }
         }
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+        .background(
+            RoundedRectangle(cornerRadius: AppRadius.md, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
         )
-        .padding(.vertical, 6)
+        .padding(.vertical, AppSpacing.xs)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("代码块")
     }

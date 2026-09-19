@@ -24,6 +24,12 @@ struct FavoritesListView: View {
                             preferUnreadStyle: true
                         )
                     }
+                    .listRowInsets(EdgeInsets(
+                        top: 0,
+                        leading: AppLayout.listHorizontalPadding,
+                        bottom: 0,
+                        trailing: AppLayout.listHorizontalPadding
+                    ))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                     .swipeActions(edge: .trailing) {

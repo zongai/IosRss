@@ -77,7 +77,7 @@ struct ArticleListView: View {
                 // （避免把整段译文塞进 id 导致行身份频繁失效、List 复用失败）
                 .id("\(article.id.uuidString)-\(article.isRead)-\(showAllTranslations)-\(article.translatedTitle == nil ? 0 : 1)-\(article.translatedSummary == nil ? 0 : 1)-\(index == 0 ? "f" : "r")")
                 .listRowInsets(EdgeInsets(
-                    top: index == 0 ? AppSpacing.sm : 0,
+                    top: index == 0 ? AppSpacing.sm : (index == 1 ? AppSpacing.xs : 0),
                     leading: AppLayout.listHorizontalPadding,
                     bottom: 0,
                     trailing: AppLayout.listHorizontalPadding

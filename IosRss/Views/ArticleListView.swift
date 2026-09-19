@@ -606,17 +606,18 @@ struct FeaturedArticleRow: View {
                 // Category / source
                 Text(item.feedTitle.uppercased())
                     .font(AppTypography.articleCategory(size: max(11, store.listTitleFontSize - 6)))
-                    .tracking(0.7)
+                    .tracking(0.9)
                     .foregroundStyle(theme.muted)
 
                 // Large title
                 HStack(alignment: .top, spacing: AppSpacing.xs) {
                     Text(displayTitle)
                         .font(AppTypography.font(
-                            size: store.listTitleFontSize + 4,
+                            size: store.listTitleFontSize + 5,
                             weight: item.isRead ? .medium : .bold
                         ))
-                        .tracking(AppTypography.titleTracking * 0.6)
+                        .tracking(AppTypography.displayTracking * 0.7)
+                        .lineSpacing(3)
                         .foregroundStyle(item.isRead ? theme.muted : theme.text)
                         .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
@@ -636,16 +637,17 @@ struct FeaturedArticleRow: View {
                         .lineLimit(2)
                 }
 
-                // Longer excerpt for featured
+                // Longer excerpt
                 if !displaySummary.isEmpty {
                     Text(displaySummary)
                         .font(AppTypography.listSummary(size: store.listSummaryFontSize + 1))
                         .foregroundStyle(theme.muted)
+                        .lineSpacing(3)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                // Metadata
+                // Metadata — lowest weight
                 HStack(spacing: 6) {
                     if !item.relativeTime.isEmpty {
                         Text(item.relativeTime)
@@ -655,16 +657,18 @@ struct FeaturedArticleRow: View {
                     if store.smartInterestFilterEnabled, let score = item.interestScore {
                         Text("·")
                             .font(AppTypography.caption())
-                            .foregroundStyle(theme.muted.opacity(0.5))
+                            .foregroundStyle(theme.muted.opacity(0.45))
                         Text(String(format: "%.0f%%", score * 100))
                             .font(AppTypography.caption())
                             .foregroundStyle(score < store.lowInterestThreshold ? Color.orange : theme.muted)
                     }
                 }
+                .padding(.top, AppSpacing.xxs)
             }
-            .padding(.vertical, AppSpacing.lg)
+            .padding(.top, AppSpacing.lg)
+            .padding(.bottom, AppSpacing.xl)
             Divider()
-                .opacity(0.7)
+                .opacity(0.4)
         }
     }
 }
@@ -703,8 +707,9 @@ struct ArticleRow: View {
     var body: some View {
         let item = live
         VStack(alignment: .leading, spacing: 0) {
+            // Editorial order: Title → Excerpt → Metadata
             VStack(alignment: .leading, spacing: AppSpacing.xs) {
-                // Title — primary hierarchy
+                // Title
                 HStack(alignment: .top, spacing: AppSpacing.xs) {
                     Text(displayTitle)
                         .font(AppTypography.font(
@@ -729,6 +734,21 @@ struct ArticleRow: View {
                         .lineLimit(2)
                 }
 
+                // Excerpt
+                if !displaySummary.isEmpty {
+                    Text(displaySummary)
+                        .font(AppTypography.listSummary(size: store.listSummaryFontSize))
+                        .foregroundStyle(theme.muted)
+                        .lineLimit(2)
+                    if showTranslation && store.titleDisplayMode == .bilingual
+                        && item.translatedSummary != nil && !item.summary.isEmpty {
+                        Text(item.summary)
+                            .font(AppTypography.listSummary(size: max(12, store.listSummaryFontSize - 2)))
+                            .foregroundStyle(theme.muted.opacity(0.75))
+                            .lineLimit(2)
+                    }
+                }
+
                 // Metadata — lowest weight
                 HStack(spacing: 6) {
                     Text(item.feedTitle)
@@ -737,7 +757,7 @@ struct ArticleRow: View {
                     if !item.relativeTime.isEmpty {
                         Text("·")
                             .font(AppTypography.caption())
-                            .foregroundStyle(theme.muted.opacity(0.5))
+                            .foregroundStyle(theme.muted.opacity(0.45))
                         Text(item.relativeTime)
                             .font(AppTypography.caption())
                             .foregroundStyle(theme.muted)
@@ -745,7 +765,7 @@ struct ArticleRow: View {
                     if store.smartInterestFilterEnabled, let score = item.interestScore {
                         Text("·")
                             .font(AppTypography.caption())
-                            .foregroundStyle(theme.muted.opacity(0.5))
+                            .foregroundStyle(theme.muted.opacity(0.45))
                         Text(String(format: "%.0f%%", score * 100))
                             .font(AppTypography.caption())
                             .foregroundStyle(score < store.lowInterestThreshold ? Color.orange : theme.muted)
@@ -769,25 +789,10 @@ struct ArticleRow: View {
                         .foregroundStyle(.red.opacity(0.85))
                         .lineLimit(1)
                 }
-
-                // Summary — secondary
-                if !displaySummary.isEmpty {
-                    Text(displaySummary)
-                        .font(AppTypography.listSummary(size: store.listSummaryFontSize))
-                        .foregroundStyle(theme.muted)
-                        .lineLimit(2)
-                    if showTranslation && store.titleDisplayMode == .bilingual
-                        && item.translatedSummary != nil && !item.summary.isEmpty {
-                        Text(item.summary)
-                            .font(AppTypography.listSummary(size: max(12, store.listSummaryFontSize - 2)))
-                            .foregroundStyle(theme.muted.opacity(0.8))
-                            .lineLimit(2)
-                    }
-                }
             }
-            .padding(.vertical, AppSpacing.md)
+            .padding(.vertical, AppSpacing.md + 2)
             Divider()
-                .opacity(0.6)
+                .opacity(0.4)
         }
     }
 }

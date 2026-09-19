@@ -104,32 +104,34 @@ struct ArticleReaderView: View {
                 Color.clear.frame(height: 0).id("readerTop")
 
                 // MARK: Editorial header — category → title → meta
-                VStack(alignment: .leading, spacing: AppSpacing.sm) {
-                    // Category / source label (lowest visual weight above title)
+                VStack(alignment: .leading, spacing: AppSpacing.md) {
+                    // Category / source (quiet label above the title)
                     Text(currentArticle.feedTitle.uppercased())
                         .font(AppTypography.articleCategory(size: max(11, store.readerTitleFontSize - 14)))
-                        .tracking(0.8)
+                        .tracking(1.0)
                         .foregroundStyle(theme.muted)
-                        .textCase(.uppercase)
 
-                    Text(displayTitle)
-                        .font(AppTypography.articleTitle(size: store.readerTitleFontSize))
-                        .tracking(AppTypography.displayTracking)
-                        .foregroundStyle(theme.text)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if showTranslated,
-                       let translated = currentArticle.translatedTitle,
-                       !translated.isEmpty,
-                       store.titleDisplayMode == .bilingual {
-                        Text(currentArticle.title)
-                            .font(AppTypography.articleSubtitle(size: max(13, store.readerTitleFontSize - 9)))
-                            .foregroundStyle(theme.muted)
+                    VStack(alignment: .leading, spacing: AppSpacing.xs) {
+                        Text(displayTitle)
+                            .font(AppTypography.articleTitle(size: store.readerTitleFontSize))
+                            .tracking(AppTypography.displayTracking)
+                            .foregroundStyle(theme.text)
+                            .lineSpacing(4)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if showTranslated,
+                           let translated = currentArticle.translatedTitle,
+                           !translated.isEmpty,
+                           store.titleDisplayMode == .bilingual {
+                            Text(currentArticle.title)
+                                .font(AppTypography.articleSubtitle(size: max(13, store.readerTitleFontSize - 9)))
+                                .foregroundStyle(theme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
 
-                    // Metadata row
+                    // Metadata — lowest weight
                     HStack(spacing: AppSpacing.xs) {
                         if !currentArticle.relativeTime.isEmpty {
                             Text(currentArticle.relativeTime)
@@ -138,13 +140,13 @@ struct ArticleReaderView: View {
                         }
                         if currentArticle.hasFullContent {
                             Text("·")
-                                .foregroundStyle(theme.muted.opacity(0.5))
+                                .foregroundStyle(theme.muted.opacity(0.45))
                             Text("全文")
                                 .font(AppTypography.articleMeta(size: max(11, store.readerTitleFontSize - 13)))
                                 .foregroundStyle(theme.muted)
                         } else if fullContentError != nil {
                             Text("·")
-                                .foregroundStyle(theme.muted.opacity(0.5))
+                                .foregroundStyle(theme.muted.opacity(0.45))
                             Text("仅摘要")
                                 .font(AppTypography.articleMeta(size: max(11, store.readerTitleFontSize - 13)))
                                 .foregroundStyle(.orange)
@@ -152,15 +154,17 @@ struct ArticleReaderView: View {
                     }
                 }
                 .padding(.horizontal, AppLayout.readingHorizontalPadding)
-                .padding(.top, AppSpacing.xl)
-                .padding(.bottom, AppSpacing.lg)
+                .padding(.top, AppSpacing.xxl)
+                .padding(.bottom, AppSpacing.xl)
                 .readingColumn()
 
                 readerHighlightsSection()
                     .padding(.horizontal, AppLayout.readingHorizontalPadding)
                     .readingColumn()
 
+                // Soft rule under header
                 Divider()
+                    .opacity(0.45)
                     .padding(.horizontal, AppLayout.readingHorizontalPadding)
                     .readingColumn()
 
@@ -247,8 +251,8 @@ struct ArticleReaderView: View {
                     suppressArticleSwipe: $suppressArticleSwipe
                 )
                 .padding(.horizontal, AppLayout.readingHorizontalPadding)
-                .padding(.top, AppSpacing.lg)
-                .padding(.bottom, 56)
+                .padding(.top, AppSpacing.xl)
+                .padding(.bottom, 72)
                 .readingColumn()
             }
             // 整页内容随文章 id 重建，避免沿用上一篇的 contentOffset
@@ -537,29 +541,33 @@ struct ArticleReaderView: View {
     @ViewBuilder
     private func readerHighlightsSection() -> some View {
         if !currentArticle.highlights.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: AppSpacing.xs) {
                 Label("高亮 \(currentArticle.highlights.count)", systemImage: "highlighter")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .font(AppTypography.caption())
+                    .fontWeight(.semibold)
+                    .foregroundStyle(theme.muted)
                 ForEach(currentArticle.highlights.prefix(8)) { h in
-                    HStack(alignment: .top) {
+                    HStack(alignment: .top, spacing: AppSpacing.xs) {
                         Text(h.text)
                             .font(.system(size: max(13, store.fontSize - 2)))
+                            .foregroundStyle(theme.text)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Button {
                             store.removeHighlight(articleID: currentArticle.id, highlightID: h.id)
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 16))
+                                .foregroundStyle(theme.muted)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("删除高亮")
                     }
-                    .padding(8)
-                    .background(Color.yellow.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.horizontal, AppSpacing.sm)
+                    .padding(.vertical, AppSpacing.xs)
+                    .background(Color.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: AppRadius.sm, style: .continuous))
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 8)
+            .padding(.bottom, AppSpacing.sm)
         }
     }
 

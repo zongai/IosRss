@@ -25,6 +25,7 @@ struct SafariView: UIViewControllerRepresentable {
 }
 
 struct AISummaryCard: View {
+    @Environment(\.theme) private var theme
     let summary: String
     @Binding var expanded: Bool
     var fontSize: Double = 22
@@ -34,40 +35,49 @@ struct AISummaryCard: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button { withAnimation(.spring(duration: 0.3)) { expanded.toggle() } } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "wand.and.stars").font(.system(size: 14, weight: .semibold))
-                    Text("AI 摘要").font(.system(size: 15, weight: .semibold))
+            Button {
+                withAnimation(.easeInOut(duration: 0.22)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: AppSpacing.xs) {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                    Text("AI 摘要")
+                        .font(AppTypography.label())
+                        .foregroundStyle(theme.text)
                     if let providerName, !providerName.isEmpty {
                         Text(providerName)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Color(.systemBackground))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(Color.secondary, in: .capsule)
+                            .font(AppTypography.caption())
+                            .foregroundStyle(theme.muted)
                     }
                     Spacer()
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 12)).foregroundStyle(Color.secondary)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(theme.muted)
                 }
-                .foregroundStyle(Color.primary)
-                .padding(.horizontal, 14).padding(.vertical, 12)
+                .padding(.horizontal, AppSpacing.sm)
+                .padding(.vertical, AppSpacing.sm)
             }
             .buttonStyle(.plain)
             if expanded {
-                Divider()
-                VStack(alignment: .leading, spacing: 10) {
+                Divider().opacity(0.4)
+                VStack(alignment: .leading, spacing: AppSpacing.sm) {
                     ForEach(Array(points.enumerated()), id: \.offset) { _, point in
-                        Text(point).font(.system(size: fontSize)).foregroundStyle(Color.primary)
-                            .lineSpacing(5)
+                        Text(point)
+                            .font(.system(size: fontSize))
+                            .foregroundStyle(theme.text)
+                            .lineSpacing(6)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding(.horizontal, 14).padding(.vertical, 14)
+                .padding(.horizontal, AppSpacing.sm)
+                .padding(.vertical, AppSpacing.md)
             }
         }
-        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+        .background(
+            RoundedRectangle(cornerRadius: AppRadius.md, style: .continuous)
+                .fill(theme.surface.opacity(0.55))
+        )
     }
 }

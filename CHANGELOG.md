@@ -8,7 +8,7 @@
 
 ---
 
-## [1.3-76] — 构建中
+## [1.3-76] — 构建成功 (build158 / Actions 35446479020)
 
 ### 翻译
 - 新增 **Yandex（免 Key）**、**Azure/Bing（免 Key）** 引擎（参考 Readest 网页 API）

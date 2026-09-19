@@ -610,7 +610,7 @@ struct GroupSectionHeader: View {
         Button(action: onToggle) {
             HStack(spacing: AppSpacing.xs) {
                 Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: max(9, titleSize - 2), weight: .semibold))
+                    .font(AppTypography.font(size: max(9, titleSize - 2), weight: .semibold))
                     .foregroundStyle(theme.muted)
                     .frame(width: max(12, titleSize - 1), alignment: .center)
                 Text(title)
@@ -620,16 +620,16 @@ struct GroupSectionHeader: View {
                     .textCase(nil)
                 if isCollapsed {
                     Text("\(feedCount)")
-                        .font(.system(size: metaSize, weight: .medium))
+                        .font(AppTypography.font(size: metaSize, weight: .medium))
                         .foregroundStyle(theme.muted)
                         .monospacedDigit()
                     if unreadCount > 0 {
                         Text("\(unreadCount)")
-                            .font(.system(size: max(10, titleSize - 3), weight: .bold))
+                            .font(AppTypography.font(size: max(10, titleSize - 3), weight: .bold))
                             .foregroundStyle(Color(.systemBackground))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(theme.accent, in: .capsule)
+                            .background(theme.accent, in: Capsule())
                             .monospacedDigit()
                     }
                 }
@@ -646,6 +646,7 @@ struct GroupSectionHeader: View {
 
 struct GroupManagerView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @State private var newName = ""
     @State private var renameTarget: FeedGroup?
@@ -659,14 +660,17 @@ struct GroupManagerView: View {
                             renameTarget = group
                             renameText = group.name
                         } label: {
-                            HStack {
-                                Image(systemName: "folder").foregroundStyle(.secondary)
+                            HStack(spacing: AppSpacing.sm) {
+                                Image(systemName: "folder")
+                                    .foregroundStyle(theme.muted)
                                 Text(group.name)
-                                    .font(.system(size: store.groupTitleFontSize, weight: .medium))
-                                    .foregroundStyle(.primary)
+                                    .font(AppTypography.font(size: store.groupTitleFontSize, weight: .medium))
+                                    .foregroundStyle(theme.text)
                                 Spacer()
                                 Text("\(store.feeds.filter { $0.groupID == group.id }.count)")
-                                    .foregroundStyle(.secondary).monospacedDigit()
+                                    .font(AppTypography.caption())
+                                    .foregroundStyle(theme.muted)
+                                    .monospacedDigit()
                             }
                             .contentShape(Rectangle())
                         }
@@ -688,8 +692,14 @@ struct GroupManagerView: View {
                     }
                 }
             }
-            .navigationTitle("管理分组").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } } }
+            .appFormChrome()
+            .navigationTitle("管理分组")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
             .alert("重命名分组", isPresented: Binding(
                 get: { renameTarget != nil },
                 set: { if !$0 { renameTarget = nil } }

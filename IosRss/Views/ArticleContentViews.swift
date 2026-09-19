@@ -916,11 +916,12 @@ enum ContentBlockParser {
 // MARK: - Code block
 
 struct ArticleCodeBlockView: View {
+    @Environment(\.theme) private var theme
     let source: String
     let fontSize: CGFloat
     @State private var copied = false
 
-    private var monoSize: CGFloat { max(12, fontSize * 0.88) }
+    private var monoSize: CGFloat { max(12, AppTypography.scaled(fontSize * 0.88)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -928,7 +929,7 @@ struct ArticleCodeBlockView: View {
                 Text("代码")
                     .font(AppTypography.caption())
                     .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.muted)
                 Spacer(minLength: AppSpacing.xs)
                 Button {
                     UIPasteboard.general.string = source
@@ -944,7 +945,7 @@ struct ArticleCodeBlockView: View {
                         .labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(theme.muted)
                 .accessibilityLabel(copied ? "已复制代码" : "复制代码")
             }
             .padding(.horizontal, AppSpacing.sm)
@@ -954,7 +955,7 @@ struct ArticleCodeBlockView: View {
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(source)
                     .font(.system(size: monoSize, weight: .regular, design: .monospaced))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(theme.text)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, AppSpacing.sm)
@@ -963,7 +964,7 @@ struct ArticleCodeBlockView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: AppRadius.md, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
+                .fill(theme.surface.opacity(0.7))
         )
         .padding(.vertical, AppSpacing.xs)
         .accessibilityElement(children: .contain)

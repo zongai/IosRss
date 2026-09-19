@@ -643,7 +643,7 @@ struct FeaturedArticleRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if item.isFavorite {
                         Image(systemName: "star.fill")
-                            .font(.system(size: max(12, store.listTitleFontSize - 4)))
+                            .font(AppTypography.font(size: max(12, store.listTitleFontSize - 4), weight: .semibold))
                             .foregroundStyle(.orange)
                             .padding(.top, 4)
                             .accessibilityLabel("已收藏")
@@ -750,7 +750,7 @@ struct ArticleRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if item.isFavorite {
                         Image(systemName: "star.fill")
-                            .font(.system(size: max(11, store.listTitleFontSize - 6)))
+                            .font(AppTypography.font(size: max(11, store.listTitleFontSize - 6), weight: .semibold))
                             .foregroundStyle(.orange)
                             .padding(.top, 3)
                             .accessibilityLabel("已收藏")

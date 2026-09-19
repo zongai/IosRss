@@ -157,37 +157,39 @@ struct ArticleListView: View {
                 }
         }
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     Task { await toggleTranslateAll() }
                 } label: {
                     if isTranslatingAll {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 4) {
                             ProgressView().scaleEffect(0.75)
                             if translationTotal > 0 {
                                 Text("\(translationDone)/\(translationTotal)")
-                                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                                    .foregroundStyle(.secondary)
+                                    .font(AppTypography.caption())
                                     .monospacedDigit()
+                                    .foregroundStyle(theme.muted)
                             }
                         }
                     } else {
-                        Image(systemName: "translate")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(showAllTranslations ? Color(.systemBackground) : Color.primary)
-                            .frame(width: 28, height: 28)
-                            .background(showAllTranslations ? Color.primary : Color.secondary.opacity(0.15),
-                                        in: .rect(cornerRadius: 6))
+                        Label(
+                            showAllTranslations ? "显示原文" : "翻译列表",
+                            systemImage: "translate"
+                        )
+                        .symbolVariant(showAllTranslations ? .fill : .none)
                     }
                 }
+                .labelStyle(.iconOnly)
                 .accessibilityLabel(showAllTranslations ? "显示原文标题" : "翻译列表")
                 .disabled(isTranslatingAll)
-
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     store.markAllAsRead(in: feed.id)
                 } label: {
-                    Image(systemName: "checklist")
+                    Label("全部已读", systemImage: "checklist")
                 }
+                .labelStyle(.iconOnly)
                 .accessibilityLabel("全部已读")
             }
         }

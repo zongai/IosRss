@@ -359,30 +359,23 @@ struct ArticleReaderView: View {
             }
         }
         .toolbar {
+            // Primary: favorite
             ToolbarItem(placement: .topBarTrailing) {
-                Button { store.toggleFavorite(currentArticle) } label: {
+                Button {
+                    store.toggleFavorite(currentArticle)
+                } label: {
                     Label(currentArticle.isFavorite ? "已收藏" : "收藏",
                           systemImage: currentArticle.isFavorite ? "star.fill" : "star")
                 }
+                .labelStyle(.iconOnly)
             }
-            if fullContentAllowed {
+
+            // Primary: translate (when relevant)
+            if showTranslationButton {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { Task { await fetchFullContent() } } label: {
-                        if isFetchingFull { ProgressView().scaleEffect(0.75) }
-                        else {
-                            Label(currentArticle.hasFullContent ? "已获取全文" : "全文",
-                                  systemImage: currentArticle.hasFullContent ? "arrow.down.doc" : "arrow.down.doc.fill")
-                        }
-                    }
-                    .disabled(isFetchingFull)
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                if showTranslationButton {
                     if isTranslating {
                         ProgressView().scaleEffect(0.75)
                     } else if hasUsableTranslation {
-                        // 已有译文：点按切换原文/译文；打开菜单可重新翻译或指定引擎
                         Menu {
                             Button {
                                 Task { await retranslate(preferHigherQuality: false) }
@@ -407,14 +400,12 @@ struct ArticleReaderView: View {
                                 }
                             }
                         } label: {
-                            if showTranslated {
-                                Label("原文", systemImage: "doc.plaintext")
-                            } else {
-                                Label("译文", systemImage: "translate")
-                            }
+                            Label(showTranslated ? "原文" : "译文",
+                                  systemImage: showTranslated ? "doc.plaintext" : "translate")
                         } primaryAction: {
                             Task { await toggleTranslation() }
                         }
+                        .labelStyle(.iconOnly)
                         .accessibilityHint("轻点切换原文/译文；长按可重新翻译或选择翻译源")
                     } else {
                         Menu {
@@ -438,53 +429,78 @@ struct ArticleReaderView: View {
                         } label: {
                             Label("翻译", systemImage: "translate")
                         }
+                        .labelStyle(.iconOnly)
                         .accessibilityHint("翻译正文，可选择翻译源")
                     }
                 }
             }
+
+            // Secondary actions → overflow menu (editorial, less chrome)
             ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await generateSummary() } } label: {
-                    if isGeneratingSummary { ProgressView().scaleEffect(0.75) }
-                    else { Label("AI总结", systemImage: "wand.and.stars") }
-                }
-                .disabled(isGeneratingSummary)
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    Task {
-                        let html = showTranslated
-                            ? (translatedContent ?? currentArticle.translatedContent ?? currentArticle.content)
-                            : currentArticle.content
-                        let plain = HTMLUtils.stripTags(html)
-                        let fallback = currentArticle.summary
-                        let body = plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : plain
-                        let text = displayTitle + "\n" + body
-                        await tts.toggle(text: text, voice: store.ttsVoice.isEmpty ? nil : store.ttsVoice, rate: store.ttsRate)
+                Menu {
+                    if fullContentAllowed {
+                        Button {
+                            Task { await fetchFullContent() }
+                        } label: {
+                            Label(
+                                currentArticle.hasFullContent ? "已获取全文" : "获取全文",
+                                systemImage: currentArticle.hasFullContent ? "arrow.down.doc" : "arrow.down.doc.fill"
+                            )
+                        }
+                        .disabled(isFetchingFull)
+                    }
+
+                    Button {
+                        Task { await generateSummary() }
+                    } label: {
+                        Label("AI 摘要", systemImage: "wand.and.stars")
+                    }
+                    .disabled(isGeneratingSummary)
+
+                    Button {
+                        Task {
+                            let html = showTranslated
+                                ? (translatedContent ?? currentArticle.translatedContent ?? currentArticle.content)
+                                : currentArticle.content
+                            let plain = HTMLUtils.stripTags(html)
+                            let fallback = currentArticle.summary
+                            let body = plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : plain
+                            let text = displayTitle + "\n" + body
+                            await tts.toggle(text: text, voice: store.ttsVoice.isEmpty ? nil : store.ttsVoice, rate: store.ttsRate)
+                        }
+                    } label: {
+                        Label(tts.isPlaying ? "停止朗读" : "朗读",
+                              systemImage: tts.isPlaying ? "stop.fill" : "speaker.wave.2")
+                    }
+
+                    if commentsAllowed {
+                        Button {
+                            showComments = true
+                        } label: {
+                            Label("评论", systemImage: "bubble.left.and.bubble.right")
+                        }
+                    }
+
+                    if let url = URL(string: currentArticle.link) {
+                        Divider()
+                        Button {
+                            openCurrentArticleInBrowser()
+                        } label: {
+                            Label("在浏览器中打开", systemImage: "safari")
+                        }
+                        ShareLink(item: url) {
+                            Label("分享链接", systemImage: "square.and.arrow.up")
+                        }
                     }
                 } label: {
-                    if tts.isLoading {
+                    if isFetchingFull || isGeneratingSummary || tts.isLoading {
                         ProgressView().scaleEffect(0.75)
                     } else {
-                        Label(tts.isPlaying ? "停止朗读" : "朗读",
-                              systemImage: tts.isPlaying ? "stop.fill" : "speaker.wave.2.fill")
+                        Label("更多", systemImage: "ellipsis.circle")
                     }
                 }
-            }
-            if commentsAllowed {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showComments = true } label: {
-                        Label("评论", systemImage: "bubble.left.and.bubble.right")
-                    }
-                }
-            }
-            if URL(string: currentArticle.link) != nil {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        openCurrentArticleInBrowser()
-                    } label: {
-                        Label("浏览器", systemImage: "safari")
-                    }
-                }
+                .labelStyle(.iconOnly)
+                .accessibilityLabel("更多操作")
             }
         }
         // 使用 item 绑定：换篇时更新 URL，内置浏览器会跟着当前文章刷新

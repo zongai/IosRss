@@ -188,35 +188,47 @@ struct FeedsListView: View {
                 ArticleListView(feed: feed)
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 18) {
-                        if store.feedSortMode == .manual {
-                            Button(editMode == .active ? "完成排序" : "排序",
-                                   systemImage: editMode == .active ? "checkmark" : "arrow.up.arrow.down") {
-                                withAnimation { editMode = editMode == .active ? .inactive : .active }
-                            }
-                            .labelStyle(.iconOnly)
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(.primary)
-                        }
-                        Button("管理分组", systemImage: "folder.badge.gearshape") {
-                            showGroupManager = true
+                // While sorting, surface "Done" as primary chrome
+                if editMode == .active {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("完成", systemImage: "checkmark") {
+                            withAnimation { editMode = .inactive }
                         }
                         .labelStyle(.iconOnly)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.primary)
+                        .accessibilityLabel("完成排序")
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
                         Button("添加订阅", systemImage: "plus") {
                             showAddFeed = true
                         }
                         .labelStyle(.iconOnly)
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(.primary)
-                        Button("导入导出", systemImage: "square.and.arrow.down.on.square") {
-                            showOPMLMenu = true
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            if store.feedSortMode == .manual {
+                                Button {
+                                    withAnimation { editMode = .active }
+                                } label: {
+                                    Label("手动排序", systemImage: "arrow.up.arrow.down")
+                                }
+                            }
+                            Button {
+                                showGroupManager = true
+                            } label: {
+                                Label("管理分组", systemImage: "folder.badge.gearshape")
+                            }
+                            Divider()
+                            Button {
+                                showOPMLMenu = true
+                            } label: {
+                                Label("导入 / 导出", systemImage: "square.and.arrow.down.on.square")
+                            }
+                        } label: {
+                            Label("更多", systemImage: "ellipsis.circle")
                         }
                         .labelStyle(.iconOnly)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.primary)
+                        .accessibilityLabel("更多操作")
                     }
                 }
             }

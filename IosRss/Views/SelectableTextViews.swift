@@ -21,10 +21,18 @@ struct SelectableParagraphView: UIViewRepresentable {
         tv.isSelectable = true
         tv.isScrollEnabled = false
         tv.backgroundColor = .clear
+        tv.isOpaque = false
+        tv.clipsToBounds = true
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
+        tv.textContainer.widthTracksTextView = true
+        // 非连续布局：长段滚动进屏时少做全量排版
+        tv.layoutManager.allowsNonContiguousLayout = true
         tv.dataDetectorTypes = []
         tv.delegate = context.coordinator
+        // 降低与外层 ScrollView 的手势冲突与额外绘制
+        tv.delaysContentTouches = false
+        tv.isUserInteractionEnabled = true
         tv.linkTextAttributes = [
             .foregroundColor: UIColor.tintColor,
             .underlineStyle: NSUnderlineStyle.single.rawValue
@@ -32,7 +40,7 @@ struct SelectableParagraphView: UIViewRepresentable {
         context.coordinator.onExplain = onExplain
         context.coordinator.onHighlight = onHighlight
         context.coordinator.onOpenURL = onOpenURL
-        apply(to: tv)
+        apply(to: tv, coordinator: context.coordinator)
         return tv
     }
 
@@ -40,17 +48,27 @@ struct SelectableParagraphView: UIViewRepresentable {
         context.coordinator.onExplain = onExplain
         context.coordinator.onHighlight = onHighlight
         context.coordinator.onOpenURL = onOpenURL
-        // 内容未变则跳过整段属性重建 + sizeThatFits，滚动时主线程开销下降明显
+        // 内容未变则跳过整段属性重建；滚动时父视图刷新不应触碰 UITextView
         let mark = contentMark
         guard uiView.accessibilityValue != mark else { return }
-        apply(to: uiView, mark: mark)
+        apply(to: uiView, coordinator: context.coordinator, mark: mark)
         uiView.invalidateIntrinsicContentSize()
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
         let width = proposal.width ?? UIScreen.main.bounds.width - 40
+        // 同宽同内容：复用高度，避免滚动布局反复 sizeThatFits
+        if context.coordinator.cachedWidth == width,
+           context.coordinator.cachedMark == contentMark,
+           let h = context.coordinator.cachedHeight {
+            return CGSize(width: width, height: h)
+        }
         let size = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        return CGSize(width: width, height: ceil(size.height))
+        let h = ceil(size.height)
+        context.coordinator.cachedWidth = width
+        context.coordinator.cachedHeight = h
+        context.coordinator.cachedMark = contentMark
+        return CGSize(width: width, height: h)
     }
 
     /// 轻量内容指纹：避免每次 update 都对全文做 hash + 属性枚举
@@ -63,7 +81,7 @@ struct SelectableParagraphView: UIViewRepresentable {
         return "\(typography)-\(Int(fontSize))-\(len)-\(head)-\(tail)"
     }
 
-    private func apply(to tv: UITextView, mark: String? = nil) {
+    private func apply(to tv: UITextView, coordinator: Coordinator, mark: String? = nil) {
         let resolvedMark = mark ?? contentMark
         if tv.accessibilityValue == resolvedMark { return }
 
@@ -76,32 +94,63 @@ struct SelectableParagraphView: UIViewRepresentable {
         switch typography {
         case .chinese:
             para.firstLineHeadIndent = fontSize * 2.0
-            para.lineSpacing = max(4, fontSize * 0.45)
-            para.paragraphSpacing = max(6, fontSize * 0.35)
+            // 略减行距，排版更轻、滚动更顺
+            para.lineSpacing = max(2, fontSize * 0.32)
+            para.paragraphSpacing = max(4, fontSize * 0.22)
             para.lineBreakMode = .byWordWrapping
         case .latin:
             para.firstLineHeadIndent = 0
-            para.lineSpacing = max(3, fontSize * 0.28)
-            para.paragraphSpacing = max(8, fontSize * 0.4)
+            para.lineSpacing = max(2, fontSize * 0.22)
+            para.paragraphSpacing = max(6, fontSize * 0.28)
             para.lineBreakMode = .byWordWrapping
         }
+        let mono = UIFont.monospacedSystemFont(ofSize: fontSize * 0.92, weight: .regular)
+        // 先统一段落样式与正文字体，再只对有 link/背景的区间细调，减少 enumerate 开销
+        mutable.addAttributes([
+            .font: font,
+            .foregroundColor: UIColor.label,
+            .paragraphStyle: para
+        ], range: full)
         mutable.enumerateAttributes(in: full, options: []) { attrs, range, _ in
+            var needsWrite = false
             var next = attrs
-            next[.font] = font
-            if attrs[.link] == nil {
-                next[.foregroundColor] = UIColor.label
+            let isMono: Bool = {
+                if let f = attrs[.font] as? UIFont {
+                    return f.fontDescriptor.symbolicTraits.contains(.traitMonoSpace)
+                }
+                if attrs[.backgroundColor] != nil { return true }
+                return false
+            }()
+            if isMono {
+                next[.font] = mono
+                next[.backgroundColor] = attrs[.backgroundColor] ?? UIColor.secondarySystemFill
+                let codePara = para.mutableCopy() as! NSMutableParagraphStyle
+                codePara.firstLineHeadIndent = 0
+                next[.paragraphStyle] = codePara
+                needsWrite = true
             }
-            next[.paragraphStyle] = para
-            mutable.setAttributes(next, range: range)
+            if attrs[.link] != nil {
+                // 保留链接色，不覆盖 foreground
+                needsWrite = true
+            }
+            if needsWrite {
+                mutable.setAttributes(next, range: range)
+            }
         }
         tv.attributedText = mutable
         tv.accessibilityValue = resolvedMark
+        coordinator.cachedHeight = nil
+        coordinator.cachedWidth = -1
+        coordinator.cachedMark = resolvedMark
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var onOpenURL: (URL) -> Void
         var onExplain: (String) -> Void
         var onHighlight: ((String) -> Void)?
+        var cachedWidth: CGFloat = -1
+        var cachedHeight: CGFloat?
+        var cachedMark: String = ""
 
         init(onOpenURL: @escaping (URL) -> Void, onExplain: @escaping (String) -> Void) {
             self.onOpenURL = onOpenURL

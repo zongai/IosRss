@@ -23,7 +23,7 @@
 - 刷新**线性进度条**（无系统转圈叠层）；失败时标明源名；HTTP 源允许 ATS 并尝试升级 HTTPS
 
 ### 阅读
-- **全文抓取**：摘要过短时自动或手动抓取；源可关闭；站点优化含 Foreign Affairs / Foreign Policy / 少数派 / **Sixth Tone** / **CarNewsChina** 等；遇 **Cloudflare 验证**提示浏览器打开
+- **全文抓取**：摘要过短时自动或手动抓取；源可关闭；站点优化含 Foreign Affairs / Foreign Policy / 少数派 / Sixth Tone / CarNewsChina / **SCMP** 等；遇 **Cloudflare 验证**提示浏览器打开
 - **全文 URL 前缀**（设置全局开关 + 前缀，源级启用）：抓取时在文章链接前拼接（如 archive.is / 12ft.io）；缓存仍按原始链接
 - **排版**：系统 / 苹方 / 宋体 / 黑体；中西文分排版；首行缩进；清理空段落与广告块；原文压缩留白；链接内图片正确还原（避免 `__IMG_n__` 字面量）
 - **工具栏显隐**：向下滑动隐藏顶部导航与底部 Tab；上滑恢复
@@ -36,7 +36,7 @@
 - **阅读进度与高亮**：滚动记录进度；选区可高亮保存
 
 ### 翻译与 AI
-- **翻译引擎链**：可排序使用列表；限流（429 等）自动切换下一引擎；Google / MyMemory / Lingva / Microsoft / DeepL / AI
+- **翻译引擎链**：可排序使用列表；限流（429 等）自动切换下一引擎；Google / MyMemory / Lingva / **Yandex** / **Azure·Bing** / Microsoft / DeepL / AI；DeepL·MS 原生批量；结果缓存
 - **翻译目标语言**与 **AI 输出语言**可分别配置
 - 列表 / 阅读页自动翻译（按源开关）；**全文抓取完成前不自动翻译正文**；阅读页重新翻译**可选引擎**
 - 并发可调；多 Key 轮询；设置内连通性测试

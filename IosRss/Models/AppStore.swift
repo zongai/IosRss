@@ -148,8 +148,25 @@ class AppStore: AIService.Runtime {
 
     private var readArticleLinks: Set<String> = []
 
+    /// iCloud 同步开关（默认开）
+    var iCloudSyncEnabled: Bool {
+        get { ICloudSyncService.isEnabled }
+        set {
+            ICloudSyncService.isEnabled = newValue
+            if newValue {
+                scheduleICloudPush()
+                pullICloudIfNeeded()
+            }
+        }
+    }
+    var iCloudLastSyncText: String = ""
+    private var iCloudObserver: NSObjectProtocol?
+    private var iCloudPushTask: Task<Void, Never>?
+    private var isApplyingICloud = false
+
     init() {
         loadFromStorage()
+        startICloudSync()
         _ = applyArticleBlacklist()
         if feeds.isEmpty { seedSampleData() }
         if UserDefaults.standard.string(forKey: "defaultTranslationEngine") == "Gemini" {
@@ -602,6 +619,24 @@ class AppStore: AIService.Runtime {
             } catch {
                 throw TranslationError.apiError("Lingva：不可用 — \(error.localizedDescription)")
             }
+        case .yandex:
+            do {
+                let out = try await YandexTranslate.translate(text: sample, targetLang: targetLanguage.googleCode)
+                let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !preview.isEmpty else { throw TranslationError.apiError("Yandex 返回空译文") }
+                return "Yandex（免 Key）：可用\n试译：\(preview.prefix(60))"
+            } catch {
+                throw TranslationError.apiError("Yandex：不可用 — \(error.localizedDescription)")
+            }
+        case .azure:
+            do {
+                let out = try await AzureBingTranslate.translate(text: sample, targetLang: targetLanguage.microsoftCode)
+                let preview = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !preview.isEmpty else { throw TranslationError.apiError("Azure/Bing 返回空译文") }
+                return "Azure/Bing（免 Key）：可用\n试译：\(preview.prefix(60))"
+            } catch {
+                throw TranslationError.apiError("Azure/Bing：不可用 — \(error.localizedDescription)")
+            }
         case .microsoft:
             let keys = loadMicrosoftKeys()
             guard !keys.isEmpty else { throw TranslationError.apiError("Microsoft：未配置 API Key") }
@@ -813,8 +848,10 @@ class AppStore: AIService.Runtime {
         let feedTitle = feeds[idx].title.isEmpty ? "未命名源" : feeds[idx].title
         let urlStr = feeds[idx].url
         guard var url = NetworkURLPolicy.validate(urlStr) else {
-            let msg = "「\(feedTitle)」：不允许的地址（仅支持公网 http/https）"
-            errorMessage = msg
+            let reason = "不允许的地址（仅支持公网 http/https）"
+            setFeedRefreshError(feedID, reason: reason, persist: persist)
+            let msg = "「\(feedTitle)」：\(reason)"
+            if manageLoading { errorMessage = msg }
             return msg
         }
         if manageLoading {
@@ -847,6 +884,7 @@ class AppStore: AIService.Runtime {
             let data = try await FeedRefreshService.fetchFeedData(from: url)
             OfflineCache.saveFeedXML(url: urlStr, data: data)
             applyParsedFeed(data: data, feedID: feedID, idx: idx, urlStr: urlStr, persist: persist)
+            clearFeedRefreshError(feedID, persist: persist)
             return nil
         } catch {
             // http 失败时尝试 https
@@ -862,25 +900,90 @@ class AppStore: AIService.Runtime {
                             feeds[i].url = httpsURL.absoluteString
                             if persist { saveToStorage() }
                         }
+                        clearFeedRefreshError(feedID, persist: persist)
                         return nil
                     } catch { /* fall through */ }
                 }
             }
             if let cached = OfflineCache.loadFeedXML(url: urlStr) {
                 applyParsedFeed(data: cached, feedID: feedID, idx: idx, urlStr: urlStr, persist: persist)
-                let msg = "「\(feedTitle)」：网络异常，已使用本地缓存"
-                errorMessage = msg
+                let detail = Self.friendlyNetworkError(error)
+                let reason = "已用本地缓存（\(detail)）"
+                setFeedRefreshError(feedID, reason: reason, persist: persist)
+                let msg = "「\(feedTitle)」：\(reason)"
+                if manageLoading { errorMessage = msg }
                 return msg
             } else {
-                let tip = Self.friendlyNetworkError(error)
-                let msg = "「\(feedTitle)」：\(tip)"
-                errorMessage = msg
+                let reason = Self.friendlyNetworkError(error)
+                setFeedRefreshError(feedID, reason: reason, persist: persist)
+                let msg = "「\(feedTitle)」：\(reason)"
+                if manageLoading { errorMessage = msg }
                 return msg
             }
         }
     }
 
+    private func setFeedRefreshError(_ feedID: UUID, reason: String, persist: Bool) {
+        guard let i = feeds.firstIndex(where: { $0.id == feedID }) else { return }
+        let clipped = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clipped.isEmpty else { return }
+        if feeds[i].lastRefreshError == clipped { return }
+        feeds[i].lastRefreshError = clipped
+        // 批量 refreshAll 结束时统一落盘；单源刷新可即时持久化
+        if persist { saveToStorage() }
+    }
+
+    private func clearFeedRefreshError(_ feedID: UUID, persist: Bool) {
+        guard let i = feeds.firstIndex(where: { $0.id == feedID }) else { return }
+        guard feeds[i].lastRefreshError != nil else { return }
+        feeds[i].lastRefreshError = nil
+        if persist { saveToStorage() }
+    }
+
     private static func friendlyNetworkError(_ error: Error) -> String {
+        // 优先使用带状态码/主机的明确错误
+        if let fetch = error as? FeedRefreshService.FetchError {
+            return fetch.errorDescription ?? "网络异常"
+        }
+        if let urlErr = error as? URLError {
+            switch urlErr.code {
+            case .notConnectedToInternet:
+                return "设备未连接网络，请检查 Wi‑Fi 或蜂窝数据"
+            case .timedOut:
+                return "连接超时（约 12 秒无响应），源站可能较慢或不可达"
+            case .cannotFindHost, .dnsLookupFailed:
+                return "无法解析主机名，请检查订阅地址是否正确"
+            case .cannotConnectToHost:
+                return "无法连接到服务器，源站可能宕机或拒绝连接"
+            case .networkConnectionLost:
+                return "网络连接中断，请稍后重试"
+            case .secureConnectionFailed:
+                return "安全连接失败（证书或 TLS 异常）"
+            case .serverCertificateUntrusted, .serverCertificateHasBadDate,
+                 .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot:
+                return "服务器证书不受信任，无法建立 HTTPS"
+            case .appTransportSecurityRequiresSecureConnection:
+                return "需要 HTTPS 连接（系统 ATS 限制了明文 HTTP）"
+            case .noPermissionsToReadFile:
+                return "源站开启了访问验证（如 Cloudflare），应用内无法读取 Feed"
+            case .cannotParseResponse:
+                return "无法解析为有效的 RSS/Atom 内容"
+            case .badServerResponse:
+                return "服务器响应异常"
+            case .badURL, .unsupportedURL:
+                return "订阅地址无效"
+            case .dataNotAllowed:
+                return "当前网络策略不允许数据访问（如关闭了蜂窝数据）"
+            case .internationalRoamingOff:
+                return "国际漫游已关闭，无法访问网络"
+            case .callIsActive:
+                return "通话中，网络暂时不可用"
+            case .cancelled:
+                return "请求已取消"
+            default:
+                break
+            }
+        }
         let ns = error as NSError
         let text = error.localizedDescription
         if text.localizedCaseInsensitiveContains("App Transport Security")
@@ -889,18 +992,24 @@ class AppStore: AIService.Runtime {
         }
         if ns.domain == NSURLErrorDomain {
             switch ns.code {
-            case NSURLErrorNotConnectedToInternet: return "设备未连接网络"
-            case NSURLErrorTimedOut: return "连接超时"
-            case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed: return "无法解析主机"
-            case NSURLErrorAppTransportSecurityRequiresSecureConnection: return "需要 HTTPS 连接（ATS）"
+            case NSURLErrorNotConnectedToInternet: return "设备未连接网络，请检查 Wi‑Fi 或蜂窝数据"
+            case NSURLErrorTimedOut: return "连接超时（约 12 秒无响应），源站可能较慢或不可达"
+            case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed: return "无法解析主机名，请检查订阅地址是否正确"
+            case NSURLErrorCannotConnectToHost: return "无法连接到服务器，源站可能宕机或拒绝连接"
+            case NSURLErrorNetworkConnectionLost: return "网络连接中断，请稍后重试"
+            case NSURLErrorAppTransportSecurityRequiresSecureConnection: return "需要 HTTPS 连接（系统 ATS 限制了明文 HTTP）"
             case NSURLErrorNoPermissionsToReadFile:
-                return "源站返回了验证页（如 Cloudflare），无法读取 Feed。可稍后重试，或改用其它 RSSHub 实例。"
+                return "源站开启了访问验证（如 Cloudflare），应用内无法读取 Feed"
             case NSURLErrorCannotParseResponse:
                 return "无法解析为有效的 RSS/Atom 内容"
             default: break
             }
         }
-        return text
+        // 仍不明确时给出简短原文，避免只显示「网络异常」
+        let clipped = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if clipped.isEmpty { return "网络请求失败，请稍后重试" }
+        if clipped.count > 80 { return String(clipped.prefix(80)) + "…" }
+        return clipped
     }
 
     private func applyParsedFeed(data: Data, feedID: UUID, idx: Int, urlStr: String, persist: Bool = true) {
@@ -1090,14 +1199,10 @@ class AppStore: AIService.Runtime {
         } else if failures.count == 1 {
             errorMessage = failures[0]
         } else {
-            // 从「源名」：中提取源名做摘要
-            let names: [String] = failures.compactMap { line in
-                guard line.hasPrefix("「"), let end = line.firstIndex(of: "」") else { return nil }
-                return String(line[line.index(after: line.startIndex)..<end])
-            }
-            let shown = names.prefix(3).map { "「\($0)」" }.joined(separator: "、")
-            let extra = names.count > 3 ? " 等\(names.count) 个源" : ""
-            errorMessage = "\(shown)\(extra) 刷新异常（共 \(failures.count) 条）"
+            // 摘要：源名 + 原因（最多 3 条），其余只计数量
+            let preview = failures.prefix(3).joined(separator: "；")
+            let extra = failures.count > 3 ? "；…共 \(failures.count) 个源失败" : ""
+            errorMessage = preview + extra
         }
     }
 
@@ -1383,7 +1488,7 @@ class AppStore: AIService.Runtime {
         guard !keys.isEmpty else {
             return Array(repeating: nil, count: texts.count)
         }
-        // 按 Key 轮询分批并行，提高吞吐
+        // 原生批量：一次 HTTP 多句，按 Key 轮询分批并行
         return await translateNativeBatchParallel(texts, chunkSize: 30, parallelism: min(3, max(1, keys.count))) { chunk in
             let ks = self.deeplKeyCooldown.availableKeys(from: self.loadDeepLKeys())
             guard !ks.isEmpty else { throw TranslationError.apiError("DeepL 无可用 Key") }
@@ -1400,6 +1505,47 @@ class AppStore: AIService.Runtime {
                         return r
                     } catch {
                         self.deeplKeyCooldown.mark(k, kind: Self.keyFailureKind(error))
+                        continue
+                    }
+                }
+                throw error
+            }
+        }
+    }
+
+    /// Microsoft 原生批量：一次请求多句，顺序与输入一致
+    func translateTextsWithMicrosoft(_ texts: [String], targetLang: String) async -> [String?] {
+        let keys = loadMicrosoftKeys()
+        guard !keys.isEmpty else {
+            return Array(repeating: nil, count: texts.count)
+        }
+        let region = microsoftTranslateRegion
+        // Azure 单次建议 ≤100 段；列表用 40 兼顾延迟
+        return await translateNativeBatchParallel(texts, chunkSize: 40, parallelism: min(3, max(1, keys.count))) { chunk in
+            let ks = self.microsoftKeyCooldown.availableKeys(from: self.loadMicrosoftKeys())
+            guard !ks.isEmpty else { throw TranslationError.apiError("Microsoft 无可用 Key") }
+            let i = self.microsoftKeyRoundRobin % ks.count
+            let key = ks[i]
+            self.microsoftKeyRoundRobin = i + 1
+            do {
+                return try await MicrosoftTranslate.translate(
+                    texts: chunk,
+                    apiKey: key,
+                    region: region,
+                    targetLang: targetLang
+                )
+            } catch {
+                self.microsoftKeyCooldown.mark(key, kind: Self.keyFailureKind(error))
+                for k in self.microsoftKeyCooldown.availableKeys(from: self.loadMicrosoftKeys()) where k != key {
+                    do {
+                        return try await MicrosoftTranslate.translate(
+                            texts: chunk,
+                            apiKey: k,
+                            region: region,
+                            targetLang: targetLang
+                        )
+                    } catch {
+                        self.microsoftKeyCooldown.mark(k, kind: Self.keyFailureKind(error))
                         continue
                     }
                 }
@@ -1619,7 +1765,7 @@ class AppStore: AIService.Runtime {
     /// 引擎是否已配置到可调用（缺 Key 的引擎跳过）
     func isTranslationEngineReady(_ engine: TranslationEngine) -> Bool {
         switch engine {
-        case .google, .mymemory, .lingva: return true
+        case .google, .mymemory, .lingva, .yandex, .azure: return true
         case .microsoft: return !loadMicrosoftKeys().isEmpty
         case .deepl: return !loadDeepLKeys().isEmpty
         case .ai:
@@ -1640,6 +1786,10 @@ class AppStore: AIService.Runtime {
                 targetLang: lang.googleCode,
                 customBase: lingvaCustomBase.isEmpty ? nil : lingvaCustomBase
             )
+        case .yandex:
+            return try await YandexTranslate.translate(text: text, targetLang: lang.googleCode)
+        case .azure:
+            return try await AzureBingTranslate.translate(text: text, targetLang: lang.microsoftCode)
         case .microsoft:
             return try await translateWithMicrosoft(text, targetLang: lang.microsoftCode)
         case .deepl:
@@ -1667,13 +1817,36 @@ class AppStore: AIService.Runtime {
 
     /// - Parameter excluding: 跳过的引擎（例如重译时排除某些引擎）
     func translateText(_ text: String, excluding: Set<TranslationEngine> = []) async throws -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        // 缓存命中（参考 Readest：原文 + 目标语 + 引擎）
+        let cacheProviders = effectiveTranslationChain().filter { !excluding.contains($0) }
+        for engine in cacheProviders {
+            if let cached = TranslationCache.get(
+                text: trimmed,
+                targetLang: targetLanguage,
+                provider: engine.rawValue
+            ), !cached.isEmpty {
+                lastUsedTranslationEngine = engine
+                return cached
+            }
+        }
+
         let chain = effectiveTranslationChain().filter { !excluding.contains($0) }
         var lastError: Error = TranslationError.apiError("没有可用的翻译引擎")
         for engine in chain {
             guard isTranslationEngineReady(engine) else { continue }
             do {
-                let result = try await translateWithEngine(engine, text: text)
+                let raw = try await translateWithEngine(engine, text: trimmed)
+                let result = TranslationPolish.polish(raw, targetLang: targetLanguage)
                 lastUsedTranslationEngine = engine
+                TranslationCache.set(
+                    result,
+                    text: trimmed,
+                    targetLang: targetLanguage,
+                    provider: engine.rawValue
+                )
                 return result
             } catch {
                 lastError = error
@@ -1697,12 +1870,98 @@ class AppStore: AIService.Runtime {
         )
     }
 
+    /// 列表/批量翻译入口：按首选引擎选最优路径
+    /// - DeepL / Microsoft：原生「一次请求多句」（非拼串），吞吐高且按条独立译
+    /// - AI：多 Provider 分片并发
+    /// - Google / Lingva / MyMemory：单条请求 + 受控并发（无可靠多句 API）
+    /// 批量缺口用引擎链单条补齐，避免整批失败
     func translateTexts(_ texts: [String], concurrency: Int? = nil) async -> [String?] {
         guard !texts.isEmpty else { return [] }
-        // 批量路径统一走 translateText，以便按引擎链限流自动切换
-        let primary = effectiveTranslationChain().first ?? defaultTranslationEngine
+        let chain = effectiveTranslationChain()
+        let primary = chain.first(where: { isTranslationEngineReady($0) && !isTranslationEngineCooling($0) })
+            ?? chain.first(where: { isTranslationEngineReady($0) })
+            ?? defaultTranslationEngine
         let limit = resolvedTranslationConcurrency(for: primary, override: concurrency)
-        return await translateConcurrently(texts, concurrency: limit)
+
+        var results: [String?]
+        var usedPrimary = false
+
+        switch primary {
+        case .deepl:
+            results = await translateTextsWithDeepL(texts, targetLang: targetLanguage.deeplCode)
+            usedPrimary = results.contains(where: { $0?.isEmpty == false })
+            if usedPrimary { lastUsedTranslationEngine = .deepl }
+        case .microsoft:
+            results = await translateTextsWithMicrosoft(texts, targetLang: targetLanguage.microsoftCode)
+            usedPrimary = results.contains(where: { $0?.isEmpty == false })
+            if usedPrimary { lastUsedTranslationEngine = .microsoft }
+        case .ai:
+            results = await translateTextsWithAIProviders(texts, perProviderConcurrency: max(1, limit))
+            usedPrimary = results.contains(where: { $0?.isEmpty == false })
+            if usedPrimary { lastUsedTranslationEngine = .ai }
+        case .google, .mymemory, .lingva, .yandex, .azure:
+            // 无稳定多句批量 API：并发单条（每条仍走完整引擎链）
+            return await translateConcurrently(texts, concurrency: limit)
+        }
+
+        // 首选批量有缺口时，用引擎链单条补（排除已失败的首选，避免重复撞限流）
+        if results.contains(where: { $0 == nil || $0?.isEmpty == true }) {
+            let exclude: Set<TranslationEngine> = usedPrimary ? [primary] : []
+            results = await fillMissingTranslations(results, texts: texts, excluding: exclude, concurrency: limit)
+        }
+        // 批量结果润色 + 写入缓存（单条路径已在 translateText 处理）
+        let lang = targetLanguage
+        let providerKey = primary.rawValue
+        for i in results.indices {
+            guard let raw = results[i], !raw.isEmpty else { continue }
+            let polished = TranslationPolish.polish(raw, targetLang: lang)
+            results[i] = polished
+            if i < texts.count {
+                TranslationCache.set(polished, text: texts[i], targetLang: lang, provider: providerKey)
+            }
+        }
+        return results
+    }
+
+    /// 仅补全失败项，避免对已成功条目重复请求
+    private func fillMissingTranslations(
+        _ results: [String?],
+        texts: [String],
+        excluding: Set<TranslationEngine>,
+        concurrency: Int
+    ) async -> [String?] {
+        var out = results
+        var missing: [(Int, String)] = []
+        missing.reserveCapacity(texts.count)
+        for (i, r) in results.enumerated() where i < texts.count {
+            if r == nil || r?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
+                missing.append((i, texts[i]))
+            }
+        }
+        guard !missing.isEmpty else { return out }
+
+        await withTaskGroup(of: (Int, String?).self) { group in
+            var next = 0
+            let spawn = min(max(concurrency, 1), missing.count)
+            func submit(_ job: (Int, String)) {
+                let (idx, text) = job
+                group.addTask {
+                    let r = try? await self.translateText(text, excluding: excluding)
+                    let trimmed = r?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return (idx, (trimmed?.isEmpty == false) ? trimmed : nil)
+                }
+            }
+            while next < spawn {
+                submit(missing[next]); next += 1
+            }
+            for await (idx, val) in group {
+                if let val { out[idx] = val }
+                if next < missing.count {
+                    submit(missing[next]); next += 1
+                }
+            }
+        }
+        return out
     }
 
     /// AI 多 Provider：轮询分片，每 Provider 独立并发，总吞吐 ≈ Provider数 × 每路并发
@@ -2632,6 +2891,7 @@ class AppStore: AIService.Runtime {
         persistReadLinks()
         SettingsRepository.save(makePersistedSettings())
         OfflineCache.saveChatConversations(chatConversations)
+        scheduleICloudPush()
     }
 
     func loadFromStorage() {
@@ -2643,6 +2903,157 @@ class AppStore: AIService.Runtime {
         if let loaded = OfflineCache.loadChatConversations() {
             chatConversations = loaded.sorted { $0.updatedAt > $1.updatedAt }
         }
+    }
+
+    // MARK: - iCloud 同步
+
+    private func startICloudSync() {
+        iCloudObserver = ICloudSyncService.startObserving { [weak self] in
+            self?.pullICloudIfNeeded()
+        }
+        // 启动时先 synchronize，再尝试拉云端
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            pullICloudIfNeeded()
+            // 本机有数据且云端空/更旧时推上去
+            scheduleICloudPush()
+            refreshICloudStatusText()
+        }
+    }
+
+    func scheduleICloudPush() {
+        guard ICloudSyncService.isEnabled, !isApplyingICloud else { return }
+        iCloudPushTask?.cancel()
+        iCloudPushTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            pushToICloudNow()
+        }
+    }
+
+    func pushToICloudNow() {
+        guard ICloudSyncService.isEnabled, !isApplyingICloud else { return }
+        let settingsData = try? JSONEncoder().encode(makePersistedSettingsForCloud())
+        let favoriteLinks = feeds.flatMap { $0.articles }.filter(\.isFavorite).map(\.link)
+        ICloudSyncService.push(
+            feeds: feeds,
+            groups: groups,
+            settingsData: settingsData,
+            readLinks: readArticleLinks,
+            favoriteLinks: favoriteLinks,
+            collapsedGroupIDs: collapsedGroupIDs,
+            isUngroupedCollapsed: isUngroupedCollapsed
+        )
+        refreshICloudStatusText()
+    }
+
+    func pullICloudIfNeeded() {
+        guard ICloudSyncService.isEnabled else { return }
+        guard let snap = ICloudSyncService.pullIfNewer() else {
+            refreshICloudStatusText()
+            return
+        }
+        applyICloudSnapshot(snap)
+    }
+
+    /// 设置页「立即同步」：强制拉再推
+    func syncICloudNow() {
+        guard ICloudSyncService.isEnabled else { return }
+        if let snap = ICloudSyncService.forcePull(),
+           let local = ICloudSyncService.lastLocalPushAt,
+           snap.updatedAt > local {
+            applyICloudSnapshot(snap)
+        } else if let snap = ICloudSyncService.forcePull(), ICloudSyncService.lastLocalPushAt == nil {
+            applyICloudSnapshot(snap)
+        }
+        pushToICloudNow()
+        refreshICloudStatusText()
+    }
+
+    private func applyICloudSnapshot(_ snap: ICloudSyncService.Snapshot) {
+        isApplyingICloud = true
+        defer {
+            isApplyingICloud = false
+            ICloudSyncService.lastLocalPushAt = snap.updatedAt
+            refreshICloudStatusText()
+        }
+
+        // 分组
+        groups = snap.groups
+
+        // 源：按 URL 合并，保留本机文章与全文缓存关联
+        let localByURL = Dictionary(feeds.map { (Self.canonicalLink($0.url), $0) }, uniquingKeysWith: { a, _ in a })
+        var merged: [RSSFeed] = []
+        var seen = Set<String>()
+        for rec in snap.feeds {
+            let key = Self.canonicalLink(rec.url)
+            if seen.contains(key) { continue }
+            seen.insert(key)
+            if var existing = localByURL[key] {
+                rec.applyMetadata(to: &existing)
+                // 若云端 id 不同，保持本机 id 以免破坏本地引用
+                merged.append(existing)
+            } else {
+                merged.append(rec.makeFeed())
+            }
+        }
+        feeds = merged
+
+        collapsedGroupIDs = Set(snap.collapsedGroupIDs)
+        isUngroupedCollapsed = snap.isUngroupedCollapsed
+        FeedRepository.saveCollapsedState(groupIDs: collapsedGroupIDs, isUngroupedCollapsed: isUngroupedCollapsed)
+
+        // 已读
+        readArticleLinks.formUnion(snap.readLinks)
+        for i in feeds.indices {
+            for j in feeds[i].articles.indices {
+                let link = Self.canonicalLink(feeds[i].articles[j].link)
+                if readArticleLinks.contains(link) {
+                    feeds[i].articles[j].isRead = true
+                }
+            }
+        }
+
+        // 收藏链接
+        let favSet = Set(snap.favoriteLinks.map { Self.canonicalLink($0) })
+        if !favSet.isEmpty {
+            for i in feeds.indices {
+                for j in feeds[i].articles.indices {
+                    if favSet.contains(Self.canonicalLink(feeds[i].articles[j].link)) {
+                        feeds[i].articles[j].isFavorite = true
+                    }
+                }
+            }
+        }
+
+        // 设置（密钥走 iCloud 钥匙串，不进快照）
+        if let data = snap.settingsData,
+           let decoded = try? JSONDecoder().decode(PersistedAppSettings.self, from: data) {
+            applyPersistedSettings(decoded)
+        }
+
+        FeedRepository.saveFeeds(feeds)
+        FeedRepository.saveGroups(groups)
+        persistReadLinks()
+        SettingsRepository.save(makePersistedSettings())
+    }
+
+    private func refreshICloudStatusText() {
+        let fmt = DateFormatter()
+        fmt.dateStyle = .short
+        fmt.timeStyle = .short
+        if let cloud = ICloudSyncService.cloudUpdatedAt {
+            iCloudLastSyncText = "云端：\(fmt.string(from: cloud))"
+        } else if let local = ICloudSyncService.lastLocalPushAt {
+            iCloudLastSyncText = "本机已上传：\(fmt.string(from: local))"
+        } else {
+            iCloudLastSyncText = ICloudSyncService.isEnabled ? "等待首次同步…" : "已关闭"
+        }
+    }
+
+    /// 云端设置快照（不含密钥）
+    private func makePersistedSettingsForCloud() -> PersistedAppSettings {
+        makePersistedSettings()
     }
 
     // MARK: - AI Chat

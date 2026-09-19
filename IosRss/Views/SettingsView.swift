@@ -285,6 +285,32 @@ struct SettingsView: View {
                     Text("已读保留与全文缓存天数、URL 前缀等。清除缓存入口在上方「缓存」分区。")
                 }
 
+                // MARK: iCloud
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { store.iCloudSyncEnabled },
+                        set: { store.iCloudSyncEnabled = $0 }
+                    )) {
+                        Label("iCloud 同步", systemImage: "icloud")
+                    }
+                    if store.iCloudSyncEnabled {
+                        if !store.iCloudLastSyncText.isEmpty {
+                            Text(store.iCloudLastSyncText)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        Button {
+                            store.syncICloudNow()
+                        } label: {
+                            Label("立即同步", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                    }
+                } header: {
+                    Text("iCloud")
+                } footer: {
+                    Text("同步订阅源、分组与全部设置到同一 Apple ID 的其它设备。文章正文在换机后刷新即可重新获取。API Key 通过 iCloud 钥匙串同步（需在系统设置中登录 iCloud 并开启钥匙串）。")
+                }
+
                 // MARK: 备份
                 Section {
                     Toggle("导出时包含 API Key", isOn: $exportIncludeSecrets)

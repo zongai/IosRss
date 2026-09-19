@@ -18,6 +18,7 @@ enum EdgeTTS {
 
     static let defaultChineseVoice = "zh-CN-YunyangNeural"
     static let defaultEnglishVoice = "en-US-EmmaMultilingualNeural"
+    static let defaultTurkishVoice = "tr-TR-EmelNeural"
 
     static let popularVoices: [(id: String, name: String)] = [
         ("zh-CN-YunyangNeural", "云扬（男·普通话）"),
@@ -32,6 +33,8 @@ enum EdgeTTS {
         ("en-GB-SoniaNeural", "Sonia（女·英式）"),
         ("ja-JP-NanamiNeural", "七海（女·日语）"),
         ("ko-KR-SunHiNeural", "SunHi（女·韩语）"),
+        ("tr-TR-EmelNeural", "Emel（女·土耳其语）"),
+        ("tr-TR-AhmetNeural", "Ahmet（男·土耳其语）"),
     ]
 
     enum TTSError: LocalizedError {
@@ -84,7 +87,41 @@ enum EdgeTTS {
 
     static func preferredVoice(for text: String, configured: String?) -> String {
         if let configured, !configured.isEmpty { return configured }
-        return ListLanguageDetect.isMostlyChinese(text) ? defaultChineseVoice : defaultEnglishVoice
+        if ListLanguageDetect.isMostlyChinese(text) { return defaultChineseVoice }
+        if isMostlyTurkish(text) { return defaultTurkishVoice }
+        return defaultEnglishVoice
+    }
+
+    /// 粗判土耳其语：拉丁字母为主且含 ğüşıöç 等特征字母
+    private static func isMostlyTurkish(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let special: Set<Character> = Set("ğüşıöçĞÜŞİÖÇ")
+        var letters = 0
+        var latin = 0
+        var trMark = 0
+        for ch in trimmed {
+            if ch.isNewline || ch.isWhitespace || ch.isPunctuation || ch.isSymbol || ch.isNumber { continue }
+            letters += 1
+            if special.contains(ch) {
+                trMark += 1
+                latin += 1
+            } else if ch.isLetter {
+                // 排除明显 CJK / 假名 / 谚文
+                if let v = ch.unicodeScalars.first?.value {
+                    if (0x3040...0x30FF).contains(v) || (0x4E00...0x9FFF).contains(v)
+                        || (0xAC00...0xD7AF).contains(v) {
+                        continue
+                    }
+                }
+                latin += 1
+            }
+        }
+        guard letters > 0, Double(latin) / Double(letters) >= 0.55 else { return false }
+        // 特征字母足够，或短句里至少出现 2 个土耳其特有字母
+        if trMark >= 3 { return true }
+        if letters <= 40, trMark >= 2 { return true }
+        return trMark >= 2 && Double(trMark) / Double(max(1, latin)) >= 0.04
     }
 
     /// 倍速 0.5～2.0 → SSML rate（如 +20% / -15%）

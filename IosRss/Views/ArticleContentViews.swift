@@ -29,12 +29,15 @@ struct ArticleContentView: View {
     }
 
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: prefersChineseTypography ? 12 : 10) {
+        LazyVStack(alignment: .leading, spacing: prefersChineseTypography ? 10 : 8) {
             // 用下标遍历，避免每次 body 都 Array(enumerated()) 分配
             ForEach(cachedBlocks.indices, id: \.self) { index in
                 blockView(cachedBlocks[index])
+                    .id(index)
             }
         }
+        // 父级 toolbar/chrome 动画不要带动正文布局动画
+        .transaction { $0.animation = nil }
         .onAppear { reparseIfNeeded() }
         .onChange(of: parseKey) { _, _ in reparseIfNeeded() }
         .sheet(isPresented: Binding(get: { browserURL != nil }, set: { if !$0 { browserURL = nil } })) {
@@ -97,6 +100,8 @@ struct ArticleContentView: View {
                 fontSize: fontSize,
                 suppressArticleSwipe: suppressArticleSwipe
             )
+        case .code(let source):
+            ArticleCodeBlockView(source: source, fontSize: fontSize)
         }
     }
 
@@ -167,6 +172,8 @@ enum ContentBlock: Sendable {
     case audio(String)
     /// 数据表（Visual Capitalist 等）：首行可为表头
     case table(headers: [String], rows: [[String]])
+    /// 代码块（pre / 多行 code）
+    case code(String)
 }
 
 enum ContentBlockParser {
@@ -190,10 +197,67 @@ enum ContentBlockParser {
         options: .caseInsensitive
     )
     private static let imgRe = try! NSRegularExpression(pattern: #"<img\b[^>]*>"#, options: .caseInsensitive)
+    private static let preRe = try! NSRegularExpression(
+        pattern: #"<pre\b[^>]*>([\s\S]*?)</pre>"#,
+        options: .caseInsensitive
+    )
+    private static let codeBlockRe = try! NSRegularExpression(
+        pattern: #"<code\b[^>]*>([\s\S]*?)</code>"#,
+        options: .caseInsensitive
+    )
 
     static func parse(_ html: String, prefersChineseTypography: Bool = false) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var working = HTMLUtils.decodePercentEncodings(HTMLUtils.decodeEntities(html))
+
+        // 先抽出代码块，避免 normalize / 去标签时丢失缩进与换行
+        var codePlaceholders: [(token: String, source: String)] = []
+        var inlineCodeTexts: [String] = []
+        do {
+            let ns = working as NSString
+            for match in preRe.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed() {
+                guard let full = Range(match.range, in: working) else { continue }
+                var inner = ""
+                if match.numberOfRanges >= 2, let r = Range(match.range(at: 1), in: working) {
+                    inner = String(working[r])
+                }
+                let source = extractCodeText(fromHTMLFragment: inner)
+                guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    working.replaceSubrange(full, with: "\n")
+                    continue
+                }
+                let token = "__CODE_\(codePlaceholders.count)__"
+                codePlaceholders.append((token, source))
+                working.replaceSubrange(full, with: "\n\(token)\n")
+            }
+        }
+        do {
+            let ns = working as NSString
+            for match in codeBlockRe.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed() {
+                guard let full = Range(match.range, in: working) else { continue }
+                var inner = ""
+                if match.numberOfRanges >= 2, let r = Range(match.range(at: 1), in: working) {
+                    inner = String(working[r])
+                }
+                let source = extractCodeText(fromHTMLFragment: inner)
+                let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    working.replaceSubrange(full, with: "")
+                    continue
+                }
+                // 多行或较长 → 独立代码块；短行内 → 行内等宽标记
+                if source.contains("\n") || trimmed.count >= 48 {
+                    let token = "__CODE_\(codePlaceholders.count)__"
+                    codePlaceholders.append((token, source))
+                    working.replaceSubrange(full, with: "\n\(token)\n")
+                } else {
+                    let idx = inlineCodeTexts.count
+                    inlineCodeTexts.append(trimmed)
+                    working.replaceSubrange(full, with: "__INLINECODE_\(idx)__")
+                }
+            }
+        }
+
         working = normalizeHTMLWhitespace(working)
         working = replaceAll(brRe, in: working, with: "\n")
         // 仅块级闭合换段，避免每个嵌套 </div> 都制造空段
@@ -354,6 +418,11 @@ enum ContentBlockParser {
                 if let found = tablePlaceholders.first(where: { $0.token == part }) {
                     blocks.append(.table(headers: found.headers, rows: found.rows))
                 }
+            } else if part.hasPrefix("__CODE_"), part.hasSuffix("__") {
+                lastImageURL = nil
+                if let found = codePlaceholders.first(where: { $0.token == part }) {
+                    blocks.append(.code(found.source))
+                }
             } else if isJunkParagraph(part) {
                 lastImageURL = nil
                 continue
@@ -372,7 +441,12 @@ enum ContentBlockParser {
                         guard !isJunkParagraph(text) else { continue }
                         let style = ReaderTypography.resolve(text: text, preferChinese: prefersChineseTypography)
                         blocks.append(.paragraph(
-                            makeAttributedParagraph(text, linkHrefs: linkHrefs, linkTexts: linkTexts),
+                            makeAttributedParagraph(
+                                text,
+                                linkHrefs: linkHrefs,
+                                linkTexts: linkTexts,
+                                inlineCodes: inlineCodeTexts
+                            ),
                             style
                         ))
                     }
@@ -383,10 +457,32 @@ enum ContentBlockParser {
             let plain = HTMLUtils.stripTags(html)
             if !plain.isEmpty {
                 let style = ReaderTypography.resolve(text: plain, preferChinese: prefersChineseTypography)
-                blocks.append(.paragraph(makeAttributedParagraph(plain, linkHrefs: [], linkTexts: []), style))
+                blocks.append(.paragraph(
+                    makeAttributedParagraph(plain, linkHrefs: [], linkTexts: [], inlineCodes: []),
+                    style
+                ))
             }
         }
         return blocks
+    }
+
+    /// 从 pre/code 内部 HTML 抽出纯文本，保留换行与缩进
+    private static func extractCodeText(fromHTMLFragment html: String) -> String {
+        var s = html
+        s = replaceAll(brRe, in: s, with: "\n")
+        // 去掉嵌套标签但保留文本
+        if let re = try? NSRegularExpression(pattern: #"<[^>]+>"#, options: [.dotMatchesLineSeparators]) {
+            s = re.stringByReplacingMatches(
+                in: s,
+                range: NSRange(s.startIndex..., in: s),
+                withTemplate: ""
+            )
+        }
+        s = HTMLUtils.decodeEntities(s)
+        // 去掉首尾空行，保留内部缩进空格
+        while s.hasPrefix("\n") { s.removeFirst() }
+        while s.hasSuffix("\n") { s.removeLast() }
+        return s
     }
 
     /// 整段是否仅为图片占位（`__IMG_0__` / `[[IMG_0]]` 等）
@@ -603,6 +699,7 @@ enum ContentBlockParser {
         if t.range(of: #"^__IMG_\d+__$"#, options: .regularExpression) != nil { return true }
         if t.range(of: #"^\[\[IMG_\d+\]\]$"#, options: .regularExpression) != nil { return true }
         if t.range(of: #"^__TABLE_\d+__$"#, options: .regularExpression) != nil { return true }
+        if t.range(of: #"^__CODE_\d+__$"#, options: .regularExpression) != nil { return true }
         if t.range(of: #"^__LINK_\d+__$"#, options: .regularExpression) != nil { return true }
         // 纯符号/分隔线
         if t.count <= 3, t.allSatisfy({ !$0.isLetter && !$0.isNumber }) { return true }
@@ -628,9 +725,32 @@ enum ContentBlockParser {
         return false
     }
 
-    private static func makeAttributedParagraph(_ raw: String, linkHrefs: [String], linkTexts: [String]) -> AttributedString {
+    private static func makeAttributedParagraph(
+        _ raw: String,
+        linkHrefs: [String],
+        linkTexts: [String],
+        inlineCodes: [String] = []
+    ) -> AttributedString {
         var text = raw
-        var ranges: [(range: Range<String.Index>, url: URL)] = []
+        var linkRanges: [(range: Range<String.Index>, url: URL)] = []
+        var codeRanges: [Range<String.Index>] = []
+
+        // 行内代码占位先还原，记录等宽区间
+        if let regex = try? NSRegularExpression(pattern: #"__INLINECODE_(\d+)__"#) {
+            while let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) {
+                guard let fullRange = Range(match.range, in: text),
+                      match.numberOfRanges >= 2,
+                      let idxRange = Range(match.range(at: 1), in: text),
+                      let idx = Int(text[idxRange]),
+                      idx >= 0, idx < inlineCodes.count else { break }
+                let label = inlineCodes[idx]
+                let start = fullRange.lowerBound
+                text.replaceSubrange(fullRange, with: label)
+                let end = text.index(start, offsetBy: label.count, limitedBy: text.endIndex) ?? text.endIndex
+                codeRanges.append(start..<end)
+            }
+        }
+
         let placeholderPattern = #"__LINK_(\d+)__"#
         if let regex = try? NSRegularExpression(pattern: placeholderPattern) {
             while let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) {
@@ -645,12 +765,12 @@ enum ContentBlockParser {
                 text.replaceSubrange(fullRange, with: label)
                 let end = text.index(start, offsetBy: label.count, limitedBy: text.endIndex) ?? text.endIndex
                 if let url = URL(string: href), !label.isEmpty {
-                    ranges.append((start..<end, url))
+                    linkRanges.append((start..<end, url))
                 }
             }
         }
         var attributed = AttributedString(text)
-        for item in ranges {
+        for item in linkRanges {
             let lower = text.distance(from: text.startIndex, to: item.range.lowerBound)
             let upper = text.distance(from: text.startIndex, to: item.range.upperBound)
             guard lower >= 0, upper <= attributed.characters.count, lower < upper else { continue }
@@ -660,10 +780,76 @@ enum ContentBlockParser {
             attributed[start..<end].foregroundColor = .accentColor
             attributed[start..<end].underlineStyle = .single
         }
+        for range in codeRanges {
+            let lower = text.distance(from: text.startIndex, to: range.lowerBound)
+            let upper = text.distance(from: text.startIndex, to: range.upperBound)
+            guard lower >= 0, upper <= attributed.characters.count, lower < upper else { continue }
+            let start = attributed.index(attributed.startIndex, offsetByCharacters: lower)
+            let end = attributed.index(attributed.startIndex, offsetByCharacters: upper)
+            attributed[start..<end].font = .system(.body, design: .monospaced)
+            attributed[start..<end].backgroundColor = Color.secondary.opacity(0.12)
+        }
         return attributed
     }
 }
 
+
+// MARK: - Code block
+
+struct ArticleCodeBlockView: View {
+    let source: String
+    let fontSize: CGFloat
+    @State private var copied = false
+
+    private var monoSize: CGFloat { max(12, fontSize * 0.88) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("代码")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Button {
+                    UIPasteboard.general.string = source
+                    copied = true
+                    Task {
+                        try? await Task.sleep(nanoseconds: 1_200_000_000)
+                        copied = false
+                    }
+                } label: {
+                    Label(copied ? "已复制" : "复制", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 11, weight: .medium))
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(copied ? "已复制代码" : "复制代码")
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+
+            ScrollView(.horizontal, showsIndicators: true) {
+                Text(source)
+                    .font(.system(size: monoSize, weight: .regular, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+            }
+        }
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("代码块")
+    }
+}
 
 // MARK: - MP3 / audio link player
 

@@ -30,7 +30,7 @@ struct TranslationSettingsView: View {
             } header: {
                 Text("语言")
             } footer: {
-                Text("翻译引擎将内容译为「翻译目标语言」；摘要/解释使用「AI 输出语言」。")
+                Text("翻译引擎将内容译为「翻译目标语言」；摘要/解释使用「AI 输出语言」。目标为简体/繁体时，若正文是另一侧中文，会自动做繁简转换（不跳过）。")
             }
 
             Section {

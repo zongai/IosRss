@@ -1,7 +1,7 @@
 import Foundation
 
 /// 用户偏好持久化（不含订阅源与已读链接；那些在 FeedRepository）
-struct PersistedAppSettings {
+struct PersistedAppSettings: Codable {
     var fontSize: Double = 17
     var listTitleFontSize: Double = 18
     var listSummaryFontSize: Double = 15

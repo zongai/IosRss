@@ -411,8 +411,17 @@ struct ArticleListView: View {
 /// 列表翻译用：粗判文本是否已是目标中文，避免无谓请求
 enum ListLanguageDetect {
     /// 文本是否已接近目标语言（用于跳过翻译）
+    /// 简繁分计：简体目标时，繁体正文仍需转换；反之亦然
     static func isMostlyTarget(_ text: String, language: AppLanguage) -> Bool {
-        if language.isChinese { return isMostlyChinese(text) }
+        if language == .zhHans {
+            guard isMostlyChinese(text) else { return false }
+            // 明显偏繁体则不算已是简体目标
+            return ChineseScript.detect(text) != .traditional
+        }
+        if language == .zhHant {
+            guard isMostlyChinese(text) else { return false }
+            return ChineseScript.detect(text) != .simplified
+        }
         if language == .ja { return isMostlyJapanese(text) }
         if language == .ko { return isMostlyKorean(text) }
         // 拉丁系：CJK 占比很低且拉丁字母足够
@@ -496,6 +505,53 @@ enum ListLanguageDetect {
             return false
         }
     }
+}
+
+// MARK: - 简繁脚本粗判（用于决定是否需要繁简转换）
+
+enum ChineseScript {
+    case simplified
+    case traditional
+    case unknown
+
+    /// 用「仅简 / 仅繁」特征字计数判断；样本过短或中性字过多时返回 unknown
+    static func detect(_ text: String) -> ChineseScript {
+        let sample = text.count > 800 ? String(text.prefix(800)) : text
+        var simp = 0
+        var trad = 0
+        for ch in sample {
+            if simplifiedOnly.contains(ch) { simp += 1 }
+            else if traditionalOnly.contains(ch) { trad += 1 }
+        }
+        let total = simp + trad
+        guard total >= 2 else { return .unknown }
+        // 一侧明显占优
+        if simp >= trad * 2 + 1 { return .simplified }
+        if trad >= simp * 2 + 1 { return .traditional }
+        if simp > trad { return .simplified }
+        if trad > simp { return .traditional }
+        return .unknown
+    }
+
+    /// 是否需要相对目标语言做繁简转换
+    static func needsConversion(text: String, to target: AppLanguage) -> Bool {
+        guard target.isChinese, ListLanguageDetect.isMostlyChinese(text) else { return false }
+        let script = detect(text)
+        switch target {
+        case .zhHans: return script == .traditional
+        case .zhHant: return script == .simplified
+        default: return false
+        }
+    }
+
+    // 高频「仅简 / 仅繁」特征字（非穷尽，够用粗判）
+    private static let simplifiedOnly: Set<Character> = Set(
+        "国东门车马龙过这来时对会发点开关从众专与书买乱争产亲亿们传体优储儿党兰兴养写农冲决况净准凤凯划刚创删剂剑剧劝办务动劳势勋汇汉洁浇浊测济浑浓润涨渔渗滚满滥滨滤灭灯灿烦烧热爱牵牺独现环说语请让认议记许识译证话广庆应厅历压县参双变处备复妇妈孙学宁实审宽宾寻导将尘尽层岛帅师帐带帮干后边达运还进远连迟选护报拥拦拨择挂挡挣挤挥损换据捞摇摊摆摄敌数斩时晋晓术机杀杂权条杨极构柜样档桥楼欢岁残段毕气汇汤沟没浅涂涌涛涝淀游满濑激烂爷猎现画疮疯盐监盘睁确碍矿码砖础种积称稳穷窗竞笼简签类粮纠红纤约级纯纲纳纵纷纸纺练组细织终经结绕绘给络绝统继绩续绳维绿缓编缘缝缠缩网罗罚罢聋职联聪肠肤胆艺节苏药获蓝虽蚁蝇见观视览觉计订训讯讲论设访评词试诗读调谈贝负责败账货质贪购贱贵贷贸费贺贼资赌赏赔赚赞赠赢赵赶跃车轧转轮软轻载轿较辅辆辈辑输辞辩边辽适钉针钟钢钥钦钱铁铃铅铜银锁销锋错键长门闪闭问闲间闹闻阅队阳阴阵阶际陆陈险随隐难雾页顶项顺须顾顿预领频题额颜愿风飞饥饭饮饱饼馆马驱驾验骑骗鱼鲜鸟鸡鸣鸭鸿鹏"
+    )
+
+    private static let traditionalOnly: Set<Character> = Set(
+        "國東門車馬龍過這來時對會發點開關從眾專與書買亂爭產親億們傳體優儲兒黨蘭興養寫農沖決況淨準鳳凱劃剛創刪劑劍劇勸辦務動勞勢勛匯漢潔澆濁測濟渾濃潤漲漁滲滾滿濫濱濾滅燈燦煩燒熱愛牽犧獨現環說語請讓認議記許識譯證話廣慶應廳歷壓縣參雙變處備複婦媽孫學寧實審寬賓尋導將塵盡層島帥師帳帶幫幹後邊達運還進遠連遲選護報擁攔撥擇掛擋掙擠揮損換據撈搖攤擺攝敵數斬時晉曉術機殺雜權條楊極構櫃樣檔橋樓歡歲殘段畢氣湯溝沒淺塗湧濤澇澱遊瀨激爛爺獵畫瘡瘋鹽監盤睜確礙礦碼磚礎種積稱穩窮窗競籠簡簽類糧糾紅纖約級純綱納縱紛紙紡練組細織終經結繞繪給絡絕統繼績續繩維綠緩編緣縫纏縮網羅罰罷聾職聯聰腸膚膽藝節蘇藥獲藍雖蟻蠅見觀視覽覺計訂訓訊講論設訪評詞試詩讀調談貝負責敗賬貨質貪購賤貴貸貿費賀賊資賭賞賠賺贊贈贏趙趕躍軋轉輪軟輕載轎較輔輛輩輯輸辭辯邊遼適釘針鐘鋼鑰欽錢鐵鈴鉛銅銀鎖銷鋒錯鍵長閃閉問閑間鬧聞閱隊陽陰陣階際陸陳險隨隱難霧頁頂項順須顧頓預領頻題額顏願風飛饑飯飲飽餅館馬驅駕驗騎騙魚鮮鳥雞鳴鴨鴻鵬"
+    )
 }
 
 private struct ListTranslationJob {

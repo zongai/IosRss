@@ -56,10 +56,13 @@ final class TranslationCoordinator: @unchecked Sendable {
     ) -> Int {
         if let o = override, o > 0 { return min(8, o) }
         if userSetting > 0 { return min(8, userSetting) }
+        // Google 默认可略抬高：请求闸在 GoogleTranslate 内再限到 4，避免 429
         switch engine {
         case .ai: return 4
-        case .google: return 1
+        case .google: return 4
         case .mymemory, .lingva: return 3
+        case .yandex: return 3
+        case .azure: return 4
         case .microsoft: return 3
         case .deepl: return 3
         }

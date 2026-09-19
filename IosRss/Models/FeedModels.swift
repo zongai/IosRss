@@ -69,11 +69,14 @@ struct RSSFeed: Identifiable, Codable, Hashable {
     var summaryPromptPresetID: String = SummaryPromptPreset.globalID
     /// 同组内排序（越小越靠前）
     var sortOrder: Int = 0
+    /// 最近一次刷新失败原因（成功时清空）；列表行展示
+    var lastRefreshError: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, title, url, faviconURL, unreadCount, articles, lastFetched, groupID
         case fetchFullContentEnabled, fetchCommentsEnabled, faviconFetchDone, autoTranslateEnabled
         case useFullContentURLPrefix, summaryPromptPresetID, summaryPromptPreset, sortOrder
+        case lastRefreshError
     }
 
     init(id: UUID = UUID(), title: String, url: String, faviconURL: String? = nil,
@@ -84,7 +87,8 @@ struct RSSFeed: Identifiable, Codable, Hashable {
          autoTranslateEnabled: Bool = true,
          useFullContentURLPrefix: Bool = false,
          summaryPromptPresetID: String = SummaryPromptPreset.globalID,
-         sortOrder: Int = 0) {
+         sortOrder: Int = 0,
+         lastRefreshError: String? = nil) {
         self.id = id
         self.title = title
         self.url = url
@@ -100,6 +104,7 @@ struct RSSFeed: Identifiable, Codable, Hashable {
         self.useFullContentURLPrefix = useFullContentURLPrefix
         self.summaryPromptPresetID = summaryPromptPresetID
         self.sortOrder = sortOrder
+        self.lastRefreshError = lastRefreshError
     }
 
     init(from decoder: Decoder) throws {
@@ -125,6 +130,7 @@ struct RSSFeed: Identifiable, Codable, Hashable {
             summaryPromptPresetID = SummaryPromptPreset.globalID
         }
         sortOrder = try c.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0
+        lastRefreshError = try c.decodeIfPresent(String.self, forKey: .lastRefreshError)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -144,6 +150,7 @@ struct RSSFeed: Identifiable, Codable, Hashable {
         try c.encode(useFullContentURLPrefix, forKey: .useFullContentURLPrefix)
         try c.encode(summaryPromptPresetID, forKey: .summaryPromptPresetID)
         try c.encode(sortOrder, forKey: .sortOrder)
+        try c.encodeIfPresent(lastRefreshError, forKey: .lastRefreshError)
     }
 
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -337,10 +344,11 @@ enum AppLanguage: String, CaseIterable, Codable, Identifiable {
     var mymemoryCode: String { googleCode }
 
 
-    /// DeepL `target_lang`
+    /// DeepL `target_lang`：主语言大写，脚本子码保持规范大小写（Readest 实测 `ZH-HANT` 会 500，`ZH-Hant` 正常）
     var deeplCode: String {
         switch self {
-        case .zhHans, .zhHant: return "ZH"
+        case .zhHans: return "ZH-Hans"
+        case .zhHant: return "ZH-Hant"
         case .en: return "EN"
         case .ja: return "JA"
         case .ko: return "KO"
@@ -410,6 +418,8 @@ enum TranslationEngine: String, CaseIterable, Codable {
     case google = "Google 翻译"
     case mymemory = "MyMemory（免 Key）"
     case lingva = "Lingva（免 Key）"
+    case yandex = "Yandex（免 Key）"
+    case azure = "Azure/Bing（免 Key）"
     case microsoft = "Microsoft 翻译"
     case deepl = "DeepL"
     case ai = "AI 翻译"   // Gemini / OpenAI / Anthropic 等统一走 AI Provider
@@ -417,7 +427,7 @@ enum TranslationEngine: String, CaseIterable, Codable {
     /// 无需 API Key 的引擎
     var isFreeNoKey: Bool {
         switch self {
-        case .google, .mymemory, .lingva: return true
+        case .google, .mymemory, .lingva, .yandex, .azure: return true
         default: return false
         }
     }
@@ -772,16 +782,43 @@ enum Keychain {
             kSecAttrAccount as String: key
         ]
         SecItemDelete(query as CFDictionary)
-        var add = query
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
-        // 清除旧版明文/Base64 备份
+        // 同步版（iCloud 钥匙串，换机自动带上 API Key）
+        var addSync = query
+        addSync[kSecValueData as String] = data
+        addSync[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        addSync[kSecAttrSynchronizable as String] = kCFBooleanTrue!
+        let syncStatus = SecItemAdd(addSync as CFDictionary, nil)
+        if syncStatus != errSecSuccess {
+            // 设备不支持 iCloud 钥匙串时回退本机
+            var addLocal = query
+            addLocal[kSecValueData as String] = data
+            addLocal[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            addLocal[kSecAttrSynchronizable as String] = kCFBooleanFalse!
+            SecItemAdd(addLocal as CFDictionary, nil)
+        }
         UserDefaults.standard.removeObject(forKey: legacyPrefix + key)
     }
 
     static func load(key: String) -> String? {
-        let query: [String: Any] = [
+        // 先查可同步项，再查本机项
+        for sync in [true, false] {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: key,
+                kSecReturnData as String: true,
+                kSecMatchLimit as String: kSecMatchLimitOne,
+                kSecAttrSynchronizable as String: sync ? kCFBooleanTrue! : kCFBooleanFalse!
+            ]
+            var item: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &item)
+            if status == errSecSuccess, let data = item as? Data,
+               let s = String(data: data, encoding: .utf8), !s.isEmpty {
+                return s
+            }
+        }
+        // 兼容未写 synchronizable 的旧条目
+        let legacyQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
@@ -789,12 +826,13 @@ enum Keychain {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        let status = SecItemCopyMatching(legacyQuery as CFDictionary, &item)
         if status == errSecSuccess, let data = item as? Data,
            let s = String(data: data, encoding: .utf8), !s.isEmpty {
+            // 升级为可同步
+            save(key: key, value: s)
             return s
         }
-        // 迁移：旧 UserDefaults Base64
         if let encoded = UserDefaults.standard.string(forKey: legacyPrefix + key),
            let data = Data(base64Encoded: encoded),
            let s = String(data: data, encoding: .utf8), !s.isEmpty {
@@ -805,6 +843,15 @@ enum Keychain {
     }
 
     static func delete(key: String) {
+        for sync in [true, false] {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: key,
+                kSecAttrSynchronizable as String: sync ? kCFBooleanTrue! : kCFBooleanFalse!
+            ]
+            SecItemDelete(query as CFDictionary)
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

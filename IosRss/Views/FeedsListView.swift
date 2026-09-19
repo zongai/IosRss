@@ -703,6 +703,15 @@ struct FeedRow: View {
                             .foregroundStyle(theme.muted.opacity(0.85))
                     }
                 }
+                // 刷新失败原因：直接显示在源标题下方，便于对照
+                if let err = live.lastRefreshError, !err.isEmpty {
+                    Text(err)
+                        .font(AppTypography.caption())
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel("刷新失败：\(err)")
+                }
             }
             Spacer(minLength: 8)
             if live.unreadCount > 0 {
@@ -716,7 +725,7 @@ struct FeedRow: View {
             }
         }
         .padding(.vertical, 6)
-        .id(live.id)
+        .id("\(live.id.uuidString)-\(live.lastRefreshError ?? "")-\(live.unreadCount)")
     }
 }
 

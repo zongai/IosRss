@@ -60,6 +60,14 @@ enum ArticleContentFetcher {
             }
         }
 
+        // SCMP：正文在 __NEXT_DATA__（GraphQL payload），通用 HTML 启发式几乎抓不到
+        if isSCMPHost(url.host) {
+            if let scmp = await fetchSCMPContent(pageURL: url) {
+                OfflineCache.saveArticleHTML(link: urlString, html: scmp.contentHTML)
+                return scmp
+            }
+        }
+
         // WordPress 站点（如 Visual Capitalist）：优先 slug REST，常可绕过部分前端门禁
         if isWordPressChartHost(url.host),
            let wp = await fetchWordPressBySlug(pageURL: url) {
@@ -79,7 +87,8 @@ enum ArticleContentFetcher {
         request.setValue("en-US,en;q=0.9,zh-CN;q=0.8", forHTTPHeaderField: "Accept-Language")
         request.setValue("https://www.google.com/", forHTTPHeaderField: "Referer")
         request.setValue("1", forHTTPHeaderField: "Upgrade-Insecure-Requests")
-        request.cachePolicy = .returnCacheDataElseLoad
+        // 全文抓取不要用可能过期的空壳缓存
+        request.cachePolicy = .reloadIgnoringLocalCacheData
 
         let (data, response): (Data, URLResponse)
         do {
@@ -103,7 +112,10 @@ enum ArticleContentFetcher {
         let html = decodeHTML(data: data) ?? ""
         guard !html.isEmpty else { throw FetchError.emptyContent }
 
-        if isCloudflareChallenge(html: html, response: response) {
+        // 已有可用 __NEXT_DATA__ 正文时，不要因页尾 CF 脚本误判为人机验证
+        if isCloudflareChallenge(html: html, response: response),
+           extractSCMP(from: html, baseURL: url) == nil,
+           extractSixthTone(from: html, baseURL: url) == nil {
             throw FetchError.cloudflareChallenge
         }
 
@@ -111,6 +123,12 @@ enum ArticleContentFetcher {
         if isSixthToneHost(url.host), let st = extractSixthTone(from: html, baseURL: url) {
             OfflineCache.saveArticleHTML(link: urlString, html: st.contentHTML)
             return st
+        }
+
+        // SCMP / 同类 Next 文章
+        if let scmp = extractSCMP(from: html, baseURL: url) {
+            OfflineCache.saveArticleHTML(link: urlString, html: scmp.contentHTML)
+            return scmp
         }
 
         var extracted = extractArticle(from: html, baseURL: url)
@@ -299,6 +317,174 @@ enum ArticleContentFetcher {
         guard len >= 80 else { return nil }
         let title = (json["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         return Result(title: title, contentHTML: cleaned, textLength: len)
+    }
+
+    // MARK: - SCMP (Next.js __NEXT_DATA__ GraphQL payload)
+
+    private static func isSCMPHost(_ host: String?) -> Bool {
+        guard let host = host?.lowercased() else { return false }
+        return host == "scmp.com"
+            || host.hasSuffix(".scmp.com")
+            || host == "i-scmp.com"
+            || host.hasSuffix(".i-scmp.com")
+    }
+
+    private static func fetchSCMPContent(pageURL: URL) async -> Result? {
+        var request = URLRequest(url: pageURL, timeoutInterval: 28)
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("https://www.scmp.com/", forHTTPHeaderField: "Referer")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                return nil
+            }
+            guard let html = decodeHTML(data: data), !html.isEmpty else { return nil }
+            return extractSCMP(from: html, baseURL: pageURL)
+        } catch {
+            return nil
+        }
+    }
+
+    /// 从 SCMP `__NEXT_DATA__` 取 article.body（text / json 段落）+ 封面图
+    private static func extractSCMP(from html: String, baseURL: URL) -> Result? {
+        guard let jsonText = matchFirst(
+            #"<script[^>]*id=[\"']__NEXT_DATA__[\"'][^>]*>([\s\S]*?)</script>"#,
+            in: html
+        ) else { return nil }
+        guard let data = jsonText.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let props = root["props"] as? [String: Any],
+              let pageProps = props["pageProps"] as? [String: Any] else {
+            return nil
+        }
+
+        let article: [String: Any]? = {
+            if let payload = pageProps["payload"] as? [String: Any] {
+                if let dataObj = payload["data"] as? [String: Any],
+                   let art = dataObj["article"] as? [String: Any] {
+                    return art
+                }
+                if let json = payload["json"] as? [String: Any],
+                   let dataObj = json["data"] as? [String: Any],
+                   let art = dataObj["article"] as? [String: Any] {
+                    return art
+                }
+            }
+            if let art = pageProps["article"] as? [String: Any] { return art }
+            return nil
+        }()
+        guard let article else { return nil }
+
+        let title = (article["headline"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? (article["socialHeadline"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var parts: [String] = []
+
+        if let images = article["images"] as? [[String: Any]] {
+            for img in images {
+                if let url = scmpBestImageURL(from: img), !url.isEmpty {
+                    parts.append("<p><img src=\"\(url)\" /></p>")
+                    break
+                }
+            }
+        }
+
+        if let body = article["body"] as? [String: Any] {
+            var gotParas = false
+            if let jsonNodes = body["json"] as? [[String: Any]] {
+                let htmlParts = scmpParagraphsHTML(from: jsonNodes)
+                if !htmlParts.isEmpty {
+                    parts.append(contentsOf: htmlParts)
+                    gotParas = true
+                }
+            }
+            if !gotParas, let plain = body["text"] as? String {
+                let paras = plain
+                    .components(separatedBy: CharacterSet.newlines)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                for p in paras {
+                    parts.append("<p>\(escapeHTMLText(p))</p>")
+                }
+            }
+        }
+
+        let merged = parts.joined(separator: "\n")
+        let cleaned = cleanContentHTML(merged, baseURL: baseURL)
+        let len = HTMLUtils.stripTags(cleaned).count
+        guard len >= 80 else { return nil }
+        return Result(title: title, contentHTML: cleaned, textLength: len)
+    }
+
+    private static func scmpBestImageURL(from img: [String: Any]) -> String? {
+        let preferredKeys = [
+            "1280x720", "768x768", "og_image_scmp_generic", "generic_og",
+            "og_image_style", "url"
+        ]
+        for key in preferredKeys {
+            if let s = img[key] as? String, s.hasPrefix("http") { return s }
+            if let obj = img[key] as? [String: Any],
+               let s = obj["url"] as? String, s.hasPrefix("http") {
+                return s
+            }
+        }
+        for (_, v) in img {
+            if let s = v as? String, s.hasPrefix("http"), s.contains("cdn.i-scmp.com") {
+                return s
+            }
+            if let obj = v as? [String: Any],
+               let s = obj["url"] as? String, s.hasPrefix("http") {
+                return s
+            }
+        }
+        return nil
+    }
+
+    private static func scmpParagraphsHTML(from nodes: [[String: Any]]) -> [String] {
+        var out: [String] = []
+        out.reserveCapacity(nodes.count)
+        for node in nodes {
+            let type = (node["type"] as? String)?.lowercased() ?? ""
+            switch type {
+            case "p", "paragraph":
+                let text = scmpCollectText(node).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
+                out.append("<p>\(escapeHTMLText(text))</p>")
+            case "h1", "h2", "h3", "h4":
+                let text = scmpCollectText(node).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
+                out.append("<\(type)>\(escapeHTMLText(text))</\(type)>")
+            case "blockquote":
+                let text = scmpCollectText(node).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
+                out.append("<blockquote><p>\(escapeHTMLText(text))</p></blockquote>")
+            default:
+                continue
+            }
+        }
+        return out
+    }
+
+    private static func scmpCollectText(_ node: Any) -> String {
+        if let s = node as? String { return s }
+        if let arr = node as? [Any] {
+            return arr.map { scmpCollectText($0) }.joined()
+        }
+        guard let dict = node as? [String: Any] else { return "" }
+        if let data = dict["data"] as? String { return data }
+        if let text = dict["text"] as? String { return text }
+        if let children = dict["children"] as? [Any] {
+            return children.map { scmpCollectText($0) }.joined()
+        }
+        return ""
     }
 
     // MARK: - Sixth Tone (Next.js __NEXT_DATA__)

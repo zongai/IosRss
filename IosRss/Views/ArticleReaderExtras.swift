@@ -1,16 +1,27 @@
 import SwiftUI
 import SafariServices
 
+/// 内置浏览器 sheet 的 item；id 随 URL 变化，换篇时可刷新页面
+struct BrowserLink: Identifiable, Equatable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
 struct SafariView: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> SFSafariViewController {
+        makeController(url: url)
+    }
+    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {
+        // SFSafariViewController 不支持改 URL；由上层 .id(url) 触发整页重建
+    }
+    private func makeController(url: URL) -> SFSafariViewController {
         let config = SFSafariViewController.Configuration()
         config.entersReaderIfAvailable = false
         let vc = SFSafariViewController(url: url, configuration: config)
         vc.preferredControlTintColor = .label
         return vc
     }
-    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
 }
 
 struct AISummaryCard: View {

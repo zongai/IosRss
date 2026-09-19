@@ -196,6 +196,15 @@ struct AIChatDetailView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                     }
+                    // 下滑/拖动消息列表时收起键盘（跟随手指）
+                    .scrollDismissesKeyboard(.interactively)
+                    .onScrollGeometryChange(for: CGFloat.self) { geo in
+                        geo.contentOffset.y
+                    } action: { oldY, newY in
+                        // 明显滑动浏览时再收起，避免误触
+                        guard inputFocused, abs(newY - oldY) > 12 else { return }
+                        inputFocused = false
+                    }
                     .onChange(of: conv.messages.count) { _, _ in
                         DispatchQueue.main.async {
                             withAnimation(.easeOut(duration: 0.2)) {

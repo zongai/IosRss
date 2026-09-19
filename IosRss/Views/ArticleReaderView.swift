@@ -21,7 +21,7 @@ struct ArticleReaderView: View {
     @State private var translationError: String?
     @State private var summaryError: String?
     @State private var fullContentError: String?
-    @State private var showInAppBrowser = false
+    @State private var browserItem: BrowserLink?
     @State private var translationProgress: String?
     @State private var fullContentHint: String?
     @State private var showComments = false
@@ -29,10 +29,8 @@ struct ArticleReaderView: View {
     @State private var showChrome = true
     @State private var currentID: UUID?
     @State private var dragOffset: CGFloat = 0
-    @State private var lastScrollY: CGFloat = 0
-    @State private var localReadProgress: Double = 0
-    @State private var scrollContentHeight: CGFloat = 1
-    @State private var scrollViewportHeight: CGFloat = 1
+    /// 阅读进度用引用类型存放，滚动中改值不触发 View 刷新
+    @State private var readProgressBox = ReaderScrollMetrics()
     /// 横向滑动表格时为 true，避免误触发左右换篇
     @State private var suppressArticleSwipe = false
 
@@ -102,8 +100,8 @@ struct ArticleReaderView: View {
     var body: some View {
         ScrollViewReader { proxy in
         ScrollView {
-            Color.clear.frame(height: 0).id("readerTop")
             VStack(alignment: .leading, spacing: 0) {
+                Color.clear.frame(height: 0).id("readerTop")
                 VStack(alignment: .leading, spacing: 8) {
                     Text(displayTitle)
                         .font(AppTypography.font(size: store.readerTitleFontSize, weight: .semibold))
@@ -131,12 +129,6 @@ struct ArticleReaderView: View {
                         if currentArticle.hasFullContent {
                             Text("·").foregroundStyle(Color.secondary.opacity(0.6))
                             Text("全文")
-                                .font(.system(size: max(11, store.readerTitleFontSize - 12), weight: .medium))
-                                .foregroundStyle(Color.secondary)
-                        }
-                        if max(localReadProgress, currentArticle.readingProgress) > 0.05 {
-                            Text("·").foregroundStyle(Color.secondary.opacity(0.6))
-                            Text(String(format: "已读 %.0f%%", max(localReadProgress, currentArticle.readingProgress) * 100))
                                 .font(.system(size: max(11, store.readerTitleFontSize - 12), weight: .medium))
                                 .foregroundStyle(Color.secondary)
                         } else if fullContentError != nil {
@@ -219,6 +211,8 @@ struct ArticleReaderView: View {
                 )
                     .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 56)
             }
+            // 整页内容随文章 id 重建，避免沿用上一篇的 contentOffset
+            .id(activeID)
         }
         .background(Color(.systemBackground))
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
@@ -226,34 +220,40 @@ struct ArticleReaderView: View {
             geometry.contentOffset.y
         } action: { oldY, newY in
             let delta = newY - oldY
-            if newY > 28, delta > 1.5 {
-                if showChrome {
-                    withAnimation(.easeInOut(duration: 0.2)) { showChrome = false }
-                }
-            } else if delta < -1.5 || newY < 12 {
-                if !showChrome {
-                    withAnimation(.easeInOut(duration: 0.2)) { showChrome = true }
-                }
+            // 更大阈值；showChrome 仍会触发 toolbar，但避免与进度/高度 State 叠加
+            if newY > 56, delta > 6 {
+                if showChrome { showChrome = false }
+            } else if delta < -6 || newY < 16 {
+                if !showChrome { showChrome = true }
             }
-            lastScrollY = newY
-            let h = max(scrollContentHeight, scrollViewportHeight + 1)
-            let p = min(1, max(0, Double((newY + scrollViewportHeight) / h)))
-            if p > localReadProgress + 0.02 {
-                localReadProgress = p
+            // 进度与内容高度写入 class，不触发 body
+            let box = readProgressBox
+            if abs(newY - box.lastY) > 24 {
+                let h = max(box.contentHeight, box.viewportHeight + 1)
+                let p = min(1, max(0, Double((newY + box.viewportHeight) / h)))
+                if p > box.progress + 0.05 {
+                    box.progress = p
+                }
+                box.lastY = newY
             }
         }
         .onScrollGeometryChange(for: CGSize.self) { geometry in
             CGSize(width: geometry.containerSize.height, height: max(geometry.contentSize.height, 1))
         } action: { _, newSize in
-            scrollViewportHeight = newSize.width
-            scrollContentHeight = newSize.height
+            let box = readProgressBox
+            box.viewportHeight = newSize.width
+            // 高度可直接写 box，无需 @State
+            if abs(newSize.height - box.contentHeight) > 40 {
+                box.contentHeight = newSize.height
+            }
         }
         .onAppear {
-            localReadProgress = currentArticle.readingProgress
+            readProgressBox.progress = currentArticle.readingProgress
         }
         .onDisappear {
-            if localReadProgress > 0.05 {
-                store.updateReadingProgress(articleID: currentArticle.id, progress: localReadProgress, persist: true)
+            let p = readProgressBox.progress
+            if p > 0.05 {
+                store.updateReadingProgress(articleID: currentArticle.id, progress: p, persist: true)
             }
         }
         .navigationTitle("")
@@ -261,11 +261,23 @@ struct ArticleReaderView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(showChrome ? .visible : .hidden, for: .navigationBar)
         .toolbar(showChrome ? .visible : .hidden, for: .tabBar)
-        .toolbarBackground(showChrome ? .automatic : .hidden, for: .navigationBar)
+        // 导航栏背景始终可见色（与阅读主题一致），避免正文滚到状态栏下方时时间/信号「透字」看不清
+        .toolbarBackground(theme.background, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .toolbarBackground(showChrome ? .automatic : .hidden, for: .tabBar)
-        // 阅读主题与状态栏/导航栏对比：深色主题用浅色时间电量，浅色主题用深色，避免「时间信号栏」看不清
         .toolbarColorScheme(readerStatusBarScheme, for: .navigationBar)
         .preferredColorScheme(readerStatusBarScheme)
+        // 隐藏导航栏时仍在状态栏区域盖一层主题底色，挡住滚动正文
+        .overlay(alignment: .top) {
+            if !showChrome {
+                theme.background
+                    .frame(height: 0)
+                    .frame(maxWidth: .infinity)
+                    .background(theme.background.ignoresSafeArea(edges: .top))
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
         .animation(.easeInOut(duration: 0.2), value: showChrome)
         // 换篇：明显水平滑动；表格横向滚动时 suppressArticleSwipe 为 true 则忽略
         .simultaneousGesture(
@@ -416,18 +428,20 @@ struct ArticleReaderView: View {
                     }
                 }
             }
-            if URL(string: article.link) != nil {
+            if URL(string: currentArticle.link) != nil {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showInAppBrowser = true } label: {
+                    Button {
+                        openCurrentArticleInBrowser()
+                    } label: {
                         Label("浏览器", systemImage: "safari")
                     }
                 }
             }
         }
-        .sheet(isPresented: $showInAppBrowser) {
-            if let url = URL(string: article.link) {
-                SafariView(url: url).ignoresSafeArea()
-            }
+        // 使用 item 绑定：换篇时更新 URL，内置浏览器会跟着当前文章刷新
+        .sheet(item: $browserItem) { item in
+            SafariView(url: item.url).ignoresSafeArea()
+                .id(item.id)
         }
         .onDisappear { tts.stop() }
         .navigationDestination(isPresented: $showComments) {
@@ -455,11 +469,14 @@ struct ArticleReaderView: View {
             fullContentError = nil
             fullContentHint = nil
             translationProgress = nil
-            DispatchQueue.main.async {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo("readerTop", anchor: .top)
-                }
+            readProgressBox.progress = 0
+            readProgressBox.lastY = 0
+            // 若内置浏览器正开着，同步到新文章链接
+            if browserItem != nil {
+                presentBrowser(for: currentArticle.link)
             }
+            // 内容布局可能晚于 id 切换：立即一次 + 短延迟重试，避免偶发停在半页
+            scrollReaderToTop(proxy)
         }
         } // ScrollViewReader
     }
@@ -524,7 +541,7 @@ struct ArticleReaderView: View {
                 HStack(spacing: 12) {
                     if isCF, URL(string: currentArticle.link) != nil {
                         Button {
-                            showInAppBrowser = true
+                            openCurrentArticleInBrowser()
                         } label: {
                             Label("浏览器打开", systemImage: "safari")
                         }
@@ -809,6 +826,47 @@ struct ArticleReaderView: View {
         switchToArticle(prev)
     }
 
+    private func openCurrentArticleInBrowser() {
+        presentBrowser(for: currentArticle.link)
+    }
+
+    /// 打开或切换内置浏览器到指定文章链接（换篇时先关再开，强制刷新）
+    private func presentBrowser(for link: String) {
+        let raw = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            browserItem = nil
+            return
+        }
+        let next = BrowserLink(url: url)
+        if browserItem?.id == next.id {
+            return
+        }
+        if browserItem != nil {
+            browserItem = nil
+            DispatchQueue.main.async {
+                browserItem = next
+            }
+        } else {
+            browserItem = next
+        }
+    }
+
+    private func scrollReaderToTop(_ proxy: ScrollViewProxy) {
+        // 不用动画，减少与 toolbar/内容切换抢主线程导致的 scrollTo 丢弃
+        proxy.scrollTo("readerTop", anchor: .top)
+        DispatchQueue.main.async {
+            proxy.scrollTo("readerTop", anchor: .top)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            proxy.scrollTo("readerTop", anchor: .top)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            proxy.scrollTo("readerTop", anchor: .top)
+        }
+    }
+
     private func switchToArticle(_ next: Article) {
         currentID = next.id
         showTranslated = false
@@ -823,9 +881,15 @@ struct ArticleReaderView: View {
         isTranslating = false
         isGeneratingSummary = false
         isFetchingFull = false
+        readProgressBox.progress = next.readingProgress
+        readProgressBox.lastY = 0
         store.markAsRead(next)
-        withAnimation(.snappy(duration: 0.2)) { showChrome = true }
-        // 滚动到顶部由 onChange(of: activeID) + ScrollViewReader 处理
+        // 内置浏览器打开时跟随换篇并刷新页面
+        if browserItem != nil {
+            presentBrowser(for: next.link)
+        }
+        showChrome = true
+        // 滚动到顶部由 onChange(of: activeID) + 内容 .id(activeID) 处理
     }
 
     private func generateSummary() async {
@@ -851,4 +915,12 @@ struct ArticleReaderView: View {
         }
         isGeneratingSummary = false
     }
+}
+
+/// 滚动过程中的进度/尺寸缓存：用 class 避免写入触发 SwiftUI body 刷新
+private final class ReaderScrollMetrics {
+    var progress: Double = 0
+    var contentHeight: CGFloat = 1
+    var viewportHeight: CGFloat = 1
+    var lastY: CGFloat = 0
 }

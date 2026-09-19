@@ -25,7 +25,7 @@
 - AI 对话页滑动消息列表收起键盘
 - 列表/阅读滚动与换篇相关优化延续
 
-## [1.3-77] — 构建中（ui-redesign-experiment）
+## [1.3-77] — 构建成功 (build159 / Actions 35455863195) · 分支 ui-redesign-experiment
 
 相对：`v1.3-76` / 1.3-76 成功构建
 

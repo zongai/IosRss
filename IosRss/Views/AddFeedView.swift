@@ -3,6 +3,7 @@ import SwiftUI
 struct AddFeedView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     @State private var urlText = ""
     @State private var isSearching = false
     @State private var discoveredFeeds: [DiscoveredFeed] = []
@@ -36,16 +37,16 @@ struct AddFeedView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 // URL Input Area
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: AppSpacing.xs) {
                     Text("粘贴网站或 Feed 地址")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 20)
+                        .font(AppTypography.caption())
+                        .foregroundStyle(theme.muted)
+                        .padding(.horizontal, AppLayout.pageMargin)
+                        .padding(.top, AppSpacing.xl)
 
-                    HStack(spacing: 12) {
+                    HStack(spacing: AppSpacing.sm) {
                         Image(systemName: "link")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(theme.muted)
                         TextField("https://", text: $urlText)
                             .keyboardType(.URL)
                             .autocorrectionDisabled()
@@ -54,14 +55,17 @@ struct AddFeedView: View {
                             .submitLabel(.search)
                             .onSubmit { Task { await discover() } }
                     }
-                    .padding(14)
-                    .background(.secondary.opacity(0.1), in: .rect(cornerRadius: 10))
-                    .padding(.horizontal, 20)
+                    .padding(AppSpacing.sm + 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: AppRadius.md, style: .continuous)
+                            .fill(theme.surface.opacity(0.55))
+                    )
+                    .padding(.horizontal, AppLayout.pageMargin)
 
                     // 指定分组（默认「未分组」= groupID 为 nil，不放进任何分组）
-                    HStack(spacing: 10) {
+                    HStack(spacing: AppSpacing.sm) {
                         Image(systemName: "folder")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(theme.muted)
                             .frame(width: 18)
                         Picker("加入分组", selection: $selectedGroupKey) {
                             Text("未分组").tag("none")
@@ -78,65 +82,75 @@ struct AddFeedView: View {
                         } label: {
                             Image(systemName: "folder.badge.plus")
                                 .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(theme.accent)
                         }
                         .accessibilityLabel("新建分组")
+                        .frame(minWidth: AppLayout.minTapTarget, minHeight: AppLayout.minTapTarget)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.secondary.opacity(0.1), in: .rect(cornerRadius: 10))
-                    .padding(.horizontal, 20)
-                    .padding(.top, 4)
+                    .padding(.horizontal, AppSpacing.sm + 2)
+                    .padding(.vertical, AppSpacing.sm)
+                    .background(
+                        RoundedRectangle(cornerRadius: AppRadius.md, style: .continuous)
+                            .fill(theme.surface.opacity(0.55))
+                    )
+                    .padding(.horizontal, AppLayout.pageMargin)
+                    .padding(.top, AppSpacing.xxs)
                 }
 
                 if let error = errorMessage {
                     Text(error)
-                        .font(.system(size: 13))
+                        .font(AppTypography.caption())
                         .foregroundStyle(.red)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 8)
+                        .padding(.horizontal, AppLayout.pageMargin)
+                        .padding(.top, AppSpacing.xs)
                 }
 
                 if phase == .discovering {
-                    HStack(spacing: 10) {
+                    HStack(spacing: AppSpacing.sm) {
                         ProgressView()
+                            .tint(theme.accent)
                         Text("正在查找 Feed…")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
+                            .font(AppTypography.body())
+                            .foregroundStyle(theme.muted)
                     }
-                    .padding(.top, 24)
+                    .padding(.top, AppSpacing.xl)
                 }
 
                 if !discoveredFeeds.isEmpty && phase == .select {
                     VStack(alignment: .leading, spacing: 0) {
                         Text("发现以下 Feed，请选择：")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 20)
-                            .padding(.top, 20)
-                            .padding(.bottom, 8)
+                            .font(AppTypography.caption())
+                            .foregroundStyle(theme.muted)
+                            .padding(.horizontal, AppLayout.pageMargin)
+                            .padding(.top, AppSpacing.xl)
+                            .padding(.bottom, AppSpacing.xs)
 
                         ForEach(discoveredFeeds) { feed in
                             Button {
                                 Task { await addFeed(feed) }
                             } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: AppSpacing.sm) {
+                                    VStack(alignment: .leading, spacing: AppSpacing.xxs) {
                                         Text(feed.title)
-                                            .font(.system(size: 15, weight: .medium))
-                                            .foregroundStyle(.primary)
+                                            .font(AppTypography.label())
+                                            .foregroundStyle(theme.text)
                                         Text(feed.url)
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(.secondary)
+                                            .font(AppTypography.caption())
+                                            .foregroundStyle(theme.muted)
                                             .lineLimit(1)
                                     }
                                     Spacer()
                                     Image(systemName: "plus.circle")
-                                        .foregroundStyle(Color.primary)
+                                        .foregroundStyle(theme.accent)
                                 }
-                                .padding(.vertical, 12)
-                                .padding(.horizontal, 20)
+                                .padding(.vertical, AppSpacing.sm)
+                                .padding(.horizontal, AppLayout.pageMargin)
+                                .contentShape(Rectangle())
                             }
-                            Divider().padding(.leading, 20)
+                            .buttonStyle(.plain)
+                            Divider()
+                                .opacity(0.4)
+                                .padding(.leading, AppLayout.pageMargin)
                         }
                     }
                 }
@@ -148,22 +162,22 @@ struct AddFeedView: View {
                 } label: {
                     HStack {
                         if phase == .adding {
-                            ProgressView().tint(.white)
+                            ProgressView().tint(Color(.systemBackground))
                         } else {
                             Text(phase == .select ? "返回搜索" : "查找 Feed")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(AppTypography.font(size: 16, weight: .semibold))
                         }
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(Color.primary)
+                    .frame(minHeight: AppLayout.minTapTarget + 6)
+                    .background(theme.text, in: RoundedRectangle(cornerRadius: AppRadius.md, style: .continuous))
                     .foregroundStyle(Color(.systemBackground))
-                    .clipShape(.rect(cornerRadius: 12))
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 24)
+                    .padding(.horizontal, AppLayout.pageMargin)
+                    .padding(.bottom, AppSpacing.xl)
                 }
                 .disabled(urlText.trimmingCharacters(in: .whitespaces).isEmpty || phase == .discovering || phase == .adding)
             }
+            .background(theme.background.ignoresSafeArea())
             .navigationTitle("添加订阅")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

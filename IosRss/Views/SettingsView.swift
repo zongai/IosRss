@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @State private var showAdvancedSettings = false
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
 
     private var ttsRateLabel: String {
         let r = store.ttsRate
@@ -366,6 +367,8 @@ struct SettingsView: View {
                     Text("关于")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(theme.background.ignoresSafeArea())
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -420,6 +423,7 @@ struct SettingsView: View {
 
 struct FontSettingsView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
 
     var body: some View {
         @Bindable var store = store
@@ -440,9 +444,11 @@ struct FontSettingsView: View {
             } header: {
                 Text("阅读")
             } footer: {
-                Text("调整后立即生效，并自动保存。")
+                Text("调整后立即生效，并自动保存。跟随系统「更大字体」时会在基准上再缩放。")
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(theme.background.ignoresSafeArea())
         .navigationTitle("字号设置")
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear { store.persistSettings() }

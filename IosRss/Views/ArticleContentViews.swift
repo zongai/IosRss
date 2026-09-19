@@ -71,6 +71,38 @@ struct ArticleContentView: View {
                 onHighlight: onHighlight
             )
             .frame(maxWidth: .infinity, alignment: .leading)
+        case .heading(let attributed, let level, let style):
+            SelectableParagraphView(
+                attributed: attributed,
+                fontSize: headingSize(level),
+                typography: style,
+                role: .heading,
+                onOpenURL: { browserURL = $0 },
+                onExplain: { startExplain($0) },
+                onHighlight: onHighlight
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, level <= 2 ? AppSpacing.sm : AppSpacing.xs)
+            .padding(.bottom, AppSpacing.xxs)
+        case .quote(let attributed, let style):
+            HStack(alignment: .top, spacing: 0) {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(Color.secondary.opacity(0.35))
+                    .frame(width: 3)
+                    .padding(.trailing, AppSpacing.sm)
+                SelectableParagraphView(
+                    attributed: attributed,
+                    fontSize: max(15, fontSize - 1),
+                    typography: style,
+                    role: .quote,
+                    onOpenURL: { browserURL = $0 },
+                    onExplain: { startExplain($0) },
+                    onHighlight: onHighlight
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, AppSpacing.xs)
+            .padding(.leading, AppSpacing.xxs)
         case .audio(let urlString):
             AudioLinkPlayerCard(urlString: urlString)
         case .image(let urlString):
@@ -103,6 +135,14 @@ struct ArticleContentView: View {
             )
         case .code(let source):
             ArticleCodeBlockView(source: source, fontSize: fontSize)
+        }
+    }
+
+    private func headingSize(_ level: Int) -> Double {
+        switch level {
+        case 1: return fontSize + 6
+        case 2: return fontSize + 4
+        default: return fontSize + 2
         }
     }
 
@@ -169,6 +209,10 @@ enum ReaderTypography: Sendable {
 
 enum ContentBlock: Sendable {
     case paragraph(AttributedString, ReaderTypography)
+    /// Editorial heading (from h1–h3)
+    case heading(AttributedString, level: Int, ReaderTypography)
+    /// Blockquote
+    case quote(AttributedString, ReaderTypography)
     case image(String)
     case audio(String)
     /// 数据表（Visual Capitalist 等）：首行可为表头
@@ -206,10 +250,65 @@ enum ContentBlockParser {
         pattern: #"<code\b[^>]*>([\s\S]*?)</code>"#,
         options: .caseInsensitive
     )
+    private static let blockquoteRe = try! NSRegularExpression(
+        pattern: #"<blockquote\b[^>]*>([\s\S]*?)</blockquote>"#,
+        options: .caseInsensitive
+    )
+    private static let headingRe = try! NSRegularExpression(
+        pattern: #"<h([1-3])\b[^>]*>([\s\S]*?)</h[1-3]>"#,
+        options: .caseInsensitive
+    )
 
     static func parse(_ html: String, prefersChineseTypography: Bool = false) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var working = HTMLUtils.decodePercentEncodings(HTMLUtils.decodeEntities(html))
+
+        // Editorial: extract quotes & headings before tag strip
+        var quotePlaceholders: [(token: String, text: String)] = []
+        var headingPlaceholders: [(token: String, text: String, level: Int)] = []
+        do {
+            let ns = working as NSString
+            for match in blockquoteRe.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed() {
+                guard let full = Range(match.range, in: working) else { continue }
+                var inner = ""
+                if match.numberOfRanges >= 2, let r = Range(match.range(at: 1), in: working) {
+                    inner = String(working[r])
+                }
+                let plain = HTMLUtils.stripTags(inner)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !plain.isEmpty else {
+                    working.replaceSubrange(full, with: "\n")
+                    continue
+                }
+                let token = "__QUOTE_\(quotePlaceholders.count)__"
+                quotePlaceholders.append((token, plain))
+                working.replaceSubrange(full, with: "\n\(token)\n")
+            }
+        }
+        do {
+            let ns = working as NSString
+            for match in headingRe.matches(in: working, range: NSRange(location: 0, length: ns.length)).reversed() {
+                guard let full = Range(match.range, in: working) else { continue }
+                var level = 2
+                if match.numberOfRanges >= 2, let r = Range(match.range(at: 1), in: working),
+                   let n = Int(working[r]) {
+                    level = min(3, max(1, n))
+                }
+                var inner = ""
+                if match.numberOfRanges >= 3, let r = Range(match.range(at: 2), in: working) {
+                    inner = String(working[r])
+                }
+                let plain = HTMLUtils.stripTags(inner)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !plain.isEmpty else {
+                    working.replaceSubrange(full, with: "\n")
+                    continue
+                }
+                let token = "__HEAD_\(headingPlaceholders.count)__"
+                headingPlaceholders.append((token, plain, level))
+                working.replaceSubrange(full, with: "\n\(token)\n")
+            }
+        }
 
         // 先抽出代码块，避免 normalize / 去标签时丢失缩进与换行
         var codePlaceholders: [(token: String, source: String)] = []
@@ -423,6 +522,25 @@ enum ContentBlockParser {
                 lastImageURL = nil
                 if let found = codePlaceholders.first(where: { $0.token == part }) {
                     blocks.append(.code(found.source))
+                }
+            } else if part.hasPrefix("__QUOTE_"), part.hasSuffix("__") {
+                lastImageURL = nil
+                if let found = quotePlaceholders.first(where: { $0.token == part }) {
+                    let style = ReaderTypography.resolve(text: found.text, preferChinese: prefersChineseTypography)
+                    blocks.append(.quote(
+                        makeAttributedParagraph(found.text, linkHrefs: linkHrefs, linkTexts: linkTexts, inlineCodes: inlineCodeTexts),
+                        style
+                    ))
+                }
+            } else if part.hasPrefix("__HEAD_"), part.hasSuffix("__") {
+                lastImageURL = nil
+                if let found = headingPlaceholders.first(where: { $0.token == part }) {
+                    let style = ReaderTypography.resolve(text: found.text, preferChinese: prefersChineseTypography)
+                    blocks.append(.heading(
+                        makeAttributedParagraph(found.text, linkHrefs: linkHrefs, linkTexts: linkTexts, inlineCodes: inlineCodeTexts),
+                        level: found.level,
+                        style
+                    ))
                 }
             } else if isJunkParagraph(part) {
                 lastImageURL = nil

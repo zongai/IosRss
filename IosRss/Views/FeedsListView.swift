@@ -773,6 +773,15 @@ struct FeedRow: View {
                 .opacity(0.35)
         }
         .id("\(live.id.uuidString)-\(live.lastRefreshError ?? "")-\(live.unreadCount)")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel({
+            var parts = [live.title]
+            if live.unreadCount > 0 { parts.append("\(live.unreadCount) 未读") }
+            if let last = live.lastFetched { parts.append(Self.relativeString(last)) }
+            if let err = live.lastRefreshError, !err.isEmpty { parts.append("刷新失败") }
+            return parts.joined(separator: "，")
+        }())
+        .accessibilityHint("打开文章列表")
     }
 }
 

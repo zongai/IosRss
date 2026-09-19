@@ -69,7 +69,7 @@ struct AISummaryCard: View {
                 VStack(alignment: .leading, spacing: AppSpacing.sm) {
                     ForEach(Array(points.enumerated()), id: \.offset) { _, point in
                         Text(point)
-                            .font(.system(size: fontSize))
+                            .font(AppTypography.font(size: fontSize, weight: .regular))
                             .foregroundStyle(theme.text)
                             .lineSpacing(6)
                             .frame(maxWidth: .infinity, alignment: .leading)

@@ -976,23 +976,25 @@ struct ArticleCodeBlockView: View {
 import AVFoundation
 
 struct AudioLinkPlayerCard: View {
+    @Environment(\.theme) private var theme
     let urlString: String
     @State private var player: AVPlayer?
     @State private var isPlaying = false
     @State private var error: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: AppSpacing.sm) {
+            HStack(spacing: AppSpacing.sm) {
                 Image(systemName: "waveform")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                VStack(alignment: .leading, spacing: 2) {
+                    .foregroundStyle(theme.accent)
+                VStack(alignment: .leading, spacing: AppSpacing.xxs) {
                     Text("音频")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(AppTypography.label())
+                        .foregroundStyle(theme.text)
                     Text(urlString)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .font(AppTypography.caption())
+                        .foregroundStyle(theme.muted)
                         .lineLimit(2)
                 }
                 Spacer()
@@ -1000,19 +1002,27 @@ struct AudioLinkPlayerCard: View {
                     toggle()
                 } label: {
                     Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 36))
+                        .font(.system(size: 34))
                         .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(theme.accent)
                 }
                 .buttonStyle(.plain)
+                .frame(minWidth: AppLayout.minTapTarget, minHeight: AppLayout.minTapTarget)
+                .accessibilityLabel(isPlaying ? "暂停" : "播放")
             }
             if let error {
-                Text(error).font(.caption).foregroundStyle(.red)
+                Text(error)
+                    .font(AppTypography.caption())
+                    .foregroundStyle(.red)
             }
         }
-        .padding(14)
+        .padding(AppSpacing.sm + 2)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .padding(.vertical, 6)
+        .background(
+            theme.surface.opacity(0.55),
+            in: RoundedRectangle(cornerRadius: AppRadius.md, style: .continuous)
+        )
+        .padding(.vertical, AppSpacing.xs)
         .onDisappear { stop() }
     }
 
@@ -1350,10 +1360,10 @@ struct ArticleTableView: View {
                 }
             }
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: AppRadius.md, style: .continuous)
                     .stroke(Color(.separator).opacity(0.5), lineWidth: 0.5)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: AppRadius.md, style: .continuous))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         // 横向拖动表格时暂时屏蔽阅读页换篇手势

@@ -178,26 +178,34 @@ struct ArticleReaderView: View {
                         .readingColumn()
                 }
                 if let err = summaryError {
-                    Text(err).font(.system(size: 13)).foregroundStyle(.red)
+                    Text(err)
+                        .font(AppTypography.caption())
+                        .foregroundStyle(.red)
                         .padding(.horizontal, AppLayout.readingHorizontalPadding)
                         .padding(.top, AppSpacing.xs)
                         .readingColumn()
                 }
                 if let err = translationError {
-                    Text(err).font(.system(size: 13)).foregroundStyle(.red)
+                    Text(err)
+                        .font(AppTypography.caption())
+                        .foregroundStyle(.red)
                         .padding(.horizontal, AppLayout.readingHorizontalPadding)
                         .padding(.top, AppSpacing.xs)
                         .readingColumn()
                 }
                 if let err = tts.errorMessage {
-                    Text(err).font(.system(size: 13)).foregroundStyle(.red)
+                    Text(err)
+                        .font(AppTypography.caption())
+                        .foregroundStyle(.red)
                         .padding(.horizontal, AppLayout.readingHorizontalPadding)
                         .padding(.top, AppSpacing.xs)
                         .readingColumn()
                 }
                 readerFullContentErrorBanner()
                 if let progress = translationProgress {
-                    Text(progress).font(.system(size: 13)).foregroundStyle(Color.secondary)
+                    Text(progress)
+                        .font(AppTypography.caption())
+                        .foregroundStyle(theme.muted)
                         .padding(.horizontal, AppLayout.readingHorizontalPadding)
                         .padding(.top, AppSpacing.xs)
                         .readingColumn()
@@ -207,15 +215,18 @@ struct ArticleReaderView: View {
                     .trimmingCharacters(in: .whitespacesAndNewlines),
                    !engineName.isEmpty {
                     Label("译文来源：\(engineName)", systemImage: "translate")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.secondary)
+                        .font(AppTypography.caption())
+                        .fontWeight(.medium)
+                        .foregroundStyle(theme.muted)
                         .padding(.horizontal, AppLayout.readingHorizontalPadding)
                         .padding(.top, AppSpacing.xs)
                         .readingColumn()
                         .accessibilityLabel("译文来源 \(engineName)")
                 }
                 if let hint = fullContentHint {
-                    Text(hint).font(.system(size: 13)).foregroundStyle(Color.secondary)
+                    Text(hint)
+                        .font(AppTypography.caption())
+                        .foregroundStyle(theme.muted)
                         .padding(.horizontal, AppLayout.readingHorizontalPadding)
                         .padding(.top, AppSpacing.xs)
                         .readingColumn()
@@ -598,7 +609,7 @@ struct ArticleReaderView: View {
                 ForEach(currentArticle.highlights.prefix(8)) { h in
                     HStack(alignment: .top, spacing: AppSpacing.xs) {
                         Text(h.text)
-                            .font(.system(size: max(13, store.fontSize - 2)))
+                            .font(AppTypography.font(size: max(13, store.fontSize - 2), weight: .regular))
                             .foregroundStyle(theme.text)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Button {
@@ -609,6 +620,7 @@ struct ArticleReaderView: View {
                                 .foregroundStyle(theme.muted)
                         }
                         .buttonStyle(.plain)
+                        .frame(minWidth: AppLayout.minTapTarget, minHeight: AppLayout.minTapTarget)
                         .accessibilityLabel("删除高亮")
                     }
                     .padding(.horizontal, AppSpacing.sm)
@@ -625,17 +637,17 @@ struct ArticleReaderView: View {
         if let err = fullContentError {
             let isCF = err.localizedCaseInsensitiveContains("Cloudflare")
                 || err.localizedCaseInsensitiveContains("人机验证")
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: AppSpacing.xs) {
                 Label(
                     isCF ? "需要浏览器验证 · 当前仅摘要" : "全文抓取失败 · 当前仅摘要",
                     systemImage: isCF ? "lock.shield.fill" : "exclamationmark.triangle.fill"
                 )
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.orange)
+                .font(AppTypography.label())
+                .foregroundStyle(.orange)
                 Text(err)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 12) {
+                    .font(AppTypography.caption())
+                    .foregroundStyle(theme.muted)
+                HStack(spacing: AppSpacing.sm) {
                     if isCF, URL(string: currentArticle.link) != nil {
                         Button {
                             openCurrentArticleInBrowser()
@@ -668,10 +680,15 @@ struct ArticleReaderView: View {
                     }
                 }
             }
-            .padding(12)
+            .padding(AppSpacing.sm)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-            .padding(.horizontal, 20).padding(.top, 8)
+            .background(
+                Color.orange.opacity(0.12),
+                in: RoundedRectangle(cornerRadius: AppRadius.md, style: .continuous)
+            )
+            .padding(.horizontal, AppLayout.readingHorizontalPadding)
+            .padding(.top, AppSpacing.xs)
+            .readingColumn()
         }
     }
 

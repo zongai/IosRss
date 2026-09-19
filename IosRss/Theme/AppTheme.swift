@@ -351,17 +351,20 @@ struct SoftCardBackground: ViewModifier {
 
 struct SoftIconButtonStyle: ButtonStyle {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var size: CGFloat = AppMetrics.iconButtonSize
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .frame(minWidth: max(size, AppLayout.minTapTarget), minHeight: max(size, AppLayout.minTapTarget))
             .frame(width: size, height: size)
+            .contentShape(Rectangle())
             .background(
                 Circle().fill(theme.surface)
                     .shadow(color: theme.shadow, radius: configuration.isPressed ? 2 : 4, x: 0, y: configuration.isPressed ? 1 : 2)
                     .overlay(Circle().stroke(theme.ring, lineWidth: 1))
             )
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+            .scaleEffect((!reduceMotion && configuration.isPressed) ? 0.96 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: configuration.isPressed)
     }
 }
 
@@ -519,14 +522,20 @@ enum AppTypography {
         return .system
     }
 
-    static func font(size: CGFloat, weight: Font.Weight) -> Font {
-        font(size: size, weight: weight, family: family)
+    /// Scale a design size with Dynamic Type (body metrics by default).
+    static func scaled(_ size: CGFloat, textStyle: UIFont.TextStyle = .body) -> CGFloat {
+        UIFontMetrics(forTextStyle: textStyle).scaledValue(for: size)
     }
 
-    static func font(size: CGFloat, weight: Font.Weight, family: AppFontFamily) -> Font {
+    static func font(size: CGFloat, weight: Font.Weight, textStyle: UIFont.TextStyle = .body) -> Font {
+        font(size: scaled(size, textStyle: textStyle), weight: weight, family: family)
+    }
+
+    static func font(size: CGFloat, weight: Font.Weight, family: AppFontFamily, textStyle: UIFont.TextStyle = .body) -> Font {
+        let resolved = scaled(size, textStyle: textStyle)
         switch family {
         case .system:
-            return .system(size: size, weight: weight)
+            return .system(size: resolved, weight: weight)
         case .pingFangSC:
             let name: String
             switch weight {
@@ -534,17 +543,17 @@ enum AppTypography {
             case .medium: name = "PingFangSC-Medium"
             default: name = "PingFangSC-Regular"
             }
-            return UIFont(name: name, size: size) != nil ? .custom(name, size: size) : .system(size: size, weight: weight)
+            return UIFont(name: name, size: resolved) != nil ? .custom(name, size: resolved) : .system(size: resolved, weight: weight)
         case .songti:
             let name = "STSongti-SC-Regular"
-            return UIFont(name: name, size: size) != nil ? .custom(name, size: size) : .system(size: size, weight: weight, design: .serif)
+            return UIFont(name: name, size: resolved) != nil ? .custom(name, size: resolved) : .system(size: resolved, weight: weight, design: .serif)
         case .heiti:
             let name: String
             switch weight {
             case .bold, .heavy, .black, .semibold: name = "STHeitiSC-Medium"
             default: name = "STHeitiSC-Light"
             }
-            return UIFont(name: name, size: size) != nil ? .custom(name, size: size) : .system(size: size, weight: weight)
+            return UIFont(name: name, size: resolved) != nil ? .custom(name, size: resolved) : .system(size: resolved, weight: weight)
         }
     }
 

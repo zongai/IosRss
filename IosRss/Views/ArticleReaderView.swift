@@ -5,6 +5,7 @@ struct ArticleReaderView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var systemColorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let article: Article
     var feedID: UUID? = nil
     /// 收藏页进入：左右滑在收藏列表内换篇
@@ -327,7 +328,7 @@ struct ArticleReaderView: View {
                     .accessibilityHidden(true)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: showChrome)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: showChrome)
         // 换篇：明显水平滑动；表格横向滚动时 suppressArticleSwipe 为 true 则忽略
         .simultaneousGesture(
             DragGesture(minimumDistance: 80)

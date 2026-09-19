@@ -85,7 +85,8 @@ struct SelectableParagraphView: UIViewRepresentable {
         // 取头尾少量字符即可区分段落，避免对整段 String 做 hashValue
         let head = String(sample.prefix(24))
         let tail = len > 48 ? String(sample.suffix(16)) : ""
-        return "\(typography)-\(role)-\(Int(fontSize))-\(len)-\(head)-\(tail)"
+        let cat = UIApplication.shared.preferredContentSizeCategory.rawValue
+        return "\(typography)-\(role)-\(Int(fontSize))-\(cat)-\(len)-\(head)-\(tail)"
     }
 
     private func apply(to tv: UITextView, coordinator: Coordinator, mark: String? = nil) {
@@ -96,37 +97,46 @@ struct SelectableParagraphView: UIViewRepresentable {
         let mutable = NSMutableAttributedString(attributedString: ns)
         let full = NSRange(location: 0, length: mutable.length)
         let weight: UIFont.Weight = (role == .heading) ? .semibold : .regular
-        let font = UIFont.systemFont(ofSize: fontSize, weight: weight)
+        let metricsStyle: UIFont.TextStyle = {
+            switch role {
+            case .heading: return .title2
+            case .quote: return .callout
+            case .body: return .body
+            }
+        }()
+        // Dynamic Type: scale user/base size with system content size category
+        let scaledSize = UIFontMetrics(forTextStyle: metricsStyle).scaledValue(for: fontSize)
+        let font = UIFont.systemFont(ofSize: scaledSize, weight: weight)
         let para = NSMutableParagraphStyle()
         para.alignment = .natural
-        // Editorial reading metrics by role
+        // Editorial reading metrics by role (use scaled size)
         switch role {
         case .heading:
             para.firstLineHeadIndent = 0
-            para.lineSpacing = max(2, fontSize * 0.18)
-            para.paragraphSpacing = max(4, fontSize * 0.15)
+            para.lineSpacing = max(2, scaledSize * 0.18)
+            para.paragraphSpacing = max(4, scaledSize * 0.15)
             para.lineBreakMode = .byWordWrapping
         case .quote:
             para.firstLineHeadIndent = 0
-            para.lineSpacing = max(3, fontSize * 0.32)
-            para.paragraphSpacing = max(4, fontSize * 0.2)
+            para.lineSpacing = max(3, scaledSize * 0.32)
+            para.paragraphSpacing = max(4, scaledSize * 0.2)
             para.lineBreakMode = .byWordWrapping
         case .body:
             switch typography {
             case .chinese:
-                para.firstLineHeadIndent = fontSize * 2.0
-                para.lineSpacing = max(3, fontSize * 0.38)
-                para.paragraphSpacing = max(6, fontSize * 0.28)
+                para.firstLineHeadIndent = scaledSize * 2.0
+                para.lineSpacing = max(3, scaledSize * 0.38)
+                para.paragraphSpacing = max(6, scaledSize * 0.28)
                 para.lineBreakMode = .byWordWrapping
             case .latin:
                 para.firstLineHeadIndent = 0
-                para.lineSpacing = max(3, fontSize * 0.30)
-                para.paragraphSpacing = max(8, fontSize * 0.36)
+                para.lineSpacing = max(3, scaledSize * 0.30)
+                para.paragraphSpacing = max(8, scaledSize * 0.36)
                 para.lineBreakMode = .byWordWrapping
             }
         }
         let textColor: UIColor = (role == .quote) ? .secondaryLabel : .label
-        let mono = UIFont.monospacedSystemFont(ofSize: fontSize * 0.92, weight: .regular)
+        let mono = UIFont.monospacedSystemFont(ofSize: scaledSize * 0.92, weight: .regular)
         // 先统一段落样式与正文字体，再只对有 link/背景的区间细调，减少 enumerate 开销
         mutable.addAttributes([
             .font: font,

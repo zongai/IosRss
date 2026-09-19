@@ -685,6 +685,15 @@ struct FeaturedArticleRow: View {
             Divider()
                 .opacity(0.4)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel({
+            var parts = ["头条", displayTitle]
+            if !displaySummary.isEmpty { parts.append(String(displaySummary.prefix(100))) }
+            if !item.relativeTime.isEmpty { parts.append(item.relativeTime) }
+            if item.isFavorite { parts.append("已收藏") }
+            return parts.joined(separator: "，")
+        }())
+        .accessibilityHint(item.isRead ? "已读" : "未读")
     }
 }
 
@@ -809,5 +818,19 @@ struct ArticleRow: View {
             Divider()
                 .opacity(0.4)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityRowLabel(item: item))
+        .accessibilityHint(item.isRead ? "已读" : "未读")
+    }
+
+    private func accessibilityRowLabel(item: Article) -> String {
+        var parts = [displayTitle]
+        if !displaySummary.isEmpty {
+            parts.append(String(displaySummary.prefix(80)))
+        }
+        parts.append(item.feedTitle)
+        if !item.relativeTime.isEmpty { parts.append(item.relativeTime) }
+        if item.isFavorite { parts.append("已收藏") }
+        return parts.joined(separator: "，")
     }
 }

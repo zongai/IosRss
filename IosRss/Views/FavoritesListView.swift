@@ -55,9 +55,17 @@ struct FavoritesListView: View {
             .overlay {
                 if articles.isEmpty {
                     ContentUnavailableView {
-                        Label("暂无收藏", systemImage: "star")
+                        Label {
+                            Text("暂无收藏")
+                                .font(AppTypography.section())
+                        } icon: {
+                            Image(systemName: "star")
+                                .foregroundStyle(theme.muted)
+                        }
                     } description: {
                         Text("在文章列表左滑收藏，或在阅读页点星号。收藏不会被自动清理。")
+                            .font(AppTypography.body())
+                            .foregroundStyle(theme.muted)
                     }
                 }
             }

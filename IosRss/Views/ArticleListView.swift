@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ArticleListView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let feed: RSSFeed
 
     @State private var showAllTranslations = false
@@ -192,26 +193,38 @@ struct ArticleListView: View {
         }
         .overlay {
             if isInitialLoading {
-                VStack(spacing: 12) {
+                VStack(spacing: AppSpacing.sm) {
                     ProgressView()
+                        .tint(theme.accent)
                     Text("正在加载文章…")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
+                        .font(AppTypography.body())
+                        .foregroundStyle(theme.muted)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(.systemBackground))
+                .background(theme.background.opacity(0.92))
             } else if articles.isEmpty {
                 ContentUnavailableView {
-                    Label(store.showReadArticles ? "暂无文章" : "暂无未读文章", systemImage: "newspaper")
+                    Label {
+                        Text(store.showReadArticles ? "暂无文章" : "暂无未读文章")
+                            .font(AppTypography.section())
+                    } icon: {
+                        Image(systemName: "newspaper")
+                            .foregroundStyle(theme.muted)
+                    }
                 } description: {
-                    Text(store.showReadArticles ? "下拉刷新或稍后再来" : "当前仅显示未读。可在设置中开启「显示已读文章」。")
+                    Text(store.showReadArticles
+                         ? "下拉刷新，或稍后再来。"
+                         : "当前仅显示未读。可在设置中开启「显示已读文章」。")
+                    .font(AppTypography.body())
+                    .foregroundStyle(theme.muted)
                 } actions: {
                     if !store.showReadArticles {
                         Button("显示已读文章") {
                             store.showReadArticles = true
                             store.persistSettings()
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.bordered)
+                        .tint(theme.accent)
                     }
                     Button("刷新") {
                         Task { await store.refreshFeed(feed.id) }

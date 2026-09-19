@@ -53,6 +53,14 @@ struct FeedsListView: View {
                                         FeedRow(feed: feed)
                                     }
                                     .id(feed.id)
+                                    .listRowInsets(EdgeInsets(
+                                        top: 0,
+                                        leading: AppLayout.listHorizontalPadding,
+                                        bottom: 0,
+                                        trailing: AppLayout.listHorizontalPadding
+                                    ))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
                                     .swipeActions(edge: .trailing) {
                                         Button(role: .destructive) {
                                             if let idx = store.feeds.firstIndex(where: { $0.id == feed.id }) {
@@ -171,7 +179,8 @@ struct FeedsListView: View {
                     } // sections not empty
                 }
             }
-            .listStyle(.insetGrouped)
+            .listStyle(.plain)
+            .appScreenBackground()
             .environment(\.editMode, $editMode)
             .navigationTitle("订阅")
             .navigationBarTitleDisplayMode(.large)
@@ -247,8 +256,8 @@ struct FeedsListView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, AppLayout.listHorizontalPadding)
+                    .padding(.vertical, AppSpacing.sm)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.ultraThinMaterial)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -520,30 +529,51 @@ struct FeedsListView: View {
 
     var noUnreadState: some View {
         ContentUnavailableView {
-            Label("暂无未读", systemImage: "checkmark.circle")
+            Label {
+                Text("暂无未读")
+                    .font(AppTypography.section())
+            } icon: {
+                Image(systemName: "checkmark.circle")
+                    .foregroundStyle(theme.muted)
+            }
         } description: {
             Text("所有订阅源都没有未读文章。")
+                .font(AppTypography.body())
+                .foregroundStyle(theme.muted)
         } actions: {
             Button("显示全部订阅源") {
                 store.showReadArticles = true
                 store.persistSettings()
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
+            .tint(theme.accent)
         }
         .listRowSeparator(.hidden)
-        .listRowInsets(.init(top: 60, leading: 0, bottom: 0, trailing: 0))
+        .listRowBackground(Color.clear)
+        .listRowInsets(.init(top: 80, leading: AppLayout.listHorizontalPadding, bottom: 40, trailing: AppLayout.listHorizontalPadding))
     }
 
-var emptyState: some View {
+    var emptyState: some View {
         ContentUnavailableView {
-            Label("暂无订阅", systemImage: "newspaper")
+            Label {
+                Text("暂无订阅")
+                    .font(AppTypography.section())
+            } icon: {
+                Image(systemName: "newspaper")
+                    .foregroundStyle(theme.muted)
+            }
         } description: {
-            Text("点击右上角 + 添加你的第一个 RSS 订阅源")
+            Text("添加你的第一个 RSS 订阅源，开始安静阅读。")
+                .font(AppTypography.body())
+                .foregroundStyle(theme.muted)
         } actions: {
-            Button("添加订阅") { showAddFeed = true }.buttonStyle(.bordered)
+            Button("添加订阅") { showAddFeed = true }
+                .buttonStyle(.borderedProminent)
+                .tint(theme.accent)
         }
         .listRowSeparator(.hidden)
-        .listRowInsets(.init(top: 60, leading: 0, bottom: 0, trailing: 0))
+        .listRowBackground(Color.clear)
+        .listRowInsets(.init(top: 80, leading: AppLayout.listHorizontalPadding, bottom: 40, trailing: AppLayout.listHorizontalPadding))
     }
 }
 
@@ -664,68 +694,72 @@ struct FeedRow: View {
     let feed: RSSFeed
     private var live: RSSFeed { store.feeds.first(where: { $0.id == feed.id }) ?? feed }
     var body: some View {
-        HStack(spacing: AppSpacing.sm) {
-            FeedIcon(feed: live, size: 36)
-            VStack(alignment: .leading, spacing: AppSpacing.xxs) {
-                Text(live.title)
-                    .font(AppTypography.font(size: store.feedTitleFontSize, weight: .semibold))
-                    .tracking(AppTypography.titleTracking * 0.4)
-                    .foregroundStyle(theme.text)
-                    .lineLimit(1)
-                HStack(spacing: 6) {
-                    if CommentFetcher.isSubstackLike(feed: live) {
-                        Label("Substack", systemImage: "newspaper")
-                            .labelStyle(.titleAndIcon)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color(.systemBackground))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.9), in: Capsule())
-                            .accessibilityLabel("Substack 源")
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: AppSpacing.sm) {
+                FeedIcon(feed: live, size: 36)
+                VStack(alignment: .leading, spacing: AppSpacing.xxs) {
+                    Text(live.title)
+                        .font(AppTypography.font(size: store.feedTitleFontSize, weight: .semibold))
+                        .tracking(AppTypography.titleTracking * 0.4)
+                        .foregroundStyle(theme.text)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        if CommentFetcher.isSubstackLike(feed: live) {
+                            Label("Substack", systemImage: "newspaper")
+                                .labelStyle(.titleAndIcon)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Color(.systemBackground))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.9), in: Capsule())
+                                .accessibilityLabel("Substack 源")
+                        }
+                        if let last = live.lastFetched {
+                            Text(Self.relativeString(last))
+                                .font(AppTypography.caption())
+                                .foregroundStyle(theme.muted)
+                        }
+                        if !live.fetchFullContentEnabled {
+                            Text("全文关")
+                                .font(AppTypography.caption())
+                                .foregroundStyle(theme.muted)
+                        }
+                        if store.fullContentURLPrefixEnabled && live.useFullContentURLPrefix {
+                            Text("前缀")
+                                .font(AppTypography.caption())
+                                .foregroundStyle(theme.muted)
+                        }
+                        if live.autoTranslateEnabled {
+                            Text("自动译")
+                                .font(AppTypography.caption())
+                                .foregroundStyle(theme.muted.opacity(0.85))
+                        }
                     }
-                    if let last = live.lastFetched {
-                        Text(Self.relativeString(last))
+                    // 刷新失败原因：直接显示在源标题下方，便于对照
+                    if let err = live.lastRefreshError, !err.isEmpty {
+                        Text(err)
                             .font(AppTypography.caption())
-                            .foregroundStyle(theme.muted)
-                    }
-                    if !live.fetchFullContentEnabled {
-                        Text("全文关")
-                            .font(AppTypography.caption())
-                            .foregroundStyle(theme.muted)
-                    }
-                    if store.fullContentURLPrefixEnabled && live.useFullContentURLPrefix {
-                        Text("前缀")
-                            .font(AppTypography.caption())
-                            .foregroundStyle(theme.muted)
-                    }
-                    if live.autoTranslateEnabled {
-                        Text("自动译")
-                            .font(AppTypography.caption())
-                            .foregroundStyle(theme.muted.opacity(0.85))
+                            .foregroundStyle(.orange)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityLabel("刷新失败：\(err)")
                     }
                 }
-                // 刷新失败原因：直接显示在源标题下方，便于对照
-                if let err = live.lastRefreshError, !err.isEmpty {
-                    Text(err)
-                        .font(AppTypography.caption())
-                        .foregroundStyle(.orange)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityLabel("刷新失败：\(err)")
+                Spacer(minLength: AppSpacing.xs)
+                if live.unreadCount > 0 {
+                    Text("\(live.unreadCount)")
+                        .font(AppTypography.label())
+                        .monospacedDigit()
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(theme.accentSoft, in: Capsule())
                 }
             }
-            Spacer(minLength: AppSpacing.xs)
-            if live.unreadCount > 0 {
-                Text("\(live.unreadCount)")
-                    .font(AppTypography.label())
-                    .monospacedDigit()
-                    .foregroundStyle(theme.accent)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(theme.accentSoft, in: Capsule())
-            }
+            .padding(.vertical, AppSpacing.sm)
+            Divider()
+                .opacity(0.35)
         }
-        .padding(.vertical, AppSpacing.xs)
         .id("\(live.id.uuidString)-\(live.lastRefreshError ?? "")-\(live.unreadCount)")
     }
 }

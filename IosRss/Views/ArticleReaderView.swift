@@ -32,6 +32,8 @@ struct ArticleReaderView: View {
     @State private var dragOffset: CGFloat = 0
     /// 阅读进度用引用类型存放，滚动中改值不触发 View 刷新
     @State private var readProgressBox = ReaderScrollMetrics()
+    /// 仅用于顶部细进度条 UI（稀疏更新，避免滚动掉帧）
+    @State private var displayProgress: Double = 0
     /// 横向滑动表格时为 true，避免误触发左右换篇
     @State private var suppressArticleSwipe = false
 
@@ -276,7 +278,7 @@ struct ArticleReaderView: View {
             } else if delta < -6 || newY < 16 {
                 if !showChrome { showChrome = true }
             }
-            // 进度与内容高度写入 class，不触发 body
+            // 进度与内容高度写入 class，不触发 body；UI 进度稀疏更新
             let box = readProgressBox
             if abs(newY - box.lastY) > 24 {
                 let h = max(box.contentHeight, box.viewportHeight + 1)
@@ -285,6 +287,10 @@ struct ArticleReaderView: View {
                     box.progress = p
                 }
                 box.lastY = newY
+                // 约每 8% 刷新细进度条，兼顾流畅与反馈
+                if abs(p - displayProgress) >= 0.08 {
+                    displayProgress = p
+                }
             }
         }
         .onScrollGeometryChange(for: CGSize.self) { geometry in
@@ -298,7 +304,9 @@ struct ArticleReaderView: View {
             }
         }
         .onAppear {
-            readProgressBox.progress = currentArticle.readingProgress
+            let p = currentArticle.readingProgress
+            readProgressBox.progress = p
+            displayProgress = p
         }
         .onDisappear {
             let p = readProgressBox.progress
@@ -317,18 +325,36 @@ struct ArticleReaderView: View {
         .toolbarBackground(showChrome ? .automatic : .hidden, for: .tabBar)
         .toolbarColorScheme(readerStatusBarScheme, for: .navigationBar)
         .preferredColorScheme(readerStatusBarScheme)
-        // 隐藏导航栏时仍在状态栏区域盖一层主题底色，挡住滚动正文
+        // 隐藏导航栏时仍在状态栏区域盖一层主题底色；chrome 可见时显示细阅读进度
         .overlay(alignment: .top) {
-            if !showChrome {
-                theme.background
-                    .frame(height: 0)
-                    .frame(maxWidth: .infinity)
-                    .background(theme.background.ignoresSafeArea(edges: .top))
+            VStack(spacing: 0) {
+                if !showChrome {
+                    theme.background
+                        .frame(height: 0)
+                        .frame(maxWidth: .infinity)
+                        .background(theme.background.ignoresSafeArea(edges: .top))
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+                // Editorial reading progress — 1pt hairline under chrome
+                if showChrome, displayProgress > 0.02 {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Rectangle()
+                                .fill(theme.track.opacity(0.35))
+                            Rectangle()
+                                .fill(theme.accent.opacity(0.55))
+                                .frame(width: max(0, geo.size.width * displayProgress))
+                        }
+                    }
+                    .frame(height: 2)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
+                    .animation(AppMotion.optional(AppMotion.progress, reduceMotion: reduceMotion), value: displayProgress)
+                }
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: showChrome)
+        .animation(AppMotion.optional(AppMotion.chrome, reduceMotion: reduceMotion), value: showChrome)
         // 换篇：明显水平滑动；表格横向滚动时 suppressArticleSwipe 为 true 则忽略
         .simultaneousGesture(
             DragGesture(minimumDistance: 80)
@@ -537,6 +563,7 @@ struct ArticleReaderView: View {
             translationProgress = nil
             readProgressBox.progress = 0
             readProgressBox.lastY = 0
+            displayProgress = 0
             // 若内置浏览器正开着，同步到新文章链接
             if browserItem != nil {
                 presentBrowser(for: currentArticle.link)
@@ -953,6 +980,7 @@ struct ArticleReaderView: View {
         isFetchingFull = false
         readProgressBox.progress = next.readingProgress
         readProgressBox.lastY = 0
+        displayProgress = next.readingProgress
         store.markAsRead(next)
         // 内置浏览器打开时跟随换篇并刷新页面
         if browserItem != nil {

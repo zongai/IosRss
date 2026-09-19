@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct FeedsListView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showAddFeed = false
     @State private var showOPMLMenu = false
     @State private var showOPMLImport = false
@@ -170,8 +171,12 @@ struct FeedsListView: View {
                                 unreadCount: unreadSum,
                                 isCollapsed: collapsed
                             ) {
-                                withAnimation(.snappy(duration: 0.22)) {
+                                if reduceMotion {
                                     store.toggleGroupCollapsed(groupID)
+                                } else {
+                                    withAnimation(AppMotion.list) {
+                                        store.toggleGroupCollapsed(groupID)
+                                    }
                                 }
                             }
                         }

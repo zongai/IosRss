@@ -3,6 +3,7 @@ import SwiftUI
 struct ArticleListView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let feed: RSSFeed
 
     @State private var showAllTranslations = false
@@ -135,7 +136,7 @@ struct ArticleListView: View {
         }
         .listStyle(.plain)
         // 只跟数量变化动画，避免每次 body 对全表 map(\.id)
-        .animation(.snappy(duration: 0.25), value: articles.count)
+        .animation(AppMotion.optional(AppMotion.list, reduceMotion: reduceMotion), value: articles.count)
         .appScreenBackground()
         .navigationTitle(liveFeedTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -151,8 +152,12 @@ struct ArticleListView: View {
                     if openedArticleID == article.id {
                         openedArticleID = nil
                     }
-                    withAnimation(.snappy(duration: 0.25)) {
+                    if reduceMotion {
                         readingIDs.remove(article.id)
+                    } else {
+                        withAnimation(AppMotion.list) {
+                            readingIDs.remove(article.id)
+                        }
                     }
                 }
         }

@@ -318,6 +318,27 @@ enum AppLayout {
     static let minTapTarget: CGFloat = 44
 }
 
+// MARK: - Motion (Phase 6 — restrained, accessibility-aware)
+
+/// Shared animation tokens. Prefer these over ad-hoc springs.
+enum AppMotion {
+    /// Chrome show/hide, toolbar
+    static let chrome: Animation = .easeInOut(duration: 0.2)
+    /// List insert/remove, group collapse
+    static let list: Animation = .snappy(duration: 0.22)
+    /// Expand/collapse cards (AI summary)
+    static let expand: Animation = .easeInOut(duration: 0.22)
+    /// Progress bar / numeric labels
+    static let progress: Animation = .easeOut(duration: 0.28)
+    /// Button press feedback
+    static let press: Animation = .easeOut(duration: 0.15)
+
+    /// Returns nil when Reduce Motion is on.
+    static func optional(_ animation: Animation, reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : animation
+    }
+}
+
 // MARK: - Metrics & Soft chrome (compat + softened)
 
 enum AppMetrics {
@@ -364,7 +385,7 @@ struct SoftIconButtonStyle: ButtonStyle {
                     .overlay(Circle().stroke(theme.ring, lineWidth: 1))
             )
             .scaleEffect((!reduceMotion && configuration.isPressed) ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: configuration.isPressed)
+            .animation(AppMotion.optional(AppMotion.press, reduceMotion: reduceMotion), value: configuration.isPressed)
     }
 }
 

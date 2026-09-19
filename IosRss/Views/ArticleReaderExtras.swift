@@ -26,6 +26,7 @@ struct SafariView: UIViewControllerRepresentable {
 
 struct AISummaryCard: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let summary: String
     @Binding var expanded: Bool
     var fontSize: Double = 22
@@ -36,7 +37,11 @@ struct AISummaryCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.easeInOut(duration: 0.22)) { expanded.toggle() }
+                if reduceMotion {
+                    expanded.toggle()
+                } else {
+                    withAnimation(AppMotion.expand) { expanded.toggle() }
+                }
             } label: {
                 HStack(spacing: AppSpacing.xs) {
                     Image(systemName: "wand.and.stars")

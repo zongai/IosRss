@@ -314,7 +314,7 @@ struct AIChatDetailView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: AppRadius.lg, style: .continuous)
                         .fill(Color(.secondarySystemBackground))
                 )
                 .focused($inputFocused)
@@ -363,7 +363,7 @@ private struct ChatBubble: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
                     .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        RoundedRectangle(cornerRadius: AppRadius.lg, style: .continuous)
                             .fill(bubbleColor)
                     )
                 if message.role == .assistant, let name = message.providerName, !name.isEmpty {

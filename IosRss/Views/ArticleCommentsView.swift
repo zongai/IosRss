@@ -32,28 +32,36 @@ struct ArticleCommentsView: View {
             } else {
                 List {
                     ForEach(comments) { c in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: AppSpacing.xs) {
+                            HStack(spacing: AppSpacing.xs) {
                                 Text(c.author)
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(AppTypography.label())
+                                    .foregroundStyle(Color.primary)
                                 if let d = c.date {
                                     Text(Self.relativeDate(d))
-                                        .font(.system(size: 12))
+                                        .font(AppTypography.caption())
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
                             }
                             Text(displayBody(c))
-                                .font(.system(size: 15))
+                                .font(AppTypography.bodyLarge())
                                 .foregroundStyle(Color.primary)
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        .padding(.leading, CGFloat(min(c.depth, 6)) * 14)
-                        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
+                        .padding(.leading, CGFloat(min(c.depth, 6)) * AppSpacing.sm)
+                        .listRowInsets(EdgeInsets(
+                            top: AppSpacing.sm,
+                            leading: AppLayout.listHorizontalPadding,
+                            bottom: AppSpacing.sm,
+                            trailing: AppLayout.listHorizontalPadding
+                        ))
+                        .listRowSeparator(.hidden)
                     }
                 }
                 .listStyle(.plain)
+                .appScreenBackground()
             }
         }
         .navigationTitle("评论")
@@ -70,6 +78,7 @@ struct ArticleCommentsView: View {
                             Label(showTranslated ? "原文" : "翻译", systemImage: "translate")
                         }
                     }
+                    .labelStyle(.iconOnly)
                     .disabled(isTranslating)
                 }
                 Button {
@@ -77,6 +86,7 @@ struct ArticleCommentsView: View {
                 } label: {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
+                .labelStyle(.iconOnly)
                 .disabled(isLoading)
             }
         }

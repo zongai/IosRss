@@ -561,20 +561,20 @@ struct GroupSectionHeader: View {
 
     var body: some View {
         Button(action: onToggle) {
-            HStack(spacing: 6) {
+            HStack(spacing: AppSpacing.xs) {
                 Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
                     .font(.system(size: max(9, titleSize - 2), weight: .semibold))
-                    .foregroundStyle(Color.secondary)
+                    .foregroundStyle(theme.muted)
                     .frame(width: max(12, titleSize - 1), alignment: .center)
                 Text(title)
                     .font(AppTypography.font(size: titleSize, weight: .semibold))
                     .tracking(AppTypography.sectionTracking * 0.5)
-                    .foregroundStyle(theme.muted)
+                    .foregroundStyle(theme.text)
                     .textCase(nil)
                 if isCollapsed {
                     Text("\(feedCount)")
                         .font(.system(size: metaSize, weight: .medium))
-                        .foregroundStyle(Color.secondary.opacity(0.8))
+                        .foregroundStyle(theme.muted)
                         .monospacedDigit()
                     if unreadCount > 0 {
                         Text("\(unreadCount)")
@@ -582,13 +582,14 @@ struct GroupSectionHeader: View {
                             .foregroundStyle(Color(.systemBackground))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.primary, in: .capsule)
+                            .background(theme.accent, in: .capsule)
                             .monospacedDigit()
                     }
                 }
                 Spacer(minLength: 0)
             }
             .contentShape(Rectangle())
+            .padding(.vertical, AppSpacing.xxs)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title)，\(isCollapsed ? "已折叠" : "已展开")")
@@ -663,9 +664,9 @@ struct FeedRow: View {
     let feed: RSSFeed
     private var live: RSSFeed { store.feeds.first(where: { $0.id == feed.id }) ?? feed }
     var body: some View {
-        HStack(spacing: 14) {
-            FeedIcon(feed: live, size: 40)
-            VStack(alignment: .leading, spacing: 3) {
+        HStack(spacing: AppSpacing.sm) {
+            FeedIcon(feed: live, size: 36)
+            VStack(alignment: .leading, spacing: AppSpacing.xxs) {
                 Text(live.title)
                     .font(AppTypography.font(size: store.feedTitleFontSize, weight: .semibold))
                     .tracking(AppTypography.titleTracking * 0.4)
@@ -713,18 +714,18 @@ struct FeedRow: View {
                         .accessibilityLabel("刷新失败：\(err)")
                 }
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: AppSpacing.xs)
             if live.unreadCount > 0 {
                 Text("\(live.unreadCount)")
                     .font(AppTypography.label())
                     .monospacedDigit()
                     .foregroundStyle(theme.accent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
                     .background(theme.accentSoft, in: Capsule())
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, AppSpacing.xs)
         .id("\(live.id.uuidString)-\(live.lastRefreshError ?? "")-\(live.unreadCount)")
     }
 }

@@ -29,7 +29,8 @@ struct ArticleContentView: View {
     }
 
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: prefersChineseTypography ? 10 : 8) {
+        // Editorial paragraph rhythm: slightly more air between blocks
+        LazyVStack(alignment: .leading, spacing: prefersChineseTypography ? AppSpacing.paragraph : AppSpacing.sm) {
             // 用下标遍历，避免每次 body 都 Array(enumerated()) 分配
             ForEach(cachedBlocks.indices, id: \.self) { index in
                 blockView(cachedBlocks[index])

@@ -71,7 +71,7 @@ struct ArticleListView: View {
                 // 仅用 id + 已读 + 是否显示译文；译文内容变化由 ArticleRow 读最新 article 字段刷新
                 // （避免把整段译文塞进 id 导致行身份频繁失效、List 复用失败）
                 .id("\(article.id.uuidString)-\(article.isRead)-\(showAllTranslations)-\(article.translatedTitle == nil ? 0 : 1)-\(article.translatedSummary == nil ? 0 : 1)")
-                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                .listRowInsets(EdgeInsets(top: 0, leading: AppLayout.listHorizontalPadding, bottom: 0, trailing: AppLayout.listHorizontalPadding))
                 .listRowSeparator(.hidden)
                 .swipeActions(edge: .leading) {
                     Button {
@@ -595,42 +595,61 @@ struct ArticleRow: View {
     var body: some View {
         let item = live
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .top, spacing: 6) {
+            VStack(alignment: .leading, spacing: AppSpacing.xs) {
+                // Title — primary hierarchy
+                HStack(alignment: .top, spacing: AppSpacing.xs) {
                     Text(displayTitle)
-                        .font(AppTypography.font(size: store.listTitleFontSize, weight: (preferUnreadStyle || !item.isRead) ? .semibold : .regular))
+                        .font(AppTypography.font(
+                            size: store.listTitleFontSize,
+                            weight: (preferUnreadStyle || !item.isRead) ? .semibold : .regular
+                        ))
                         .foregroundStyle((preferUnreadStyle || !item.isRead) ? theme.text : theme.muted)
-                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                     if item.isFavorite {
                         Image(systemName: "star.fill")
                             .font(.system(size: max(11, store.listTitleFontSize - 6)))
                             .foregroundStyle(.orange)
                             .padding(.top, 3)
+                            .accessibilityLabel("已收藏")
                     }
                 }
                 if showTranslation && store.titleDisplayMode == .bilingual && item.translatedTitle != nil {
-                    Text(item.title).font(.system(size: max(12, store.listTitleFontSize - 4)))
-                        .foregroundStyle(Color.secondary).lineLimit(2)
+                    Text(item.title)
+                        .font(AppTypography.listSummary(size: max(12, store.listTitleFontSize - 4)))
+                        .foregroundStyle(theme.muted)
+                        .lineLimit(2)
                 }
+
+                // Metadata — lowest weight
                 HStack(spacing: 6) {
-                    Text(item.feedTitle).font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary)
+                    Text(item.feedTitle)
+                        .font(AppTypography.caption())
+                        .foregroundStyle(theme.muted)
                     if !item.relativeTime.isEmpty {
-                        Text("·").font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary.opacity(0.6))
-                        Text(item.relativeTime).font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary)
+                        Text("·")
+                            .font(AppTypography.caption())
+                            .foregroundStyle(theme.muted.opacity(0.5))
+                        Text(item.relativeTime)
+                            .font(AppTypography.caption())
+                            .foregroundStyle(theme.muted)
                     }
                     if store.smartInterestFilterEnabled, let score = item.interestScore {
-                        Text("·").font(.system(size: max(11, store.listSummaryFontSize - 2))).foregroundStyle(Color.secondary.opacity(0.6))
+                        Text("·")
+                            .font(AppTypography.caption())
+                            .foregroundStyle(theme.muted.opacity(0.5))
                         Text(String(format: "%.0f%%", score * 100))
-                            .font(.system(size: max(11, store.listSummaryFontSize - 2)))
-                            .foregroundStyle(score < store.lowInterestThreshold ? Color.orange : Color.secondary)
+                            .font(AppTypography.caption())
+                            .foregroundStyle(score < store.lowInterestThreshold ? Color.orange : theme.muted)
                     }
                 }
+
                 if store.smartInterestFilterEnabled,
                    let score = item.interestScore,
                    score < store.lowInterestThreshold,
                    let reason = store.interestExplanation(for: item) {
                     Text(reason)
-                        .font(.system(size: max(10, store.listSummaryFontSize - 3)))
+                        .font(AppTypography.caption())
                         .foregroundStyle(.orange.opacity(0.9))
                         .lineLimit(2)
                 }
@@ -638,26 +657,29 @@ struct ArticleRow: View {
                 if item.isRead, !store.articleBlacklistTerms.isEmpty,
                    let bl = store.articleBlacklistReason(for: item) {
                     Text(bl)
-                        .font(.system(size: max(10, store.listSummaryFontSize - 3)))
+                        .font(AppTypography.caption())
                         .foregroundStyle(.red.opacity(0.85))
                         .lineLimit(1)
                 }
+
+                // Summary — secondary
                 if !displaySummary.isEmpty {
                     Text(displaySummary)
-                        .font(.system(size: store.listSummaryFontSize))
-                        .foregroundStyle(Color.secondary)
+                        .font(AppTypography.listSummary(size: store.listSummaryFontSize))
+                        .foregroundStyle(theme.muted)
                         .lineLimit(2)
                     if showTranslation && store.titleDisplayMode == .bilingual
                         && item.translatedSummary != nil && !item.summary.isEmpty {
                         Text(item.summary)
-                            .font(.system(size: max(12, store.listSummaryFontSize - 2)))
-                            .foregroundStyle(Color.secondary.opacity(0.8))
+                            .font(AppTypography.listSummary(size: max(12, store.listSummaryFontSize - 2)))
+                            .foregroundStyle(theme.muted.opacity(0.8))
                             .lineLimit(2)
                     }
                 }
             }
-            .padding(.vertical, 14)
+            .padding(.vertical, AppSpacing.md)
             Divider()
+                .opacity(0.6)
         }
     }
 }

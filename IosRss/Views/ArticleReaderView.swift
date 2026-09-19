@@ -102,70 +102,98 @@ struct ArticleReaderView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Color.clear.frame(height: 0).id("readerTop")
-                VStack(alignment: .leading, spacing: 8) {
+
+                // MARK: Editorial header — category → title → meta
+                VStack(alignment: .leading, spacing: AppSpacing.sm) {
+                    // Category / source label (lowest visual weight above title)
+                    Text(currentArticle.feedTitle.uppercased())
+                        .font(AppTypography.articleCategory(size: max(11, store.readerTitleFontSize - 14)))
+                        .tracking(0.8)
+                        .foregroundStyle(theme.muted)
+                        .textCase(.uppercase)
+
                     Text(displayTitle)
-                        .font(AppTypography.font(size: store.readerTitleFontSize, weight: .semibold))
-                        .tracking(AppTypography.titleTracking)
+                        .font(AppTypography.articleTitle(size: store.readerTitleFontSize))
+                        .tracking(AppTypography.displayTracking)
                         .foregroundStyle(theme.text)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+
                     if showTranslated,
                        let translated = currentArticle.translatedTitle,
                        !translated.isEmpty,
                        store.titleDisplayMode == .bilingual {
                         Text(currentArticle.title)
-                            .font(.system(size: max(13, store.readerTitleFontSize - 9)))
-                            .foregroundStyle(Color.secondary)
+                            .font(AppTypography.articleSubtitle(size: max(13, store.readerTitleFontSize - 9)))
+                            .foregroundStyle(theme.muted)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    HStack(spacing: 8) {
-                        Text(currentArticle.feedTitle)
-                            .font(.system(size: max(12, store.readerTitleFontSize - 11), weight: .medium))
-                            .foregroundStyle(Color.secondary)
+
+                    // Metadata row
+                    HStack(spacing: AppSpacing.xs) {
                         if !currentArticle.relativeTime.isEmpty {
-                            Text("·").foregroundStyle(Color.secondary.opacity(0.6))
                             Text(currentArticle.relativeTime)
-                                .font(.system(size: max(12, store.readerTitleFontSize - 11))).foregroundStyle(Color.secondary)
+                                .font(AppTypography.articleMeta(size: max(12, store.readerTitleFontSize - 12)))
+                                .foregroundStyle(theme.muted)
                         }
                         if currentArticle.hasFullContent {
-                            Text("·").foregroundStyle(Color.secondary.opacity(0.6))
+                            Text("·")
+                                .foregroundStyle(theme.muted.opacity(0.5))
                             Text("全文")
-                                .font(.system(size: max(11, store.readerTitleFontSize - 12), weight: .medium))
-                                .foregroundStyle(Color.secondary)
+                                .font(AppTypography.articleMeta(size: max(11, store.readerTitleFontSize - 13)))
+                                .foregroundStyle(theme.muted)
                         } else if fullContentError != nil {
-                            Text("·").foregroundStyle(Color.secondary.opacity(0.6))
+                            Text("·")
+                                .foregroundStyle(theme.muted.opacity(0.5))
                             Text("仅摘要")
-                                .font(.system(size: max(11, store.readerTitleFontSize - 12), weight: .medium))
+                                .font(AppTypography.articleMeta(size: max(11, store.readerTitleFontSize - 13)))
                                 .foregroundStyle(.orange)
                         }
                     }
                 }
-                .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 16)
+                .padding(.horizontal, AppLayout.readingHorizontalPadding)
+                .padding(.top, AppSpacing.xl)
+                .padding(.bottom, AppSpacing.lg)
+                .readingColumn()
 
                 readerHighlightsSection()
-
+                    .padding(.horizontal, AppLayout.readingHorizontalPadding)
+                    .readingColumn()
 
                 Divider()
+                    .padding(.horizontal, AppLayout.readingHorizontalPadding)
+                    .readingColumn()
 
                 if let summary = aiSummary ?? currentArticle.aiSummary {
                     AISummaryCard(summary: summary, expanded: $summaryExpanded, fontSize: store.aiSummaryFontSize, providerName: aiSummaryProvider ?? currentArticle.aiSummaryProvider)
-                        .padding(.horizontal, 20).padding(.top, 16)
+                        .padding(.horizontal, AppLayout.readingHorizontalPadding)
+                        .padding(.top, AppSpacing.md)
+                        .readingColumn()
                 }
                 if let err = summaryError {
                     Text(err).font(.system(size: 13)).foregroundStyle(.red)
-                        .padding(.horizontal, 20).padding(.top, 8)
+                        .padding(.horizontal, AppLayout.readingHorizontalPadding)
+                        .padding(.top, AppSpacing.xs)
+                        .readingColumn()
                 }
                 if let err = translationError {
                     Text(err).font(.system(size: 13)).foregroundStyle(.red)
-                        .padding(.horizontal, 20).padding(.top, 8)
+                        .padding(.horizontal, AppLayout.readingHorizontalPadding)
+                        .padding(.top, AppSpacing.xs)
+                        .readingColumn()
                 }
                 if let err = tts.errorMessage {
                     Text(err).font(.system(size: 13)).foregroundStyle(.red)
-                        .padding(.horizontal, 20).padding(.top, 8)
+                        .padding(.horizontal, AppLayout.readingHorizontalPadding)
+                        .padding(.top, AppSpacing.xs)
+                        .readingColumn()
                 }
                 readerFullContentErrorBanner()
                 if let progress = translationProgress {
                     Text(progress).font(.system(size: 13)).foregroundStyle(Color.secondary)
-                        .padding(.horizontal, 20).padding(.top, 8)
+                        .padding(.horizontal, AppLayout.readingHorizontalPadding)
+                        .padding(.top, AppSpacing.xs)
+                        .readingColumn()
                 }
                 if showTranslated,
                    let engineName = currentArticle.translationEngineName?
@@ -174,29 +202,38 @@ struct ArticleReaderView: View {
                     Label("译文来源：\(engineName)", systemImage: "translate")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Color.secondary)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 6)
+                        .padding(.horizontal, AppLayout.readingHorizontalPadding)
+                        .padding(.top, AppSpacing.xs)
+                        .readingColumn()
                         .accessibilityLabel("译文来源 \(engineName)")
                 }
                 if let hint = fullContentHint {
                     Text(hint).font(.system(size: 13)).foregroundStyle(Color.secondary)
-                        .padding(.horizontal, 20).padding(.top, 8)
+                        .padding(.horizontal, AppLayout.readingHorizontalPadding)
+                        .padding(.top, AppSpacing.xs)
+                        .readingColumn()
                 }
 
                 if shouldOfferFullContent && !isFetchingFull {
                     Button { Task { await fetchFullContent() } } label: {
-                        HStack(spacing: 8) {
+                        HStack(spacing: AppSpacing.xs) {
                             Image(systemName: "arrow.down.doc")
-                            Text("RSS 仅为摘要，点击获取全文").font(.system(size: 14, weight: .medium))
+                            Text("RSS 仅为摘要，点击获取全文")
+                                .font(.system(size: 14, weight: .medium))
                             Spacer()
-                            Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Color.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color.secondary)
                         }
                         .foregroundStyle(Color.primary)
-                        .padding(.horizontal, 14).padding(.vertical, 12)
-                        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 10))
+                        .padding(.horizontal, AppSpacing.sm)
+                        .padding(.vertical, AppSpacing.sm)
+                        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: AppRadius.md))
                     }
                     .buttonStyle(.plain)
-                    .padding(.horizontal, 20).padding(.top, 12)
+                    .padding(.horizontal, AppLayout.readingHorizontalPadding)
+                    .padding(.top, AppSpacing.sm)
+                    .readingColumn()
                 }
 
                 let displayContent = showTranslated
@@ -209,12 +246,15 @@ struct ArticleReaderView: View {
                     onHighlight: { store.addHighlight(articleID: currentArticle.id, text: $0) },
                     suppressArticleSwipe: $suppressArticleSwipe
                 )
-                    .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 56)
+                .padding(.horizontal, AppLayout.readingHorizontalPadding)
+                .padding(.top, AppSpacing.lg)
+                .padding(.bottom, 56)
+                .readingColumn()
             }
             // 整页内容随文章 id 重建，避免沿用上一篇的 contentOffset
             .id(activeID)
         }
-        .background(Color(.systemBackground))
+        .background(theme.background)
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             // 禁止在此闭包写 AppStore，否则会在布局阶段触发观察更新导致闪退
             geometry.contentOffset.y

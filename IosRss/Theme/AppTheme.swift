@@ -275,26 +275,72 @@ extension EnvironmentValues {
     }
 }
 
-// MARK: - Metrics & Soft chrome
+// MARK: - Design Tokens (Editorial)
+
+/// Spacing scale — prefer these over magic numbers.
+enum AppSpacing {
+    static let xxs: CGFloat = 4
+    static let xs: CGFloat = 8
+    static let sm: CGFloat = 12
+    static let md: CGFloat = 16
+    static let lg: CGFloat = 20
+    static let xl: CGFloat = 24
+    static let xxl: CGFloat = 32
+    /// Between major sections (list groups, reader blocks)
+    static let section: CGFloat = 28
+    /// Comfortable paragraph gap in article body
+    static let paragraph: CGFloat = 14
+    /// Extra breathing room above/below hero / featured
+    static let hero: CGFloat = 20
+}
+
+/// Corner radii — keep restrained; prefer continuous curves.
+enum AppRadius {
+    static let none: CGFloat = 0
+    static let sm: CGFloat = 6
+    static let md: CGFloat = 10
+    static let lg: CGFloat = 14
+    /// Default for soft surfaces (chips, small cards)
+    static let continuous: CGFloat = 12
+}
+
+/// Layout constraints for reading & lists.
+enum AppLayout {
+    /// Max comfortable reading column width. Wider screens center content.
+    static let readingMaxWidth: CGFloat = 680
+    /// Horizontal padding for article body on phone
+    static let readingHorizontalPadding: CGFloat = 22
+    /// List / feed row horizontal inset
+    static let listHorizontalPadding: CGFloat = 16
+    /// General page margin
+    static let pageMargin: CGFloat = 20
+    /// Minimum touch target
+    static let minTapTarget: CGFloat = 44
+}
+
+// MARK: - Metrics & Soft chrome (compat + softened)
 
 enum AppMetrics {
-    static let pageMargin: CGFloat = 26
-    static let cardGroupSpacing: CGFloat = 18
-    static let innerSpacing: CGFloat = 10
-    static let cardRadius: CGFloat = 20
-    static let chipRadius: CGFloat = 12
-    static let rowRadius: CGFloat = 14
+    static let pageMargin: CGFloat = AppLayout.pageMargin
+    static let cardGroupSpacing: CGFloat = AppSpacing.lg
+    static let innerSpacing: CGFloat = AppSpacing.sm
+    /// Softened: was 20 — less “card stack” feel
+    static let cardRadius: CGFloat = AppRadius.lg
+    static let chipRadius: CGFloat = AppRadius.continuous
+    static let rowRadius: CGFloat = AppRadius.lg
     static let iconButtonSize: CGFloat = 42
 }
 
 struct SoftCardBackground: ViewModifier {
     @Environment(\.theme) private var theme
     var radius: CGFloat = AppMetrics.cardRadius
+    /// When false, no drop shadow (preferred for editorial surfaces)
+    var elevated: Bool = false
     func body(content: Content) -> some View {
         content.background(
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(theme.card)
-                .shadow(color: theme.shadow, radius: 10, x: 0, y: 4)
+                .shadow(color: elevated ? theme.shadow : .clear, radius: elevated ? 8 : 0, x: 0, y: elevated ? 3 : 0)
                 .overlay(
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
                         .stroke(theme.ring, lineWidth: 1)
@@ -311,7 +357,7 @@ struct SoftIconButtonStyle: ButtonStyle {
             .frame(width: size, height: size)
             .background(
                 Circle().fill(theme.surface)
-                    .shadow(color: theme.shadow, radius: configuration.isPressed ? 2 : 6, x: 0, y: configuration.isPressed ? 1 : 3)
+                    .shadow(color: theme.shadow, radius: configuration.isPressed ? 2 : 4, x: 0, y: configuration.isPressed ? 1 : 2)
                     .overlay(Circle().stroke(theme.ring, lineWidth: 1))
             )
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
@@ -320,8 +366,8 @@ struct SoftIconButtonStyle: ButtonStyle {
 }
 
 extension View {
-    func softCard(radius: CGFloat = AppMetrics.cardRadius) -> some View {
-        modifier(SoftCardBackground(radius: radius))
+    func softCard(radius: CGFloat = AppMetrics.cardRadius, elevated: Bool = false) -> some View {
+        modifier(SoftCardBackground(radius: radius, elevated: elevated))
     }
 
     func appTitleStyle() -> some View {
@@ -342,6 +388,12 @@ extension View {
 
     func appScreenBackground() -> some View {
         modifier(AppScreenBackground())
+    }
+
+    /// Constrain content to a comfortable reading column and center on wide screens.
+    func readingColumn(maxWidth: CGFloat = AppLayout.readingMaxWidth) -> some View {
+        frame(maxWidth: maxWidth)
+            .frame(maxWidth: .infinity)
     }
 }
 
@@ -433,6 +485,7 @@ enum AppFontFamily: String, CaseIterable, Codable, Identifiable {
 // MARK: - Typography (Source Han Sans / system families)
 
 enum AppTypography {
+    // —— Semantic sizes (editorial hierarchy) ——
     static func greeting() -> Font { font(size: 26, weight: .semibold) }
     static func title() -> Font { font(size: 22, weight: .semibold) }
     static func section() -> Font { font(size: 19, weight: .semibold) }
@@ -440,6 +493,22 @@ enum AppTypography {
     static func bodyLarge() -> Font { font(size: 16, weight: .regular) }
     static func caption() -> Font { font(size: 12.5, weight: .regular) }
     static func label() -> Font { font(size: 13, weight: .medium) }
+
+    // —— Article reader hierarchy (prefer these in Phase 2+) ——
+    /// Large article title in reader
+    static func articleTitle(size: CGFloat = 26) -> Font { font(size: size, weight: .bold) }
+    /// Subtitle / dek under title
+    static func articleSubtitle(size: CGFloat = 16) -> Font { font(size: size, weight: .regular) }
+    /// Author · date · reading time
+    static func articleMeta(size: CGFloat = 13) -> Font { font(size: size, weight: .medium) }
+    /// Body paragraph
+    static func articleBody(size: CGFloat = 17) -> Font { font(size: size, weight: .regular) }
+    /// Category / section label above title
+    static func articleCategory(size: CGFloat = 12) -> Font { font(size: size, weight: .semibold) }
+    /// List row title
+    static func listTitle(size: CGFloat = 17) -> Font { font(size: size, weight: .semibold) }
+    /// List row summary
+    static func listSummary(size: CGFloat = 14) -> Font { font(size: size, weight: .regular) }
 
     /// 当前选用的字体家族（由设置写入 UserDefaults）
     static var family: AppFontFamily {
@@ -482,4 +551,6 @@ enum AppTypography {
     static let titleTracking: CGFloat = -0.8
     static let sectionTracking: CGFloat = 0.6
     static let bodyTracking: CGFloat = 0.3
+    /// Tighter tracking for large display titles
+    static let displayTracking: CGFloat = -1.1
 }

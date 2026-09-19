@@ -414,10 +414,24 @@ extension View {
         modifier(AppScreenBackground())
     }
 
+    /// Form / settings chrome: hide default list background, use reading theme.
+    func appFormChrome() -> some View {
+        modifier(AppFormChrome())
+    }
+
     /// Constrain content to a comfortable reading column and center on wide screens.
     func readingColumn(maxWidth: CGFloat = AppLayout.readingMaxWidth) -> some View {
         frame(maxWidth: maxWidth)
             .frame(maxWidth: .infinity)
+    }
+}
+
+private struct AppFormChrome: ViewModifier {
+    @Environment(\.theme) private var theme
+    func body(content: Content) -> some View {
+        content
+            .scrollContentBackground(.hidden)
+            .background(theme.background.ignoresSafeArea())
     }
 }
 

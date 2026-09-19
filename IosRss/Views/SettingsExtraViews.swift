@@ -203,6 +203,7 @@ struct TranslationSettingsView: View {
         }
         .navigationTitle("翻译设置")
         .navigationBarTitleDisplayMode(.inline)
+        .appFormChrome()
         .onDisappear { store.persistSettings() }
         .onChange(of: store.translationConcurrency) { _, _ in store.persistSettings() }
         .environment(\.editMode, .constant(.active))
@@ -390,6 +391,7 @@ struct ArticleBlacklistSettingsView: View {
         }
         .navigationTitle("文章黑名单")
         .navigationBarTitleDisplayMode(.inline)
+        .appFormChrome()
     }
 
     private func addTerm() {

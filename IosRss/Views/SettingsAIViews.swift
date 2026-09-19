@@ -187,6 +187,7 @@ struct AISettingsView: View {
         }
         .navigationTitle("AI 设置")
         .navigationBarTitleDisplayMode(.inline)
+        .appFormChrome()
         .onDisappear { store.persistSettings() }
         .onChange(of: store.translationPrompt) { _, _ in store.persistSettings() }
         .onChange(of: store.summaryPrompt) { _, _ in store.persistSettings() }
@@ -272,6 +273,7 @@ struct AIBlacklistSettingsView: View {
         }
         .navigationTitle("AI 黑名单")
         .navigationBarTitleDisplayMode(.inline)
+        .appFormChrome()
         .onDisappear { store.persistSettings() }
     }
 
@@ -291,19 +293,22 @@ struct AIBlacklistSettingsView: View {
 
 struct AIProviderRow: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let provider: AIProvider
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: AppSpacing.xxs) {
             HStack {
-                Text(provider.name).font(.system(size: 15, weight: .medium))
+                Text(provider.name)
+                    .font(AppTypography.label())
+                    .foregroundStyle(theme.text)
                 Spacer()
-                HStack(spacing: 8) {
+                HStack(spacing: AppSpacing.xs) {
                     if provider.isDefaultSummary || store.defaultSummaryProviderID == provider.id {
-                        ProviderTag(text: "摘要", color: Color.primary)
+                        ProviderTag(text: "摘要", color: theme.accent)
                     }
                     if provider.isDefaultTranslation || store.defaultTranslationProviderID == provider.id {
-                        ProviderTag(text: "翻译", color: Color.secondary)
+                        ProviderTag(text: "翻译", color: theme.muted)
                     }
                     if store.defaultExplainProviderID == provider.id {
                         ProviderTag(text: "解释", color: .orange)
@@ -313,15 +318,20 @@ struct AIProviderRow: View {
             let models = provider.availableModels
             if models.count > 1 {
                 Text("默认 \(provider.model) · 共 \(models.count) 个模型")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(AppTypography.caption())
+                    .foregroundStyle(theme.muted)
                     .lineLimit(1)
             } else {
-                Text(provider.model).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(provider.model)
+                    .font(AppTypography.caption())
+                    .foregroundStyle(theme.muted)
             }
-            Text(provider.baseURL).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
+            Text(provider.baseURL)
+                .font(AppTypography.caption())
+                .foregroundStyle(theme.muted.opacity(0.75))
+                .lineLimit(1)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, AppSpacing.xxs)
     }
 }
 
@@ -330,11 +340,12 @@ struct ProviderTag: View {
     let color: Color
     var body: some View {
         Text(text)
-            .font(.system(size: 10, weight: .medium))
+            .font(AppTypography.caption())
+            .fontWeight(.medium)
             .foregroundStyle(Color(.systemBackground))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(color, in: .capsule)
+            .background(color, in: Capsule())
     }
 }
 
@@ -514,6 +525,7 @@ struct EditProviderView: View {
             }
             .navigationTitle(isNew ? "添加 Provider" : "编辑 Provider")
             .navigationBarTitleDisplayMode(.inline)
+            .appFormChrome()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -693,6 +705,7 @@ struct SummaryPromptPresetsView: View {
         }
         .navigationTitle("Prompt 预设")
         .navigationBarTitleDisplayMode(.inline)
+        .appFormChrome()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("添加", systemImage: "plus") { showAdd = true }
@@ -752,6 +765,7 @@ struct EditSummaryPromptPresetView: View {
             }
             .navigationTitle(isNew ? "添加类型" : "编辑类型")
             .navigationBarTitleDisplayMode(.inline)
+            .appFormChrome()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }

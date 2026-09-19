@@ -367,8 +367,7 @@ struct SettingsView: View {
                     Text("关于")
                 }
             }
-            .scrollContentBackground(.hidden)
-            .background(theme.background.ignoresSafeArea())
+            .appFormChrome()
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -447,8 +446,7 @@ struct FontSettingsView: View {
                 Text("调整后立即生效，并自动保存。跟随系统「更大字体」时会在基准上再缩放。")
             }
         }
-        .scrollContentBackground(.hidden)
-        .background(theme.background.ignoresSafeArea())
+        .appFormChrome()
         .navigationTitle("字号设置")
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear { store.persistSettings() }

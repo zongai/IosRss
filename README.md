@@ -2,7 +2,7 @@
 
 原生 SwiftUI 实现的 iOS / iPadOS RSS 阅读器。支持 RSS 与 Atom，内置全文抓取、多引擎翻译、AI 摘要 / 解释 / 对话、Edge TTS 朗读、源分组、评论（Substack / HN / Engadget 等）与离线缓存。
 
-**版本**：本地调试 `v1.3-75`；CI 构建 `v1.3-75-build{N}`（`N` = GitHub Actions `run_number`）。
+**版本**：本地调试 `v1.3-77`；CI 构建 `v1.3-77-build{N}`（`N` = GitHub Actions `run_number`）。
 
 > **文档维护**：有意义的功能变更后，构建时默认同步更新 `README.md`（及按约定整理 `CHANGELOG.md`）。CI **不**自动回写文档。
 
@@ -51,8 +51,9 @@
 ### 外观与字体
 - **外观**：跟随系统（默认）/ 浅色 / 深色
 - **阅读主题（6 套）**：Classic Light / Sepia Paper / Night Dark / Midnight Blue / Forest Sage / High Contrast
-- **字体**：系统默认、苹方、宋体、黑体
-- 设计 token：软阴影卡片、分区字号；SwiftUI Pro 无障碍约定（带标签的 Button/Menu 等）
+- **字体**：系统默认、苹方、宋体、黑体；分区字号可调；**Dynamic Type** 跟随系统更大字体
+- **Editorial UI**：Design Tokens（间距 / 圆角 / 阅读列宽 / 动效）；文章列表 Featured 首条 + 标题→摘要→元数据；阅读页杂志层级（源名→标题→元信息→正文）；正文 h1–h3 / 引用块独立样式；订阅列表 plain 扁平；工具栏主操作 + ⋯ 溢出；阅读进度细条；减弱动态效果兼容
+- SwiftUI Pro 无障碍：合并 VoiceOver 标签、约 44pt 点击区、带标签的 Button/Menu
 
 ### 其它
 - 离线缓存（全文 / Feed 快照 / 图片）；清除缓存保留订阅与已读

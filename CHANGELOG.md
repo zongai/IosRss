@@ -25,6 +25,17 @@
 - AI 对话页滑动消息列表收起键盘
 - 列表/阅读滚动与换篇相关优化延续
 
+## [1.3-77] — 构建中（ui-redesign-experiment）
+
+相对：`v1.3-76` / 1.3-76 成功构建
+
+### UI / 体验（Editorial 重设计实验）
+- **Design Tokens**：`AppSpacing` / `AppRadius` / `AppLayout` / `AppMotion`；`readingColumn()` 大屏居中阅读列
+- **阅读页**：源名→大标题→元信息层级；正文行距/段距；h1–h3 与 blockquote 独立样式；图片 continuous 圆角；工具栏主操作（收藏/翻译）+ ⋯ 溢出（全文/摘要/朗读/评论/浏览器/分享）；细阅读进度条
+- **列表**：首条 Featured 行；标题→摘要→元数据；订阅页 plain 扁平 + 安静空/加载态
+- **搜索 / 评论 / 对话 / 添加订阅 / 设置**：对齐 tokens 与主题背景（`appFormChrome`）
+- **无障碍**：Dynamic Type（UIFontMetrics）；Reduce Motion；列表合并 VoiceOver 标签；约 44pt 点击区
+
 ## [Unreleased]
 
 （自上次成功构建以来的改动，将在下次成功构建时归入正式条目。）
